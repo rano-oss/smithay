@@ -3,10 +3,12 @@ use crate::{
     backend::renderer::{utils::SurfaceState, Frame, ImportAll, Renderer, Transform},
     desktop::{
         output::*,
+        layer::*,
     },
     utils::{Logical, Point, Rectangle},
     wayland::{
         compositor::{with_surface_tree_downward, SubsurfaceCachedState, TraversalAction},
+        shell::wlr_layer::Layer as WlrLayer,
         output::Output,
     },
 };
@@ -58,6 +60,19 @@ fn window_state(space: usize, w: &Window) -> RefMut<'_, WindowState> {
     })
 }
 
+#[derive(Default)]
+struct LayerState {
+    drawn: bool,
+}
+
+type LayerUserdata = RefCell<HashMap<usize, LayerState>>;
+fn layer_state(space: usize, l: &LayerSurface) -> RefMut<'_, LayerState> {
+    let userdata = l.user_data();
+    userdata.insert_if_missing(LayerUserdata::default);
+    RefMut::map(userdata.get::<LayerUserdata>().unwrap().borrow_mut(), |m| {
+        m.entry(space).or_default()
+    })
+}
 
 // TODO: Maybe replace UnmanagedResource if nothing else comes up?
 #[derive(Debug, thiserror::Error)]
@@ -142,7 +157,7 @@ impl Space {
             bbox.to_f64().contains(point)
         })
     }
-
+    
     /// Get a reference to the output under a given point, if any
     pub fn output_under(&self, point: Point<f64, Logical>) -> Option<&Output> {
         self.outputs.iter().rev().find(|o| {
@@ -159,6 +174,16 @@ impl Space {
         self.windows
             .iter()
             .find(|w| w.toplevel().get_surface().map(|x| x == surface).unwrap_or(false))
+    }
+
+    pub fn layer_for_surface(&self, surface: &WlSurface) -> Option<LayerSurface> {
+        if !surface.as_ref().is_alive() {
+            return None;
+        }
+        self.outputs.iter().find_map(|o| {
+            let map = layer_map_for_output(o);
+            map.layer_for_surface(surface).cloned()
+        })
     }
 
     pub fn window_geometry(&self, w: &Window) -> Option<Rectangle<i32, Logical>> {
@@ -392,6 +417,7 @@ impl Space {
             .to_logical(state.render_scale)
             .to_i32_round();
         let output_geo = Rectangle::from_loc_and_size(state.location, output_size);
+        let layer_map = layer_map_for_output(output);
 
         // This will hold all the damage we need for this rendering step
         let mut damage = Vec::<Rectangle<i32, Logical>>::new();
@@ -400,7 +426,7 @@ impl Space {
             .last_state
             .iter()
             .filter_map(|(id, w)| {
-                if !self.windows.iter().any(|w| ToplevelId::Xdg(w.0.id) == *id) {
+                if !self.windows.iter().any(|w| ToplevelId::Xdg(w.0.id) == *id) && !layer_map.layers().any(|l| ToplevelId::Layer(l.0.id) == *id) {
                     Some(*w)
                 } else {
                     None
@@ -427,6 +453,23 @@ impl Space {
                 let loc = window_loc(window, &self.id);
                 damage.extend(window.accumulated_damage().into_iter().map(|mut rect| {
                     rect.loc += loc;
+                    rect
+                }));
+            }
+        }
+        for layer in layer_map.layers() {
+            let geo = layer_map.layer_geometry(layer);
+            let old_geo = state.last_state.get(&ToplevelId::Layer(layer.0.id)).cloned();
+
+            // layer moved or resized
+            if old_geo.map(|old_geo| old_geo != geo).unwrap_or(false) {
+                // Add damage for the old position of the layer
+                damage.push(old_geo.unwrap());
+                damage.push(geo);
+            } else {
+                let location = geo.loc;
+                damage.extend(layer.accumulated_damage().into_iter().map(|mut rect| {
+                    rect.loc += location;
                     rect
                 }));
             }
@@ -485,7 +528,25 @@ impl Space {
                     &damage.iter().map(|geo| geo.to_f64().to_physical(state.render_scale).to_i32_round()).collect::<Vec<_>>(),
                 )?;
 
-                // Then re-draw all window overlapping with a damage rect.
+                // Then re-draw all windows & layers overlapping with a damage rect.
+
+                for layer in layer_map.layers_on(WlrLayer::Background).chain(layer_map.layers_on(WlrLayer::Bottom)) {
+                    let lgeo = layer_map.layer_geometry(layer);
+                    if damage.iter().any(|geo| lgeo.overlaps(*geo)) {
+                        let layer_damage = damage.iter()
+                            .filter(|geo| geo.overlaps(lgeo))
+                            .map(|geo| geo.intersection(lgeo))
+                            .map(|geo| Rectangle::from_loc_and_size(
+                                geo.loc - lgeo.loc,
+                                geo.size
+                            ))
+                            .collect::<Vec<_>>();
+                        slog::trace!(self.logger, "Rendering layer at {:?} with damage {:#?}", lgeo, damage);
+                        draw_layer(renderer, frame, layer, state.render_scale, lgeo.loc, &layer_damage, &self.logger)?;
+                        layer_state(self.id, layer).drawn = true;
+                    }
+                }
+
                 for window in self.windows.iter() {
                     let wgeo = window_rect_with_popups(window, &self.id);
                     let mut loc = window_loc(window, &self.id);
@@ -502,6 +563,23 @@ impl Space {
                         slog::trace!(self.logger, "Rendering window at {:?} with damage {:#?}", wgeo, damage);
                         draw_window(renderer, frame, window, state.render_scale, loc, &win_damage, &self.logger)?;
                         window_state(self.id, window).drawn = true;
+                    }
+                }
+                
+                for layer in layer_map.layers_on(WlrLayer::Top).chain(layer_map.layers_on(WlrLayer::Overlay)) {
+                    let lgeo = layer_map.layer_geometry(layer);
+                    if damage.iter().any(|geo| lgeo.overlaps(*geo)) {
+                        let layer_damage = damage.iter()
+                            .filter(|geo| geo.overlaps(lgeo))
+                            .map(|geo| geo.intersection(lgeo))
+                            .map(|geo| Rectangle::from_loc_and_size(
+                                geo.loc - lgeo.loc,
+                                geo.size
+                            ))
+                            .collect::<Vec<_>>();
+                        slog::trace!(self.logger, "Rendering layer at {:?} with damage {:#?}", lgeo, damage);
+                        draw_layer(renderer, frame, layer, state.render_scale, lgeo.loc, &layer_damage, &self.logger)?;
+                        layer_state(self.id, layer).drawn = true;
                     }
                 }
 
@@ -523,6 +601,10 @@ impl Space {
                 let wgeo = window_rect_with_popups(window, &self.id);
                 (ToplevelId::Xdg(window.0.id), wgeo)
             })
+            .chain(layer_map.layers().map(|layer| {
+                let lgeo = layer_map.layer_geometry(layer);
+                (ToplevelId::Layer(layer.0.id), lgeo)
+            }))
             .collect();
         state.old_damage.push_front(new_damage);
 
@@ -537,6 +619,18 @@ impl Space {
             }
         }) {
             window.send_frame(time);
+        }
+
+        for output in self.outputs.iter() {
+            let map = layer_map_for_output(output);
+            for layer in map.layers().filter(|l| {
+                all || {
+                    let mut state = layer_state(self.id, l);
+                    std::mem::replace(&mut state.drawn, false)
+                }
+            }) {
+                layer.send_frame(time);
+            }
         }
     }
 }
