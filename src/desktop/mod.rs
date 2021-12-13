@@ -2,7 +2,9 @@
 #![allow(missing_docs, clippy::all)]
 mod popup;
 mod space;
+mod output;
 mod window;
+pub mod utils;
 
 pub use self::popup::*;
 pub use self::space::*;
