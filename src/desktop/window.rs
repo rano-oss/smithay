@@ -3,11 +3,12 @@ use crate::{
         utils::draw_surface_tree,
         Frame, ImportAll, Renderer, Texture,
     },
-    desktop::{PopupManager, utils::*},
+    desktop::{Space, PopupManager, utils::*},
     utils::{Logical, Point, Rectangle},
     wayland::{
         compositor::with_states,
         shell::xdg::{SurfaceCachedState, ToplevelSurface},
+        output::Output,
     },
 };
 use std::{
@@ -235,17 +236,17 @@ impl Window {
     }
 
     /// Damage of all the surfaces of this window
-    pub(super) fn accumulated_damage(&self) -> Vec<Rectangle<i32, Logical>> {
+    pub(super) fn accumulated_damage(&self, for_values: Option<(&Space, &Output)>) -> Vec<Rectangle<i32, Logical>> {
         let mut damage = Vec::new();
         if let Some(surface) = self.0.toplevel.get_surface() {
-            damage.extend(damage_from_surface_tree(surface, (0, 0)));
+            damage.extend(damage_from_surface_tree(surface, (0, 0), for_values));
             for (popup, location) in PopupManager::popups_for_surface(surface)
                 .ok()
                 .into_iter()
                 .flatten()
             {
                 if let Some(surface) = popup.get_surface() {
-                    let popup_damage = damage_from_surface_tree(surface, location);
+                    let popup_damage = damage_from_surface_tree(surface, location, for_values);
                     damage.extend(popup_damage);
                 }
             }

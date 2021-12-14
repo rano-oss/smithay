@@ -1,6 +1,6 @@
 use crate::{
     backend::renderer::{Renderer, Texture, Frame, ImportAll, utils::draw_surface_tree},
-    desktop::{PopupManager, utils::*},
+    desktop::{Space, PopupManager, utils::*},
     wayland::{
         compositor::{with_states},
         shell::wlr_layer::{LayerSurface as WlrLayerSurface, Layer as WlrLayer, LayerSurfaceCachedState, ExclusiveZone, Anchor, KeyboardInteractivity},
@@ -364,17 +364,17 @@ impl LayerSurface {
     }
     
     /// Damage of all the surfaces of this layer
-    pub(super) fn accumulated_damage(&self) -> Vec<Rectangle<i32, Logical>> {
+    pub(super) fn accumulated_damage(&self, for_values: Option<(&Space, &Output)>) -> Vec<Rectangle<i32, Logical>> {
         let mut damage = Vec::new();
         if let Some(surface) = self.get_surface() {
-            damage.extend(damage_from_surface_tree(surface, (0, 0)));
+            damage.extend(damage_from_surface_tree(surface, (0, 0), for_values));
             for (popup, location) in PopupManager::popups_for_surface(surface)
                 .ok()
                 .into_iter()
                 .flatten()
             {
                 if let Some(surface) = popup.get_surface() {
-                    let popup_damage = damage_from_surface_tree(surface, location);
+                    let popup_damage = damage_from_surface_tree(surface, location, for_values);
                     damage.extend(popup_damage);
                 }
             }
