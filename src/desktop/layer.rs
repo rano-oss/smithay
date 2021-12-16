@@ -104,11 +104,12 @@ impl LayerMap {
         bbox
     }
     
-    pub fn layer_under(
+    pub fn layer_under<P: Into<Point<f64, Logical>>>(
         &self,
         layer: WlrLayer,
-        point: Point<f64, Logical>,
+        point: P,
     ) -> Option<&LayerSurface> {
+        let point = point.into();
         self.layers_on(layer).rev()
         .find(|l| {
             let bbox = self.layer_geometry(l);
@@ -348,10 +349,11 @@ impl LayerSurface {
     
     /// Finds the topmost surface under this point if any and returns it together with the location of this
     /// surface.
-    pub fn surface_under(
+    pub fn surface_under<P: Into<Point<f64, Logical>>>(
         &self,
-        point: Point<f64, Logical>,
+        point: P,
     ) -> Option<(WlSurface, Point<i32, Logical>)> {
+        let point = point.into();
         if let Some(surface) = self.get_surface() {
             for (popup, location) in PopupManager::popups_for_surface(surface).ok().into_iter().flatten() {
                 if let Some(result) = popup.get_surface().and_then(|surface| under_from_surface_tree(surface, point, location)) {
@@ -395,12 +397,12 @@ impl LayerSurface {
     }
 }
 
-pub fn draw_layer<R, E, F, T>(
+pub fn draw_layer<R, E, F, T, P>(
     renderer: &mut R,
     frame: &mut F,
     layer: &LayerSurface,
     scale: f64,
-    location: Point<i32, Logical>,
+    location: P,
     damage: &[Rectangle<i32, Logical>],
     log: &slog::Logger
 ) -> Result<(), R::Error>
@@ -408,8 +410,10 @@ where
     R: Renderer<Error = E, TextureId = T, Frame = F> + ImportAll,
     F: Frame<Error = E, TextureId = T>,
     E: std::error::Error,
-    T: Texture + 'static
+    T: Texture + 'static,
+    P: Into<Point<i32, Logical>>,
 {
+    let location = location.into();
     if let Some(surface) = layer.get_surface() {
         draw_surface_tree(renderer, frame, surface, scale, location, damage, log)?;
         for (popup, p_location) in PopupManager::popups_for_surface(surface)
