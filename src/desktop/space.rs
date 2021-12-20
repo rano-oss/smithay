@@ -551,8 +551,7 @@ impl Space {
                     let lgeo = layer_map.layer_geometry(layer);
                     if damage.iter().any(|geo| lgeo.overlaps(*geo)) {
                         let layer_damage = damage.iter()
-                            .filter(|geo| geo.overlaps(lgeo))
-                            .map(|geo| geo.intersection(lgeo))
+                            .flat_map(|geo| geo.intersection(lgeo))
                             .map(|geo| Rectangle::from_loc_and_size(
                                 geo.loc - lgeo.loc,
                                 geo.size
@@ -570,8 +569,7 @@ impl Space {
                     if damage.iter().any(|geo| wgeo.overlaps(*geo)) {
                         loc -= output_geo.loc;
                         let win_damage = damage.iter()
-                            .filter(|geo| geo.overlaps(wgeo))
-                            .map(|geo| geo.intersection(wgeo))
+                            .flat_map(|geo| geo.intersection(wgeo))
                             .map(|geo| Rectangle::from_loc_and_size(
                                 geo.loc - loc,
                                 geo.size
@@ -587,8 +585,7 @@ impl Space {
                     let lgeo = layer_map.layer_geometry(layer);
                     if damage.iter().any(|geo| lgeo.overlaps(*geo)) {
                         let layer_damage = damage.iter()
-                            .filter(|geo| geo.overlaps(lgeo))
-                            .map(|geo| geo.intersection(lgeo))
+                            .flat_map(|geo| geo.intersection(lgeo))
                             .map(|geo| Rectangle::from_loc_and_size(
                                 geo.loc - lgeo.loc,
                                 geo.size
