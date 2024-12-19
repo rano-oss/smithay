@@ -7,9 +7,9 @@ use wayland_server::{protocol::wl_surface::WlSurface, Dispatch, Resource};
 
 use crate::input::SeatHandler;
 use crate::utils::IsAlive;
-use crate::wayland::input_method::InputMethodHandle;
+use crate::wayland::input_method::v2::InputMethodHandle;
 
-use super::TextInputManagerState;
+use super::TextInputManagerStateV3;
 
 #[derive(Debug)]
 struct Instance {
@@ -146,7 +146,7 @@ pub struct TextInputUserData {
     pub(crate) input_method_handle: InputMethodHandle,
 }
 
-impl<D> Dispatch<ZwpTextInputV3, TextInputUserData, D> for TextInputManagerState
+impl<D> Dispatch<ZwpTextInputV3, TextInputUserData, D> for TextInputManagerStateV3
 where
     D: Dispatch<ZwpTextInputV3, TextInputUserData>,
     D: SeatHandler,

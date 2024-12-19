@@ -10,7 +10,7 @@ use crate::utils::{
     Logical, Point, Rectangle,
 };
 
-use super::InputMethodManagerState;
+use super::InputMethodManagerStateV2;
 
 /// Handle to a popup surface
 #[derive(Debug, Clone, Default)]
@@ -129,7 +129,7 @@ pub struct InputMethodPopupSurfaceUserData {
     pub(super) alive_tracker: AliveTracker,
 }
 
-impl<D> Dispatch<ZwpInputPopupSurfaceV2, InputMethodPopupSurfaceUserData, D> for InputMethodManagerState {
+impl<D> Dispatch<ZwpInputPopupSurfaceV2, InputMethodPopupSurfaceUserData, D> for InputMethodManagerStateV2 {
     fn request(
         _state: &mut D,
         _client: &wayland_server::Client,

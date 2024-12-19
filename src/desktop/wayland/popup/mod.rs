@@ -20,7 +20,7 @@ pub enum PopupKind {
     /// xdg-shell [`PopupSurface`](xdg::PopupSurface)
     Xdg(xdg::PopupSurface),
     /// input-method [`PopupSurface`](input_method::PopupSurface)
-    InputMethod(input_method::PopupSurface),
+    InputMethod(input_method::v2::PopupSurface),
 }
 
 impl IsAlive for PopupKind {
@@ -109,9 +109,9 @@ impl From<xdg::PopupSurface> for PopupKind {
     }
 }
 
-impl From<input_method::PopupSurface> for PopupKind {
+impl From<input_method::v2::PopupSurface> for PopupKind {
     #[inline]
-    fn from(p: input_method::PopupSurface) -> PopupKind {
+    fn from(p: input_method::v2::PopupSurface) -> PopupKind {
         PopupKind::InputMethod(p)
     }
 }

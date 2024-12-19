@@ -47,6 +47,7 @@ use smithay::{
         dmabuf::{
             DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier,
         },
+        // text_input::v3_2::TextInputSeat,
     },
 };
 use tracing::{error, info, trace, warn};
@@ -252,6 +253,7 @@ pub fn run_x11() {
         .shm_state
         .update_formats(state.backend_data.renderer.shm_formats());
     state.space.map_output(&output, (0, 0));
+    //state.seat.text_input().set_im_app_id(ti_to_im_map);
 
     let output_clone = output.clone();
     event_loop

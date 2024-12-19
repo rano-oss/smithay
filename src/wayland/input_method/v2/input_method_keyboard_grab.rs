@@ -16,13 +16,13 @@ use crate::input::{
     },
     SeatHandler,
 };
-use crate::wayland::text_input::TextInputHandle;
+use crate::wayland::text_input::v3::TextInputHandle;
 use crate::{
     backend::input::{KeyState, Keycode},
     utils::Serial,
 };
 
-use super::InputMethodManagerState;
+use super::InputMethodManagerStateV2;
 
 #[derive(Default, Debug)]
 pub(crate) struct InputMethodKeyboard {
@@ -101,7 +101,7 @@ impl<D: SeatHandler> fmt::Debug for InputMethodKeyboardUserData<D> {
 }
 
 impl<D: SeatHandler + 'static> Dispatch<ZwpInputMethodKeyboardGrabV2, InputMethodKeyboardUserData<D>, D>
-    for InputMethodManagerState
+    for InputMethodManagerStateV2
 {
     fn destroyed(
         state: &mut D,

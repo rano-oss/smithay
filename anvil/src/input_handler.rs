@@ -25,7 +25,7 @@ use smithay::{
     utils::{Logical, Point, Serial, Transform, SERIAL_COUNTER as SCOUNTER},
     wayland::{
         compositor::with_states,
-        input_method::InputMethodSeat,
+        input_method::v2::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
         shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer, LayerSurfaceCachedState},
     },

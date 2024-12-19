@@ -14,11 +14,12 @@ use smithay::{
         },
     },
     delegate_compositor, delegate_data_control, delegate_data_device, delegate_fractional_scale,
-    delegate_input_method_manager, delegate_keyboard_shortcuts_inhibit, delegate_layer_shell,
-    delegate_output, delegate_pointer_constraints, delegate_pointer_gestures, delegate_presentation,
-    delegate_primary_selection, delegate_relative_pointer, delegate_seat, delegate_security_context,
-    delegate_shm, delegate_tablet_manager, delegate_text_input_manager, delegate_viewporter,
-    delegate_virtual_keyboard_manager, delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell,
+    delegate_input_method_manager, delegate_input_method_manager_v3, delegate_keyboard_shortcuts_inhibit,
+    delegate_layer_shell, delegate_output, delegate_pointer_constraints, delegate_pointer_gestures,
+    delegate_presentation, delegate_primary_selection, delegate_relative_pointer, delegate_seat,
+    delegate_security_context, delegate_shm, delegate_tablet_manager, delegate_text_input_manager,
+    delegate_text_input_manager_v3_2, delegate_viewporter, delegate_virtual_keyboard_manager,
+    delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell,
     desktop::{
         space::SpaceElement,
         utils::{
@@ -49,7 +50,10 @@ use smithay::{
         compositor::{get_parent, with_states, CompositorClientState, CompositorState},
         dmabuf::DmabufFeedback,
         fractional_scale::{with_fractional_scale, FractionalScaleHandler, FractionalScaleManagerState},
-        input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface},
+        input_method::{
+            v2::{InputMethodHandler, InputMethodManagerStateV2, PopupSurface},
+            v3::InputMethodManagerState,
+        },
         keyboard_shortcuts_inhibit::{
             KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
         },
@@ -82,7 +86,7 @@ use smithay::{
         single_pixel_buffer::SinglePixelBufferState,
         socket::ListeningSocketSource,
         tablet_manager::{TabletManagerState, TabletSeatHandler},
-        text_input::TextInputManagerState,
+        text_input::{v3::TextInputManagerStateV3, v3_2::TextInputManagerState},
         viewporter::ViewporterState,
         virtual_keyboard::VirtualKeyboardManagerState,
         xdg_activation::{
@@ -565,6 +569,9 @@ smithay::delegate_xdg_foreign!(@<BackendData: Backend + 'static> AnvilState<Back
 
 smithay::delegate_single_pixel_buffer!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
+delegate_input_method_manager_v3!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
+delegate_text_input_manager_v3_2!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
+
 impl<BackendData: Backend + 'static> AnvilState<BackendData> {
     pub fn init(
         display: Display<AnvilState<BackendData>>,
@@ -627,9 +634,13 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         let fractional_scale_manager_state = FractionalScaleManagerState::new::<Self>(&dh);
         let xdg_foreign_state = XdgForeignState::new::<Self>(&dh);
         let single_pixel_buffer_state = SinglePixelBufferState::new::<Self>(&dh);
-        TextInputManagerState::new::<Self>(&dh);
-        InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
+        TextInputManagerStateV3::new::<Self>(&dh);
+        InputMethodManagerStateV2::new::<Self, _>(&dh, |_client| true);
         VirtualKeyboardManagerState::new::<Self, _>(&dh, |_client| true);
+        // Testing new protocol
+        InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
+        TextInputManagerState::new::<Self>(&dh);
+        // End testing
         // Expose global only if backend supports relative motion events
         if BackendData::HAS_RELATIVE_MOTION {
             RelativePointerManagerState::new::<Self>(&dh);

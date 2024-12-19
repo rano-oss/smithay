@@ -17,13 +17,13 @@ use wayland_server::{
 use crate::{
     input::{keyboard::KeyboardHandle, SeatHandler},
     utils::{alive_tracker::AliveTracker, Logical, Rectangle, SERIAL_COUNTER},
-    wayland::{compositor, seat::WaylandFocus, text_input::TextInputHandle},
+    wayland::{compositor, seat::WaylandFocus, text_input::v3::TextInputHandle},
 };
 
 use super::{
     input_method_keyboard_grab::InputMethodKeyboardGrab,
     input_method_popup_surface::{PopupHandle, PopupParent, PopupSurface},
-    InputMethodHandler, InputMethodKeyboardUserData, InputMethodManagerState,
+    InputMethodHandler, InputMethodKeyboardUserData, InputMethodManagerStateV2,
     InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
@@ -190,7 +190,7 @@ impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
     }
 }
 
-impl<D> Dispatch<ZwpInputMethodV2, InputMethodUserData<D>, D> for InputMethodManagerState
+impl<D> Dispatch<ZwpInputMethodV2, InputMethodUserData<D>, D> for InputMethodManagerStateV2
 where
     D: Dispatch<ZwpInputMethodV2, InputMethodUserData<D>>,
     D: Dispatch<ZwpInputPopupSurfaceV2, InputMethodPopupSurfaceUserData>,

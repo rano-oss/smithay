@@ -18,7 +18,7 @@ use crate::{
         Seat, SeatHandler, SeatState,
     },
     utils::Serial,
-    wayland::{input_method::InputMethodSeat, text_input::TextInputSeat},
+    wayland::{input_method::v3::InputMethodSeat, text_input::v3_2::TextInputSeat},
 };
 
 impl<D> KeyboardHandle<D>
@@ -157,7 +157,7 @@ fn serialize_pressed_keys(keys: impl Iterator<Item = Keycode>) -> Vec<u8> {
 }
 
 impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
-    fn enter(&self, seat: &Seat<D>, state: &mut D, keys: Vec<KeysymHandle<'_>>, serial: Serial) {
+    fn enter(&self, seat: &Seat<D>, _state: &mut D, keys: Vec<KeysymHandle<'_>>, serial: Serial) {
         *seat.get_keyboard().unwrap().arc.last_enter.lock().unwrap() = Some(serial);
         for_each_focused_kbds(seat, self, |kbd| {
             kbd.enter(
@@ -170,8 +170,11 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
         let text_input = seat.text_input();
         let input_method = seat.input_method();
 
-        if input_method.has_instance() {
-            input_method.deactivate_input_method(state, true);
+        if let Some(app_id) = text_input.im_app_id() {
+            if input_method.has_instance() {
+                input_method.deactivate_input_method(true, app_id);
+                text_input.leave();
+            }
         }
 
         // NOTE: Always set focus regardless whether the client actually has the
@@ -184,15 +187,17 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
         }
     }
 
-    fn leave(&self, seat: &Seat<D>, state: &mut D, serial: Serial) {
+    fn leave(&self, seat: &Seat<D>, _state: &mut D, serial: Serial) {
         *seat.get_keyboard().unwrap().arc.last_enter.lock().unwrap() = None;
         for_each_focused_kbds(seat, self, |kbd| kbd.leave(serial.into(), self));
         let text_input = seat.text_input();
         let input_method = seat.input_method();
 
-        if input_method.has_instance() {
-            input_method.deactivate_input_method(state, true);
-            text_input.leave();
+        if let Some(app_id) = text_input.im_app_id() {
+            if input_method.has_instance() {
+                input_method.deactivate_input_method(true, app_id);
+                text_input.leave();
+            }
         }
 
         text_input.set_focus(None);
