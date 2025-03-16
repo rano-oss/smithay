@@ -28,6 +28,20 @@ pub(crate) struct TextInput {
 }
 
 impl TextInput {
+    fn serial(&self) -> u32 {
+        if let Some(ref surface) = self.focus {
+            if !surface.alive() {
+                return 0;
+            }
+            for ti in self.instances.iter() {
+                if ti.object.id().same_client_as(&surface.id()) {
+                    return ti.serial;
+                }
+            }
+        }
+        0
+    }
+
     fn with_focused_instance<F>(&mut self, mut f: F)
     where
         F: FnMut(&mut Instance, &WlSurface),
@@ -59,6 +73,17 @@ impl TextInput {
             None
         }
     }
+
+    fn input_method_destroyed(&mut self, app_id: String) {
+        for ti in self.instances.iter_mut() {
+            ti.im_app_id.take_if(|im_app_id| *im_app_id == app_id);
+            if let Some(ref surface) = self.focus {
+                if ti.object.id().same_client_as(&surface.id()) {
+                    ti.object.leave(surface);
+                }
+            }
+        }
+    }
 }
 
 /// Handle to text input instances
@@ -87,6 +112,12 @@ impl TextInputHandle {
         }
     }
 
+    /// Gets currently focused text input serial
+    pub fn serial(&self) -> u32 {
+        let inner = self.inner.lock().unwrap();
+        inner.serial()
+    }
+
     /// Return the currently focused surface.
     pub fn focus(&self) -> Option<WlSurface> {
         self.inner.lock().unwrap().focus.clone()
@@ -100,6 +131,10 @@ impl TextInputHandle {
                 instance.im_app_id = Some(im_app_id.clone())
             }
         }
+    }
+
+    pub(crate) fn input_method_destroyed(&self, app_id: String) {
+        self.inner.lock().unwrap().input_method_destroyed(app_id);
     }
 
     /// Return the input method app id
@@ -229,9 +264,11 @@ where
 
         match request {
             wp_text_input_v3::Request::Enable => {
+                println!("EnableERGO: {}", im_app_id);
                 data.input_method_handle.activate_input_method(&focus, im_app_id)
             }
             wp_text_input_v3::Request::Disable => {
+                println!("DisableERGO: {}", im_app_id);
                 data.input_method_handle.deactivate_input_method(false, im_app_id);
             }
             wp_text_input_v3::Request::SetSurroundingText { text, cursor, anchor } => {
@@ -256,11 +293,13 @@ where
                 });
             }
             wp_text_input_v3::Request::SetCursorRectangle { x, y, width, height } => {
+                println!("Setting cursor rectangle");
                 data.input_method_handle.with_instance(im_app_id, |input_method| {
                     input_method.object.cursor_rectangle(x, y, width, height)
                 })
             }
             wp_text_input_v3::Request::Commit => {
+                println!("Committing");
                 data.input_method_handle.with_instance(im_app_id, |input_method| {
                     input_method.done();
                 });
@@ -270,7 +309,7 @@ where
             }
             wp_text_input_v3::Request::ProcessKeys { serial } => {
                 let im_inner = data.input_method_handle.inner.lock().unwrap();
-                let key_index = im_inner.keys.iter().position(|key| key.3 .0 == serial);
+                let key_index = im_inner.keys.iter().position(|key| key.3 == serial);
                 if let Some(key_index) = key_index {
                     data.handle
                         .focused_text_input_serial_or_default(serial, |serial| {
@@ -279,15 +318,14 @@ where
                                 for i in key_index..min(BUFFERSIZE, im_inner.keys.len()) {
                                     let key = im_inner.keys[i];
                                     instance.object.key(serial, key.4, key.0, key.1.into());
-                                    if let Some(serialized) = key.2.map(|m| m.serialized) {
-                                        instance.object.modifiers(
-                                            serial,
-                                            serialized.depressed,
-                                            serialized.latched,
-                                            serialized.locked,
-                                            serialized.layout_effective,
-                                        )
-                                    }
+                                    let serialized = key.2.serialized;
+                                    instance.object.modifiers(
+                                        serial,
+                                        serialized.depressed,
+                                        serialized.latched,
+                                        serialized.locked,
+                                        serialized.layout_effective,
+                                    )
                                 }
                             }
                         });
@@ -303,16 +341,10 @@ where
     }
 
     fn destroyed(_state: &mut D, _client: ClientId, text_input: &WpTextInputV3, data: &TextInputUserData) {
-        let destroyed_id = text_input.id();
         let mut inner = data.handle.inner.lock().unwrap();
-        let im_app_id = if let Some(app_id) = data.handle.im_app_id() {
-            Some(app_id)
-        } else if let Some(app_id) = data.input_method_handle.currently_set_input_method() {
-            Some(app_id)
-        } else {
-            None
-        };
+        let im_app_id = data.handle.im_app_id();
         let deactivate_im = {
+            let destroyed_id = text_input.id();
             inner.instances.retain(|inst| inst.object.id() != destroyed_id);
             let destroyed_focused = inner
                 .focus

@@ -83,7 +83,7 @@ pub use input_method_handle::{InputMethodHandle, InputMethodUserData};
 
 const MANAGER_VERSION: u32 = 1;
 /// Size of key buffer used to reprocess keys e.g text to search
-pub const BUFFERSIZE: usize = 3;
+pub const BUFFERSIZE: usize = 10;
 
 mod input_method_handle;
 
@@ -184,6 +184,7 @@ where
                 input_method,
                 app_id,
             } => {
+                println!("runs every time?");
                 let seat = Seat::<D>::from_resource(&seat).unwrap();
                 let user_data = seat.user_data();
                 user_data.insert_if_missing(TextInputHandle::default);
@@ -201,18 +202,22 @@ where
                 );
                 handle.add_instance(&instance, app_id.clone());
                 text_input_handle.with_focused_instance(|instance, surface| {
+                    println!("always here");
                     let im_app_id = if let Some(im_app_id) = instance.im_app_id.as_ref() {
                         im_app_id.clone()
                     } else {
                         instance.im_app_id = Some(app_id.clone());
                         app_id.clone()
                     };
+                    println!("Im app id: {}", im_app_id);
+                    println!("App id: {}", app_id);
                     if im_app_id == app_id {
                         instance.object.enter(surface)
                     }
                 });
                 let keymap_file = keyboard_handle.arc.keymap.lock().unwrap();
                 let res = keymap_file.with_fd(false, |fd, size| {
+                    println!("Keymap file sent?");
                     instance.keymap(
                         wayland_server::protocol::wl_keyboard::KeymapFormat::XkbV1,
                         fd,

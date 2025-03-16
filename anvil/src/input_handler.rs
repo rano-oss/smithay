@@ -25,9 +25,10 @@ use smithay::{
     utils::{Logical, Point, Serial, Transform, SERIAL_COUNTER as SCOUNTER},
     wayland::{
         compositor::with_states,
-        input_method::v2::InputMethodSeat,
+        input_method::v3::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
         shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer, LayerSurfaceCachedState},
+        text_input::v3_2::TextInputSeat,
     },
 };
 
@@ -246,7 +247,6 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     fn update_keyboard_focus(&mut self, location: Point<f64, Logical>, serial: Serial) {
         let keyboard = self.seat.get_keyboard().unwrap();
         let touch = self.seat.get_touch();
-        let input_method = self.seat.input_method();
         // change the keyboard focus unless the pointer or keyboard is grabbed
         // We test for any matching surface type here but always use the root
         // (in case of a window the toplevel) surface for the focus.
@@ -257,7 +257,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         // see here for a discussion about that issue:
         // https://gitlab.freedesktop.org/wayland/wayland/-/issues/294
         if !self.pointer.is_grabbed()
-            && (!keyboard.is_grabbed() || input_method.keyboard_grabbed())
+            && !keyboard.is_grabbed()
             && !touch.map(|touch| touch.is_grabbed()).unwrap_or(false)
         {
             let output = self.space.output_under(location).next().cloned();
@@ -557,6 +557,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
     pub fn release_all_keys(&mut self) {
         let keyboard = self.seat.get_keyboard().unwrap();
+        let input_method = self.seat.input_method().clone();
+        let text_input = self.seat.text_input().clone();
         for keycode in keyboard.pressed_keys() {
             keyboard.input(
                 self,
@@ -564,7 +566,19 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 KeyState::Released,
                 SCOUNTER.next_serial(),
                 0,
-                |_, _, _| FilterResult::Forward::<bool>,
+                |_, modifiers, _| {
+                    if input_method.input_intercept(
+                        keycode.raw() - 8, //TODO: is this correct?
+                        KeyState::Released.into(),
+                        text_input.serial(),
+                        0,
+                        modifiers,
+                    ) {
+                        FilterResult::Intercept(true)
+                    } else {
+                        FilterResult::Forward::<bool>
+                    }
+                },
             );
         }
     }

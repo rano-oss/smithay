@@ -1,7 +1,7 @@
 use super::{InputMethodManagerState, BUFFERSIZE};
 use crate::{
     input::{
-        keyboard::{GrabStartData, KeyboardGrab, KeyboardHandle},
+        keyboard::{KeyboardHandle, ModifiersState},
         SeatHandler,
     },
     wayland::{
@@ -10,27 +10,24 @@ use crate::{
 };
 use std::{
     collections::VecDeque,
-    fmt,
+    fmt::{self, Debug},
     sync::{Arc, Mutex},
 };
 use wayland_protocols::{
     wp::input_method::v3::server::wp_input_method_v3::{self, WpInputMethodV3},
     xdg::shell::server::xdg_popup::XdgPopup,
 };
-use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
+use wayland_server::{
+    backend::ClientId,
+    protocol::{wl_keyboard::KeyState, wl_surface::WlSurface},
+};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 #[derive(Default, Debug)]
 pub(crate) struct InputMethod {
     pub instances: Vec<Instance>,
     pub current: Option<String>,
-    pub keys: VecDeque<(
-        u32,
-        crate::backend::input::KeyState,
-        Option<crate::input::keyboard::ModifiersState>,
-        crate::utils::Serial,
-        u32,
-    )>,
+    pub keys: VecDeque<(u32, KeyState, crate::input::keyboard::ModifiersState, u32, u32)>,
 }
 
 #[derive(Debug)]
@@ -53,7 +50,6 @@ impl Instance {
 #[derive(Default, Debug, Clone)]
 pub struct InputMethodHandle {
     pub(crate) inner: Arc<Mutex<InputMethod>>,
-    pub(crate) text_input_handle: TextInputHandle,
 }
 
 impl InputMethodHandle {
@@ -63,12 +59,15 @@ impl InputMethodHandle {
         inner.instances.push(Instance {
             object: instance.clone(),
             serial: 0,
-            app_id,
+            app_id: app_id.clone(),
             popup: None,
         });
+        if inner.current.is_none() {
+            inner.current = Some(app_id);
+        }
     }
 
-    /// Whether there's an active instance of input-method.
+    /// Whether there is any instance of input-method.
     pub(crate) fn has_instance(&self) -> bool {
         !self.inner.lock().unwrap().instances.is_empty()
     }
@@ -86,39 +85,46 @@ impl InputMethodHandle {
 
     /// Activate input method on the given surface.
     pub(crate) fn activate_input_method(&self, surface: &WlSurface, app_id: String) {
-        self.with_instance(app_id.clone(), |instance| {
+        let mut inner = self.inner.lock().unwrap();
+        inner.current = Some(app_id.clone());
+        println!("{:?}", inner.instances);
+        let instance = inner.instances.iter().find(|instance| instance.app_id == app_id);
+        if let Some(instance) = instance {
+            println!("We sent activation");
             instance.object.activate(app_id.clone());
-            if let Some(popup) = instance.popup.as_mut() {
-                // Remove old popup.
-                popup.popup_done();
+        }
+        //     if let Some(popup) = instance.popup.as_mut() {
+        //         // Remove old popup.
+        //         popup.popup_done();
 
-                let data = popup
-                    .data::<crate::wayland::shell::xdg::XdgShellSurfaceUserData>()
-                    .unwrap();
+        //         let data = popup
+        //             .data::<crate::wayland::shell::xdg::XdgShellSurfaceUserData>()
+        //             .unwrap();
 
-                compositor::with_states(&data.wl_surface, move |states| {
-                    states
-                        .data_map
-                        .get::<XdgPopupSurfaceData>()
-                        .unwrap()
-                        .lock()
-                        .unwrap()
-                        .parent = Some(surface.clone());
-                });
-            }
-        });
+        //         compositor::with_states(&data.wl_surface, move |states| {
+        //             states
+        //                 .data_map
+        //                 .get::<XdgPopupSurfaceData>()
+        //                 .unwrap()
+        //                 .lock()
+        //                 .unwrap()
+        //                 .parent = Some(surface.clone());
+        //         });
+        //     }
     }
 
     /// Deactivate the active input method.
     ///
     /// The `done` is required in cases where the change in state is initiated not by text-input.
     pub(crate) fn deactivate_input_method(&self, done: bool, app_id: String) {
-        self.with_instance(app_id.clone(), |instance| {
+        let mut inner = self.inner.lock().unwrap();
+        let instance = inner.instances.iter().find(|instance| instance.app_id == app_id);
+        if let Some(instance) = instance {
             instance.object.deactivate();
             if done {
-                instance.done();
+                instance.object.done();
             }
-            if let Some(popup) = instance.popup.as_mut() {
+            if let Some(popup) = &instance.popup {
                 popup.popup_done();
 
                 let data = popup
@@ -135,12 +141,48 @@ impl InputMethodHandle {
                         .parent = None;
                 });
             }
-        });
+        }
+        inner.current = None;
     }
 
-    pub(crate) fn currently_set_input_method(&self) -> Option<String> {
+    /// Gets the currently set input method
+    pub fn currently_set_input_method(&self) -> Option<String> {
         let inner = self.inner.lock().unwrap();
         inner.current.clone()
+    }
+
+    /// input method keyboard intercept
+    pub fn input_intercept(
+        &self,
+        keycode: u32,
+        state: KeyState,
+        serial: u32,
+        time: u32,
+        modifiers: &ModifiersState,
+    ) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(current) = inner.current.clone() {
+            if let Some(instance) = inner.instances.iter().find(|inst| inst.app_id == current) {
+                instance.object.key(serial, time, keycode, state);
+                let serialized = modifiers.serialized;
+                instance.object.modifiers(
+                    serial,
+                    serialized.depressed,
+                    serialized.latched,
+                    serialized.locked,
+                    serialized.layout_effective,
+                );
+                if inner.keys.len() == BUFFERSIZE {
+                    inner.keys.pop_front();
+                }
+                inner.keys.push_back((keycode, state, *modifiers, serial, time));
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     }
 }
 
@@ -300,81 +342,13 @@ where
             .instances
             .iter()
             .find(|inst| inst.object.id() == input_method.id());
-        if let Some(instance) = instance {
-            data.text_input_handle
-                .with_focused_instance(|ti_instance, surface| {
-                    if ti_instance
-                        .im_app_id
-                        .as_ref()
-                        .is_some_and(|app_id| *app_id == instance.app_id)
-                    {
-                        ti_instance.object.leave(surface);
-                    }
-                });
+        if let Some(instance) = instance.as_deref() {
+            let im_app_id = instance.app_id.clone();
+            data.text_input_handle.input_method_destroyed(im_app_id.clone());
+            inner.current.take_if(|app_id| *app_id == im_app_id);
         }
         inner
             .instances
             .retain(|inst| inst.object.id() != input_method.id());
     }
-}
-
-impl<D> KeyboardGrab<D> for InputMethodHandle
-where
-    D: SeatHandler + 'static,
-{
-    fn input(
-        &mut self,
-        data: &mut D,
-        handle: &mut crate::input::keyboard::KeyboardInnerHandle<'_, D>,
-        keycode: xkbcommon::xkb::Keycode,
-        key_state: crate::backend::input::KeyState,
-        modifiers: Option<crate::input::keyboard::ModifiersState>,
-        serial: crate::utils::Serial,
-        time: u32,
-    ) {
-        let mut inner = self.inner.lock().unwrap();
-        if inner.keys.len() == BUFFERSIZE {
-            inner.keys.pop_front();
-        }
-        inner
-            .keys
-            .push_back(((keycode.raw() - 8), key_state, modifiers, serial, time));
-        if let Some(app_id) = self.text_input_handle.im_app_id() {
-            self.text_input_handle
-                .focused_text_input_serial_or_default(serial.0, |serial| {
-                    let instance = inner.instances.iter().find(|inst| inst.app_id == app_id);
-                    if let Some(instance) = instance {
-                        instance
-                            .object
-                            .key(serial, time, keycode.raw() - 8, key_state.into());
-                        if let Some(serialized) = modifiers.map(|m| m.serialized) {
-                            instance.object.modifiers(
-                                serial,
-                                serialized.depressed,
-                                serialized.latched,
-                                serialized.locked,
-                                serialized.layout_effective,
-                            )
-                        }
-                    }
-                });
-        }
-        handle.input(data, keycode, key_state, modifiers, serial, time)
-    }
-
-    fn set_focus(
-        &mut self,
-        data: &mut D,
-        handle: &mut crate::input::keyboard::KeyboardInnerHandle<'_, D>,
-        focus: Option<<D as SeatHandler>::KeyboardFocus>,
-        serial: crate::utils::Serial,
-    ) {
-        handle.set_focus(data, focus, serial)
-    }
-
-    fn start_data(&self) -> &crate::input::keyboard::GrabStartData<D> {
-        &GrabStartData { focus: None }
-    }
-
-    fn unset(&mut self, _data: &mut D) {}
 }
