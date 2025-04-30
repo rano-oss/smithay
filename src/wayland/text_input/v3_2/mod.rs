@@ -145,7 +145,6 @@ where
     ) {
         match request {
             wp_text_input_manager_v3::Request::GetTextInput { id, seat, app_id } => {
-                println!("Got the text input!");
                 let seat = Seat::<D>::from_resource(&seat).unwrap();
                 let user_data = seat.user_data();
                 user_data.insert_if_missing(TextInputHandle::default);
@@ -165,7 +164,6 @@ where
                     input_method_handle.currently_set_input_method(),
                 );
                 if input_method_handle.has_instance() {
-                    println!("Handle entered, cause there was an input method present!");
                     handle.enter();
                 }
             }

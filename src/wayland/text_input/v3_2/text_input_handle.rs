@@ -245,13 +245,14 @@ where
             return;
         }
 
-        let focus = match data.handle.focus() {
-            Some(focus) if focus.id().same_client_as(&resource.id()) => focus,
-            _ => {
-                debug!("discarding text-input request for unfocused client");
-                return;
-            }
-        };
+        if !data
+            .handle
+            .focus()
+            .is_some_and(|focus| focus.id().same_client_as(&resource.id()))
+        {
+            debug!("discarding text-input request for unfocused client");
+            return;
+        }
 
         let im_app_id = if let Some(app_id) = data.handle.im_app_id() {
             app_id
@@ -263,12 +264,8 @@ where
         };
 
         match request {
-            wp_text_input_v3::Request::Enable => {
-                println!("EnableERGO: {}", im_app_id);
-                data.input_method_handle.activate_input_method(&focus, im_app_id)
-            }
+            wp_text_input_v3::Request::Enable => data.input_method_handle.activate_input_method(im_app_id),
             wp_text_input_v3::Request::Disable => {
-                println!("DisableERGO: {}", im_app_id);
                 data.input_method_handle.deactivate_input_method(false, im_app_id);
             }
             wp_text_input_v3::Request::SetSurroundingText { text, cursor, anchor } => {
@@ -293,15 +290,13 @@ where
                 });
             }
             wp_text_input_v3::Request::SetCursorRectangle { x, y, width, height } => {
-                println!("Setting cursor rectangle");
                 data.input_method_handle.with_instance(im_app_id, |input_method| {
                     input_method.object.cursor_rectangle(x, y, width, height)
                 })
             }
             wp_text_input_v3::Request::Commit => {
-                println!("Committing");
                 data.input_method_handle.with_instance(im_app_id, |input_method| {
-                    input_method.done();
+                    input_method.object.done();
                 });
             }
             wp_text_input_v3::Request::Destroy => {
@@ -317,15 +312,16 @@ where
                             if let Some(instance) = instance {
                                 for i in key_index..min(BUFFERSIZE, im_inner.keys.len()) {
                                     let key = im_inner.keys[i];
-                                    instance.object.key(serial, key.4, key.0, key.1.into());
-                                    let serialized = key.2.serialized;
-                                    instance.object.modifiers(
-                                        serial,
-                                        serialized.depressed,
-                                        serialized.latched,
-                                        serialized.locked,
-                                        serialized.layout_effective,
-                                    )
+                                    instance.object.key(serial, key.4, key.0.into(), key.1.into());
+                                    if let Some(serialized) = key.2.map(|m| m.serialized) {
+                                        instance.object.modifiers(
+                                            serial,
+                                            serialized.depressed,
+                                            serialized.latched,
+                                            serialized.locked,
+                                            serialized.layout_effective,
+                                        )
+                                    }
                                 }
                             }
                         });

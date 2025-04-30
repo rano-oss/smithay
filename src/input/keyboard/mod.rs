@@ -2,6 +2,7 @@
 
 use crate::backend::input::KeyState;
 use crate::utils::{IsAlive, Serial, SERIAL_COUNTER};
+use crate::wayland::input_method::v3::InputMethodSeat;
 use std::collections::HashSet;
 #[cfg(feature = "wayland_frontend")]
 use std::sync::RwLock;
@@ -951,7 +952,18 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             return Some(val);
         }
 
-        self.input_forward(data, keycode, state, serial, time, mods_changed);
+        let seat = self.get_seat(data);
+        let guard = self.arc.internal.lock().unwrap();
+        let modifiers = mods_changed.then_some(guard.mods_state);
+        drop(guard);
+        // forward to input method if present and active
+        if !seat
+            .input_method()
+            .input_intercept(keycode, state, serial, time, modifiers)
+        {
+            self.input_forward(data, keycode, state, serial, time, mods_changed);
+        }
+
         None
     }
 
@@ -990,7 +1002,6 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             let seat = self.get_seat(data);
             data.led_state_changed(&seat, led_state);
         }
-
         (filter_result, mods_changed)
     }
 

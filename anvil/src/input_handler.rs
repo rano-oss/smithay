@@ -25,10 +25,8 @@ use smithay::{
     utils::{Logical, Point, Serial, Transform, SERIAL_COUNTER as SCOUNTER},
     wayland::{
         compositor::with_states,
-        input_method::v3::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
         shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer, LayerSurfaceCachedState},
-        text_input::v3_2::TextInputSeat,
     },
 };
 
@@ -557,8 +555,6 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
     pub fn release_all_keys(&mut self) {
         let keyboard = self.seat.get_keyboard().unwrap();
-        let input_method = self.seat.input_method().clone();
-        let text_input = self.seat.text_input().clone();
         for keycode in keyboard.pressed_keys() {
             keyboard.input(
                 self,
@@ -566,19 +562,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 KeyState::Released,
                 SCOUNTER.next_serial(),
                 0,
-                |_, modifiers, _| {
-                    if input_method.input_intercept(
-                        keycode.raw() - 8, //TODO: is this correct?
-                        KeyState::Released.into(),
-                        text_input.serial(),
-                        0,
-                        modifiers,
-                    ) {
-                        FilterResult::Intercept(true)
-                    } else {
-                        FilterResult::Forward::<bool>
-                    }
-                },
+                |_, _, _| FilterResult::Forward::<bool>,
             );
         }
     }
