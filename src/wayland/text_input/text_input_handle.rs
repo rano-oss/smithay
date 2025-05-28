@@ -267,6 +267,55 @@ where
                 pending_state.cursor_rectangle = Some(Rectangle::new((x, y).into(), (width, height).into()));
             }
             zwp_text_input_v3::Request::Commit => {
+                commit(state, pending_state, new_state, guard, data, resource, focus);
+            }
+            zwp_text_input_v3::Request::Destroy => {
+                // Nothing to do
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn destroyed(state: &mut D, _client: ClientId, text_input: &ZwpTextInputV3, data: &TextInputUserData) {
+        let destroyed_id = text_input.id();
+        let deactivate_im = {
+            let mut inner = data.handle.inner.lock().unwrap();
+            inner.instances.retain(|inst| inst.instance.id() != destroyed_id);
+            let destroyed_focused = inner
+                .focus
+                .as_ref()
+                .map(|focus| focus.id().same_client_as(&destroyed_id))
+                .unwrap_or(true);
+
+            // Deactivate IM when we either lost focus entirely or destroyed text-input for the
+            // currently focused client.
+            destroyed_focused
+                && !inner
+                    .instances
+                    .iter()
+                    .any(|inst| inst.instance.id().same_client_as(&destroyed_id))
+        };
+
+        if deactivate_im {
+            data.input_method_handle.deactivate_input_method(state);
+        }
+    }
+}
+
+use std::sync::MutexGuard;
+
+fn commit<D>(
+    state: &mut D,
+    pending_state: &mut TextInputState,
+    guard: MutexGuard<'_, TextInput>,
+    data: (),
+    resource: (),
+    focus: (),
+) where
+    D: Dispatch<ZwpTextInputV3, TextInputUserData>,
+    D: SeatHandler,
+    D: 'static,
+{
                 let mut new_state = mem::take(pending_state);
                 let _ = pending_state;
                 let active_text_input_id = &mut guard.active_text_input_id;
@@ -340,39 +389,7 @@ where
                     input_method.done();
                 });
                 data.input_method_v3_handle.done();
-            }
-            zwp_text_input_v3::Request::Destroy => {
-                // Nothing to do
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    fn destroyed(state: &mut D, _client: ClientId, text_input: &ZwpTextInputV3, data: &TextInputUserData) {
-        let destroyed_id = text_input.id();
-        let deactivate_im = {
-            let mut inner = data.handle.inner.lock().unwrap();
-            inner.instances.retain(|inst| inst.instance.id() != destroyed_id);
-            let destroyed_focused = inner
-                .focus
-                .as_ref()
-                .map(|focus| focus.id().same_client_as(&destroyed_id))
-                .unwrap_or(true);
-
-            // Deactivate IM when we either lost focus entirely or destroyed text-input for the
-            // currently focused client.
-            destroyed_focused
-                && !inner
-                    .instances
-                    .iter()
-                    .any(|inst| inst.instance.id().same_client_as(&destroyed_id))
-        };
-
-        if deactivate_im {
-            data.input_method_handle.deactivate_input_method(state);
             data.input_method_v3_handle.deactivate_input_method(state);
-        }
-    }
 }
 
 #[derive(Debug)]
