@@ -1,7 +1,7 @@
 use std::mem;
 use std::sync::{Arc, Mutex};
 
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::{
     self, ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3,
 };
@@ -267,7 +267,14 @@ where
                 pending_state.cursor_rectangle = Some(Rectangle::new((x, y).into(), (width, height).into()));
             }
             zwp_text_input_v3::Request::Commit => {
-                commit(state, pending_state, new_state, guard, data, resource, focus);
+                if resource.version() == 1 {
+                    let new_state = mem::take(pending_state);
+                    // Drop mutable reference to guard so it can be moved.
+                    let _ = pending_state;
+                    commit(state, new_state, guard, data, resource, focus);
+                } else {
+                    info!("Spurious commit. text-input-v3 version 2 and above commits on wl_surface.commit");
+                }
             }
             zwp_text_input_v3::Request::Destroy => {
                 // Nothing to do
@@ -306,18 +313,17 @@ use std::sync::MutexGuard;
 
 fn commit<D>(
     state: &mut D,
-    pending_state: &mut TextInputState,
-    guard: MutexGuard<'_, TextInput>,
-    data: (),
-    resource: (),
-    focus: (),
+    mut new_state: TextInputState,
+    mut guard: MutexGuard<'_, TextInput>,
+    data: &TextInputUserData,
+    resource: &ZwpTextInputV3,
+    focus: WlSurface,
 ) where
     D: Dispatch<ZwpTextInputV3, TextInputUserData>,
     D: SeatHandler,
     D: 'static,
 {
-                let mut new_state = mem::take(pending_state);
-                let _ = pending_state;
+                
                 let active_text_input_id = &mut guard.active_text_input_id;
 
                 if active_text_input_id.is_some() && *active_text_input_id != Some(resource.id()) {
