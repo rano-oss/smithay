@@ -51,6 +51,7 @@
 //! ```
 //!
 
+use std::sync::Mutex;
 use wl_input_method::text_input::mr::server::{
     zwp_text_input_manager_v3::{self, ZwpTextInputManagerV3},
     zwp_text_input_v3::ZwpTextInputV3,
@@ -161,11 +162,12 @@ where
                         handle: handle.clone(),
                         input_method_handle: input_method_handle.clone(),
                         input_method_v3_handle: input_method_v3_handle.clone(),
+                        surface_commit_hook: Mutex::new(None),
                     },
                 );
                 handle.add_instance(&instance);
                 if input_method_handle.has_instance() {
-                    handle.enter();
+                    handle.enter::<D>();
                 }
                 if input_method_v3_handle.has_instance() {
                     handle.enter();

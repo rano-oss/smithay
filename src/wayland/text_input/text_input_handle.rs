@@ -11,6 +11,7 @@ use wayland_server::{protocol::wl_surface::WlSurface, Dispatch, Resource};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
+use crate::wayland::compositor::{self, HookId};
 use crate::wayland::input_method;
 use crate::wayland::input_method_v3;
 
@@ -114,18 +115,31 @@ impl TextInputHandle {
         inner.active_text_input_id = None;
         // NOTE: we implement it in a symmetrical way with `enter`.
         inner.with_focused_client_all_text_inputs(|text_input, focus, _| {
+            if text_input.version() == 2 {
+                let data = text_input.data::<TextInputUserData>().unwrap();
+                let mut hook = data.surface_commit_hook.lock().unwrap();
+                let hook = hook.take().unwrap();
+                compositor::remove_post_commit_hook(&focus, hook);
+            }
             text_input.leave(focus);
         });
     }
 
     /// Send `enter` on the text-input instance for the currently focused
     /// surface.
-    pub fn enter(&self) {
+    pub fn enter<D: 'static>(&self) {
         let mut inner = self.inner.lock().unwrap();
         // NOTE: protocol states that if we have multiple text inputs enabled, `enter` must
         // be send for each of them.
         inner.with_focused_client_all_text_inputs(|text_input, focus, _| {
             text_input.enter(focus);
+            if text_input.version() == 2 {
+                let hook = compositor::add_post_commit_hook::<D, _>(&focus, |_state, _dh, _surface| {
+                    println!("text input 3.2 commit");
+                });
+                let data = text_input.data::<TextInputUserData>().unwrap();
+                *data.surface_commit_hook.lock().unwrap() = Some(hook);
+            }
         });
     }
 
@@ -190,6 +204,12 @@ pub struct TextInputUserData {
     pub(super) handle: TextInputHandle,
     pub(crate) input_method_handle: input_method::InputMethodHandle,
     pub(crate) input_method_v3_handle: input_method_v3::InputMethodHandle,
+    /// For version 2 and above, this assocates the text-input to a surface.
+    /// wl_surface.commit triggers the text-input state update.
+    /// This holds the post-commit hook id that does the state update.
+    /// This `HookId` makes it possible to unregister the hook
+    /// and stop updates when text-input is disabled.
+    pub(super) surface_commit_hook: Mutex<Option<HookId>>,
 }
 
 impl<D> Dispatch<ZwpTextInputV3, TextInputUserData, D> for TextInputManagerState
