@@ -115,7 +115,7 @@ impl TextInputHandle {
         inner.active_text_input_id = None;
         // NOTE: we implement it in a symmetrical way with `enter`.
         inner.with_focused_client_all_text_inputs(|text_input, focus, _| {
-            if text_input.version() == 2 {
+            if text_input.version() >= 2 {
                 let data = text_input.data::<TextInputUserData>().unwrap();
                 let mut hook = data.surface_commit_hook.lock().unwrap();
                 let hook = hook.take().unwrap();
@@ -127,19 +127,14 @@ impl TextInputHandle {
 
     /// Send `enter` on the text-input instance for the currently focused
     /// surface.
-    pub fn enter<D: 'static>(&self) {
+    pub fn enter(&self) {
         let mut inner = self.inner.lock().unwrap();
         // NOTE: protocol states that if we have multiple text inputs enabled, `enter` must
         // be send for each of them.
         inner.with_focused_client_all_text_inputs(|text_input, focus, _| {
             text_input.enter(focus);
-            if text_input.version() == 2 {
-                let hook = compositor::add_post_commit_hook::<D, _>(&focus, |_state, _dh, _surface| {
-                    println!("text input 3.2 commit");
-                });
-                let data = text_input.data::<TextInputUserData>().unwrap();
-                *data.surface_commit_hook.lock().unwrap() = Some(hook);
-            }
+            let data = text_input.data::<TextInputUserData>().unwrap();
+            (data.on_enter)(text_input, focus);
         });
     }
 
@@ -210,6 +205,9 @@ pub struct TextInputUserData {
     /// This `HookId` makes it possible to unregister the hook
     /// and stop updates when text-input is disabled.
     pub(super) surface_commit_hook: Mutex<Option<HookId>>,
+    /// Store this function to break the compile-time check against Dispatch<ZwpTextInputV3> because .enter will get called from the keyboard module, and it's easier to reason about the code if that module doesn't get infected by the dependency.
+    /// By storing the function, the call is only known at runtime, so the constraint is not checked.
+    pub(super) on_enter: fn(&ZwpTextInputV3, &WlSurface),
 }
 
 impl<D> Dispatch<ZwpTextInputV3, TextInputUserData, D> for TextInputManagerState
@@ -435,6 +433,41 @@ use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3;
             data.input_method_v3_handle.deactivate_input_method(state);
 }
 
+pub(super) fn on_enter<D>(text_input: &ZwpTextInputV3, focus: &WlSurface)
+    where
+    D: Dispatch<ZwpTextInputV3, TextInputUserData>,
+    D: SeatHandler,
+    D: input_method_v3::InputMethodHandler,
+    D: 'static
+{
+    if text_input.version() >= 2 {
+        let resource = text_input.clone();
+        let hook = compositor::add_post_commit_hook::<D, _>(&focus, move |state, _dh, wl_surface| {
+            println!("text input 3.2 commit {:?}", wl_surface);
+            let data = resource.data::<TextInputUserData>().unwrap();
+            let guard = data.handle.inner.lock().unwrap();
+            // TODO: this is a near-copy (except mut) from request handler. maybe can be unified
+            let pending_state = match guard.instances.iter().find_map(|instance| {
+                if instance.instance == resource {
+                    Some(&instance.pending_state)
+                } else {
+                    None
+                }
+            }) {
+                Some(pending_state) => pending_state,
+                None => {
+                    debug!("got request for untracked text-input");
+                    return;
+                }
+            };
+            
+            commit(state, pending_state.clone(), guard, data, &resource, wl_surface.clone());
+        });
+        let data = text_input.data::<TextInputUserData>().unwrap();
+        *data.surface_commit_hook.lock().unwrap() = Some(hook);
+    }
+}
+
 #[derive(Debug)]
 struct Instance {
     instance: ZwpTextInputV3,
@@ -442,7 +475,7 @@ struct Instance {
     pending_state: TextInputState,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct TextInputState {
     enable: Option<bool>,
     surrounding_text: Option<(String, u32, u32)>,

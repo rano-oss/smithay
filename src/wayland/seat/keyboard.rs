@@ -195,7 +195,7 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
 
         // Only notify on `enter` once we have an actual IME.
         if input_method.has_instance() || input_method_v3.has_instance() {
-            text_input.enter::<D>();
+            text_input.enter();
         }
     }
 

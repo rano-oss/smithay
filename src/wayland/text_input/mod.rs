@@ -134,6 +134,7 @@ where
     D: Dispatch<ZwpTextInputManagerV3, ()>,
     D: Dispatch<ZwpTextInputV3, TextInputUserData>,
     D: SeatHandler,
+    D: input_method_v3::InputMethodHandler,
     D: 'static,
 {
     fn request(
@@ -163,11 +164,12 @@ where
                         input_method_handle: input_method_handle.clone(),
                         input_method_v3_handle: input_method_v3_handle.clone(),
                         surface_commit_hook: Mutex::new(None),
+                        on_enter: text_input_handle::on_enter::<D>,
                     },
                 );
                 handle.add_instance(&instance);
                 if input_method_handle.has_instance() {
-                    handle.enter::<D>();
+                    handle.enter();
                 }
                 if input_method_v3_handle.has_instance() {
                     handle.enter();
