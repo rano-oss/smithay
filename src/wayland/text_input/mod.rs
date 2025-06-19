@@ -51,7 +51,7 @@
 //! ```
 //!
 
-use wayland_protocols::wp::text_input::zv3::server::{
+use wl_input_method::text_input::mr::server::{
     zwp_text_input_manager_v3::{self, ZwpTextInputManagerV3},
     zwp_text_input_v3::ZwpTextInputV3,
 };
@@ -184,15 +184,15 @@ where
 macro_rules! delegate_text_input_manager {
     ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
         $crate::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::text_input::zv3::server::zwp_text_input_manager_v3::ZwpTextInputManagerV3: ()
+            $crate::reexports::wl_input_method::text_input::mr::server::zwp_text_input_manager_v3::ZwpTextInputManagerV3: ()
         ] => $crate::wayland::text_input::TextInputManagerState);
 
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::text_input::zv3::server::zwp_text_input_manager_v3::ZwpTextInputManagerV3: ()
+            $crate::reexports::wl_input_method::text_input::mr::server::zwp_text_input_manager_v3::ZwpTextInputManagerV3: ()
         ] => $crate::wayland::text_input::TextInputManagerState);
 
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::ZwpTextInputV3:
+            $crate::reexports::wl_input_method::text_input::mr::server::zwp_text_input_v3::ZwpTextInputV3:
             $crate::wayland::text_input::TextInputUserData
         ] => $crate::wayland::text_input::TextInputManagerState);
     };

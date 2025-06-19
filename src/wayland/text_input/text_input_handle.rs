@@ -2,8 +2,9 @@ use std::mem;
 use std::sync::{Arc, Mutex};
 
 use tracing::{debug, info, warn};
-use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::{
-    self, ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3,
+use wl_input_method::text_input::mr::server::zwp_text_input_v3;
+use zwp_text_input_v3::{
+    ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3,
 };
 use wayland_server::backend::{ClientId, ObjectId};
 use wayland_server::{protocol::wl_surface::WlSurface, Dispatch, Resource};
@@ -358,7 +359,7 @@ fn commit<D>(
                         drop(guard);
                     }
                 }
-
+use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3;
                 if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
                     data.input_method_handle.with_instance(|input_method| {
                         input_method.object.surrounding_text(text.clone(), cursor, anchor)
@@ -369,6 +370,11 @@ fn commit<D>(
                 }
 
                 if let Some(cause) = new_state.text_change_cause.take() {
+                    let cause = match cause {
+                        ChangeCause::InputMethod => zwp_text_input_v3::ChangeCause::InputMethod,
+                        ChangeCause::Other => zwp_text_input_v3::ChangeCause::Other,
+                        _ => zwp_text_input_v3::ChangeCause::Other,
+                    };
                     data.input_method_handle.with_instance(move |input_method| {
                         input_method.object.text_change_cause(cause);
                     });
@@ -378,6 +384,16 @@ fn commit<D>(
                 }
 
                 if let Some((hint, purpose)) = new_state.content_type.take() {
+                    let hint =/* match hint {
+                        ContentHint::None => zwp_text_input_v3::ContentHint::None,
+                        _ => zwp_text_input_v3::ContentHint::None,
+                    };*/
+                    zwp_text_input_v3::ContentHint::None;
+                    let purpose = match purpose {
+                        ContentPurpose::Normal => zwp_text_input_v3::ContentPurpose::Normal,
+                        ContentPurpose::Terminal => zwp_text_input_v3::ContentPurpose::Terminal,
+                        _ => zwp_text_input_v3::ContentPurpose::Normal,
+                    };
                     data.input_method_handle.with_instance(move |input_method| {
                         input_method.object.content_type(hint, purpose);
                     });
