@@ -321,6 +321,7 @@ fn commit<D>(
 ) where
     D: Dispatch<ZwpTextInputV3, TextInputUserData>,
     D: SeatHandler,
+    D: input_method_v3::InputMethodHandler,
     D: 'static,
 {
                 
