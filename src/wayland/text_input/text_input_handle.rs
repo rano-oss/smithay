@@ -324,6 +324,7 @@ where
 
         if deactivate_im {
             data.input_method_handle.deactivate_input_method(state);
+            data.input_method_v3_handle.deactivate_input_method(state);
         }
     }
 }
@@ -430,7 +431,6 @@ use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3;
                     input_method.done();
                 });
                 data.input_method_v3_handle.done();
-            data.input_method_v3_handle.deactivate_input_method(state);
 }
 
 pub(super) fn on_enter<D>(text_input: &ZwpTextInputV3, focus: &WlSurface)
@@ -473,8 +473,11 @@ struct Instance {
     instance: ZwpTextInputV3,
     serial: u32,
     pending_state: TextInputState,
+    /// In protocol version 3.2, the cursor_rectangle does not get updated on text_input.commit. This is the cached value we send to the input method instead. This gets updated on wl_surface.commit. Then the updated value gets sent.
+    //current_cursor_rectangle: Option<Rectangle<i32, Logical>>,
 }
 
+/// Client-defined state of the text_input object.
 #[derive(Debug, Default, Clone)]
 struct TextInputState {
     enable: Option<bool>,
