@@ -79,7 +79,7 @@ impl TextInputHandle {
             instance: instance.clone(),
             serial: 0,
             pending_state: Default::default(),
-            pending_cursor_rectangle: None,
+            stage2_cursor_rectangle: None,
         });
     }
 
@@ -252,9 +252,9 @@ where
         };
 
         let mut guard = data.handle.inner.lock().unwrap();
-        let (pending_state, pending_cursor_state) = match guard.instances.iter_mut().find_map(|instance| {
+        let (pending_state, stage2_cursor_state) = match guard.instances.iter_mut().find_map(|instance| {
             if instance.instance == *resource {
-                Some((&mut instance.pending_state, &mut instance.pending_cursor_rectangle))
+                Some((&mut instance.pending_state, &mut instance.stage2_cursor_rectangle))
             } else {
                 None
             }
@@ -285,12 +285,12 @@ where
             }
             zwp_text_input_v3::Request::SetCursorRectangle { x, y, width, height } => {
                 pending_state.cursor_rectangle = Some(Rectangle::new((x, y).into(), (width, height).into()));
-                *pending_cursor_state = Some(Rectangle::new((x, y).into(), (width, height).into()));
             }
             zwp_text_input_v3::Request::Commit => {
+                *stage2_cursor_state = pending_state.cursor_rectangle.clone();
                 let new_state = mem::take(pending_state);
                 // Drop mutable reference to guard so it can be moved.
-                let _ = pending_state;
+                let _ = (pending_state, stage2_cursor_state);
                 commit(state, new_state, guard, data, resource, focus);
             }
             zwp_text_input_v3::Request::Destroy => {
@@ -453,9 +453,9 @@ pub(super) fn on_enter<D>(text_input: &ZwpTextInputV3, focus: &WlSurface)
             let data = resource.data::<TextInputUserData>().unwrap();
             let mut guard = data.handle.inner.lock().unwrap();
             // TODO: this is a near-copy from request handler. maybe can be unified
-            let (pending_state, pending_cursor_state) = match guard.instances.iter_mut().find_map(|instance| {
+            let (pending_state, cursor_state) = match guard.instances.iter_mut().find_map(|instance| {
                 if instance.instance == resource {
-                    Some((&mut instance.pending_state, &mut instance.pending_cursor_rectangle))
+                    Some((&mut instance.pending_state, &mut instance.stage2_cursor_rectangle))
                 } else {
                     None
                 }
@@ -466,8 +466,8 @@ pub(super) fn on_enter<D>(text_input: &ZwpTextInputV3, focus: &WlSurface)
                     return;
                 }
             };
-            dbg!(&pending_state, &pending_cursor_state);
-            if let Some(rect) = pending_cursor_state.take() {
+
+            if let Some(rect) = cursor_state.take() {
                 println!("text input 3.2 surface commit new cursor {:?}", rect);
                 data.input_method_handle
                     .set_text_input_rectangle::<D>(state, rect);
@@ -489,17 +489,17 @@ struct Instance {
     instance: ZwpTextInputV3,
     serial: u32,
     pending_state: TextInputState,
-    /// In protocol version 3.2, the cursor_rectangle does not get updated on text_input.commit. This is the cached value we send to the input method instead. This gets updated on wl_surface.commit. Then the updated value gets sent.
-    pending_cursor_rectangle: Option<Rectangle<i32, Logical>>,
+    /// In protocol version 3.2, the cursor_rectangle does not get updated on text_input.commit. This gets updated and sent to the input method on wl_surface.commit.
+    stage2_cursor_rectangle: Option<Rectangle<i32, Logical>>,
 }
 
-/// State of the text_input object applied on text-input.commit
+/// State of the text_input object set on text-input.commit
 #[derive(Debug, Default, Clone)]
 struct TextInputState {
     enable: Option<bool>,
     surrounding_text: Option<(String, u32, u32)>,
     content_type: Option<(ContentHint, ContentPurpose)>,
-    /// Only present in v3.1
+    /// Does not immediately get applied, instead the value goes to stage2 on Instance.
     cursor_rectangle: Option<Rectangle<i32, Logical>>,
     text_change_cause: Option<ChangeCause>,
 }
