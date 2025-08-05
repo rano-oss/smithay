@@ -2,7 +2,7 @@ use super::InputMethodManagerState;
 use crate::utils::{Logical, Point, Rectangle, Size};
 use std::cmp::min;
 use std::sync::Mutex;
-use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_positioner_v1::{
+use wl_input_method::input_method::v1::server::xx_input_popup_positioner_v1::{
     self, Anchor, ConstraintAdjustment, Gravity, XxInputPopupPositionerV1,
 };
 use wayland_server::{Dispatch, Resource, WEnum};

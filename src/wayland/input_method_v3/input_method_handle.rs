@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use wayland_protocols_experimental::input_method::v1::server::{
+use wl_input_method::input_method::v1::server::{
     xx_input_method_v1::{self, XxInputMethodV1},
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
