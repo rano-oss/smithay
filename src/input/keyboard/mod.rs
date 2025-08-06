@@ -909,13 +909,13 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         inner.grab = GrabStatus::Active(serial, Box::new(grab));
     }
 
-    /// Remove and return any current grab on this keyboard, resetting it to the default behavior
-    pub fn unset_grab(&self, data: &mut D) -> GrabStatus<dyn KeyboardGrab<D>> {
+    /// Remove any current grab on this keyboard, resetting it to the default behavior
+    pub fn unset_grab(&self, data: &mut D) {
         let mut inner = self.arc.internal.lock().unwrap();
         if let GrabStatus::Active(_, handler) = &mut inner.grab {
             handler.unset(data);
         }
-        mem::replace(&mut inner.grab, GrabStatus::None)
+        mem::replace(&mut inner.grab, GrabStatus::None);
     }
 
     /// Check if this keyboard is currently grabbed with this serial

@@ -24,10 +24,7 @@ use smithay::{
     },
     utils::{Logical, Point, Serial, Transform, SERIAL_COUNTER as SCOUNTER},
     wayland::{
-        compositor::with_states,
-        input_method::InputMethodSeat,
-        keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
-        shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer, LayerSurfaceCachedState},
+        compositor::with_states, input_method::InputMethodSeat, input_method_v3::InputMethodSeat as _, keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat, shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer, LayerSurfaceCachedState}
     },
 };
 
@@ -185,7 +182,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .unwrap_or(false);
 
         let action = keyboard
-            .input(self, keycode, state, serial, time, |_, modifiers, handle| {
+            .input(self, keycode, state, serial, time, |data, modifiers, handle| {
                 let keysym = handle.modified_sym();
 
                 debug!(
@@ -200,7 +197,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 // Additionally add the key to the suppressed keys
                 // so that we can decide on a release if the key
                 // should be forwarded to the client or not.
-                match state {
+                let action = match state {
                     KeyEvent::Pressed | KeyEvent::Repeated => {
                         let filter = if !inhibited {
                             let action = process_keyboard_shortcut(*modifiers, keysym);
@@ -231,6 +228,15 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                             FilterResult::Forward
                         }
                     }
+                };
+                if let FilterResult::Forward = action {
+                    if data.seat.input_method_v3().intercept_key::<Self>(state, keycode, serial, time) {
+                        FilterResult::Intercept(KeyAction::None)
+                    } else {
+                        action
+                    }
+                } else {
+                    action
                 }
             })
             .unwrap_or(KeyAction::None);

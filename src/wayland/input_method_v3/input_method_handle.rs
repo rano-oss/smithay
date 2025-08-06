@@ -1,19 +1,22 @@
 use std::{
+    collections::VecDeque,
     fmt,
     sync::{Arc, Mutex},
 };
 
+use tracing::error;
+
+use wayland_client::WEnum;
 use wl_input_method::input_method::v1::server::{
-    xx_input_method_v1::{self, XxInputMethodV1},
+    xx_input_method_v1::{self, KeyboardConsumeAction, XxInputMethodV1},
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
-use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
+use wayland_server::{backend::ClientId, protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface}};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
+use xkbcommon::xkb::Keycode;
 
 use crate::{
-    input::{keyboard::KeyboardHandle, SeatHandler},
-    utils::{Logical, Rectangle, SERIAL_COUNTER},
-    wayland::{compositor, seat::WaylandFocus, text_input::TextInputHandle},
+    backend::input::KeyEvent, input::{keyboard::KeyboardHandle, SeatHandler}, utils::{Logical, Rectangle, Serial}, wayland::{compositor, seat::WaylandFocus, text_input::TextInputHandle}
 };
 
 use super::{
@@ -150,6 +153,38 @@ impl InputMethodHandle {
             }
         });
     }
+    
+    /// If the input method is active and requests filtering events, the keyboard event will be kept. It will be injected back after filtering.
+    pub fn intercept_key<D: SeatHandler + 'static>(
+        &self,
+        kind: KeyEvent,
+        code: Keycode,
+        serial: Serial,
+        time_ms: u32,
+    ) -> bool {
+        let instance = self.inner.lock().unwrap();
+        if let Some(instance) = &instance.instance {
+            let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
+            let mut filter = data.key_filter.lock().unwrap();
+            if let Some(ref mut filter) = filter.as_mut() {
+                filter.keyboard.key(serial.into(), time_ms, code.into(), kind.into());
+                filter.key_events_to_filter.push_back((kind, code, serial, time_ms));
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+}
+
+/// Stores data related to filtering key events arriving to text input
+pub(crate) struct KeyFilter {
+    /// Keyboard provided by the input method client to sniff on target surface's events.
+    keyboard: WlKeyboard,
+    /// Events waiting for filter decision from the input method client
+    key_events_to_filter: VecDeque<(KeyEvent, Keycode, Serial, u32)>,
 }
 
 /// User data of XxInputMethodV1 object
@@ -157,9 +192,10 @@ impl InputMethodHandle {
 pub struct InputMethodUserData<D: SeatHandler> {
     pub(super) handle: InputMethodHandle,
     pub(crate) text_input_handle: TextInputHandle,
-    /// Keyboard handle to the main keyboard instance.
-    /// That will be grabbed to filter its events.
+    /// Handle to main keyboard for registering sub-keyboards
     pub(crate) keyboard_handle: KeyboardHandle<D>,
+    /// Filtering key events before they reach text input
+    pub(crate) key_filter: Arc<Mutex<Option<KeyFilter>>>,
     /// This is just a copy from Input MethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup. That means other modules don't have to explicitly put D: InputMethodHandler when they call something that ends up calling this.
     /// (Not sure what the purpose of that is, but it seems consistent...)
     pub(crate) popup_geometry:
@@ -301,20 +337,55 @@ where
                 }
             }
             Request::KeyboardBind { keyboard } => {
-                dbg!(&keyboard);
-                //let input_method = data.handle.inner.lock().unwrap();
-                data.keyboard_handle.new_kbd(keyboard);
-                /*let grab = KeyboardFilter { next_grab: next_grab };
-                data.keyboard_handle.set_grab(
-                    state,
-                    grab.clone(),
-                    SERIAL_COUNTER.next_serial(),
-                );*/
-                
+                data.keyboard_handle.new_kbd(keyboard.clone());
+                let mut key_filter = data.key_filter.lock().unwrap();
+                if key_filter.is_some() {
+                    im.post_error(xx_input_method_v1::Error::KeyboardAlreadyBound, "A keyboard was already bound");
+                } else {
+                    *key_filter = Some(KeyFilter {
+                        keyboard,
+                        key_events_to_filter: VecDeque::new(),
+                    });
+                }
             },
-            Request::KeyboardUnbind => {dbg!("keyboard unbound");}
+            Request::KeyboardUnbind => {
+                let mut key_filter = data.key_filter.lock().unwrap();
+                if let Some(filter) = key_filter.as_mut() {
+                    for (kind, code, serial, time_ms) in filter.key_events_to_filter.drain(..) {
+                        filter.keyboard.key(serial.into(), time_ms, code.into(), kind.into());
+                    }
+                    // FIXME: remove kbd
+                    //data.keyboard_handle.
+                } else {
+                    im.post_error(xx_input_method_v1::Error::KeyboardNotBound, "No keyboard has been bound");
+                }
+            }
             Request::KeyboardConsume { serial, action } => {
-                dbg!(serial, action);
+                let mut key_filter = data.key_filter.lock().unwrap();
+                if let Some(filter) = key_filter.as_mut() {
+                    if let Some((kind, code, waiting_serial, time_ms)) = filter.key_events_to_filter.pop_back() {
+                        if serial == waiting_serial.0 {
+                            match action {
+                                WEnum::Value(KeyboardConsumeAction::Consume) => {},
+                                WEnum::Value(KeyboardConsumeAction::Passthrough) => {
+                                    println!("TODO: Hand over event to client");
+                                },
+                                WEnum::Value(unk) => {
+                                    error!("Unsupported action {unk:?}");
+                                },
+                                WEnum::Unknown(unk) => {
+                                    error!("Unsupported action {unk}");
+                                },
+                            }
+                        } else {
+                            im.post_error(xx_input_method_v1::Error::InvalidSerial, "Next event's serial doesn't match request");
+                        }
+                    } else {
+                        im.post_error(xx_input_method_v1::Error::InvalidSerial, "No event is waiting for confirmation");
+                    }
+                } else {
+                    im.post_error(xx_input_method_v1::Error::KeyboardNotBound, "No keyboard has been bound");
+                }
             }
             Request::Destroy => {
                 // Nothing to do
