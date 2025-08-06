@@ -11,7 +11,7 @@ use std::sync::RwLock;
 use std::time::Duration;
 use std::{
     default::Default,
-    fmt, io,
+    fmt, io, mem,
     sync::{Arc, Mutex},
 };
 use thiserror::Error;
@@ -909,13 +909,13 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         inner.grab = GrabStatus::Active(serial, Box::new(grab));
     }
 
-    /// Remove any current grab on this keyboard, resetting it to the default behavior
-    pub fn unset_grab(&self, data: &mut D) {
+    /// Remove and return any current grab on this keyboard, resetting it to the default behavior
+    pub fn unset_grab(&self, data: &mut D) -> GrabStatus<dyn KeyboardGrab<D>> {
         let mut inner = self.arc.internal.lock().unwrap();
         if let GrabStatus::Active(_, handler) = &mut inner.grab {
             handler.unset(data);
         }
-        inner.grab = GrabStatus::None;
+        mem::replace(&mut inner.grab, GrabStatus::None)
     }
 
     /// Check if this keyboard is currently grabbed with this serial
@@ -1389,6 +1389,7 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         serial: Serial,
         time: u32,
     ) {
+        // TODO: put interception here. FIXME: what to call to replay the event?
         let (focus, _) = match self.inner.focus.as_mut() {
             Some(focus) => focus,
             None => return,

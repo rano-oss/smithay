@@ -11,15 +11,13 @@ use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 use crate::{
-    input::SeatHandler,
-    utils::{Logical, Rectangle},
+    input::{keyboard::KeyboardHandle, SeatHandler},
+    utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{compositor, seat::WaylandFocus, text_input::TextInputHandle},
 };
 
 use super::{
-    input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
-    positioner::{PositionerState, PositionerUserData},
-    InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
+    input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface}, positioner::{PositionerState, PositionerUserData}, InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE
 };
 
 /// Slot for an optional input method
@@ -159,6 +157,9 @@ impl InputMethodHandle {
 pub struct InputMethodUserData<D: SeatHandler> {
     pub(super) handle: InputMethodHandle,
     pub(crate) text_input_handle: TextInputHandle,
+    /// Keyboard handle to the main keyboard instance.
+    /// That will be grabbed to filter its events.
+    pub(crate) keyboard_handle: KeyboardHandle<D>,
     /// This is just a copy from Input MethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup. That means other modules don't have to explicitly put D: InputMethodHandler when they call something that ends up calling this.
     /// (Not sure what the purpose of that is, but it seems consistent...)
     pub(crate) popup_geometry:
@@ -298,6 +299,22 @@ where
                         );
                     }
                 }
+            }
+            Request::KeyboardBind { keyboard } => {
+                dbg!(&keyboard);
+                //let input_method = data.handle.inner.lock().unwrap();
+                data.keyboard_handle.new_kbd(keyboard);
+                /*let grab = KeyboardFilter { next_grab: next_grab };
+                data.keyboard_handle.set_grab(
+                    state,
+                    grab.clone(),
+                    SERIAL_COUNTER.next_serial(),
+                );*/
+                
+            },
+            Request::KeyboardUnbind => {dbg!("keyboard unbound");}
+            Request::KeyboardConsume { serial, action } => {
+                dbg!(serial, action);
             }
             Request::Destroy => {
                 // Nothing to do
