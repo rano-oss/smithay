@@ -361,6 +361,7 @@ where
                 }
             }
             Request::KeyboardConsume { serial, action } => {
+                dbg!(serial, action);
                 let mut key_filter = data.key_filter.lock().unwrap();
                 if let Some(filter) = key_filter.as_mut() {
                     if let Some((kind, code, waiting_serial, time_ms)) = filter.key_events_to_filter.pop_back() {
@@ -368,7 +369,8 @@ where
                             match action {
                                 WEnum::Value(KeyboardConsumeAction::Consume) => {},
                                 WEnum::Value(KeyboardConsumeAction::Passthrough) => {
-                                    println!("TODO: Hand over event to client");
+                                    data.keyboard_handle.input_forward(state, code, kind, waiting_serial, time_ms, false);
+                                    println!("FIXME: supply modifiers");
                                 },
                                 WEnum::Value(unk) => {
                                     error!("Unsupported action {unk:?}");
