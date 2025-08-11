@@ -14,10 +14,10 @@ use super::WaylandFocus;
 use crate::{
     backend::input::{KeyEvent, Keycode},
     input::{
-        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState},
+        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
         Seat, SeatHandler, SeatState,
     },
-    utils::{iter::new_locked_obj_iter_from_vec, Serial},
+    utils::{iter::new_locked_obj_iter, Serial},
     wayland::{
         input_method::InputMethodSeat, input_method_v3::InputMethodSeat as _, text_input::TextInputSeat,
     },
@@ -44,7 +44,7 @@ where
     pub fn client_keyboards<'a>(&'a self, client: &Client) -> impl Iterator<Item = WlKeyboard> + 'a {
         let guard = self.arc.known_kbds.lock().unwrap();
 
-        new_locked_obj_iter_from_vec(guard, client.id())
+        new_locked_obj_iter(guard, client.id(), |guard| guard.keyboards.iter())
     }
 
     /// Register a new keyboard to this handler
@@ -92,7 +92,7 @@ where
                 );
             }
         }
-        self.arc.known_kbds.lock().unwrap().push(kbd.downgrade());
+        self.arc.known_kbds.lock().unwrap().keyboards.push(kbd.downgrade());
     }
 }
 
@@ -142,6 +142,7 @@ where
                 .known_kbds
                 .lock()
                 .unwrap()
+                .keyboards
                 .retain(|k| k.id() != keyboard.id())
         }
     }
@@ -150,19 +151,11 @@ where
 pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
     seat: &Seat<D>,
     surface: &WlSurface,
-    mut f: impl FnMut(WlKeyboard),
+    f: impl FnMut(&dyn WlKeyboardApi),
 ) {
     if let Some(keyboard) = seat.get_keyboard() {
         let inner = keyboard.arc.known_kbds.lock().unwrap();
-        for kbd in &*inner {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
-
-            if kbd.id().same_client_as(&surface.id()) {
-                f(kbd.clone())
-            }
-        }
+        inner.for_each_focused(surface, f)
     }
 }
 
