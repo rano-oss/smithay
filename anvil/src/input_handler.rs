@@ -229,15 +229,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                         }
                     }
                 };
-                if let FilterResult::Forward = action {
-                    if data.seat.input_method_v3().intercept_key::<Self>(state, keycode, serial, time) {
-                        FilterResult::Intercept(KeyAction::None)
-                    } else {
-                        action
-                    }
-                } else {
-                    action
-                }
+                action
             })
             .unwrap_or(KeyAction::None);
 
