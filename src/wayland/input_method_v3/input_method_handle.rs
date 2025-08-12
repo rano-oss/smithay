@@ -1,7 +1,5 @@
 use std::{
-    collections::VecDeque,
-    fmt,
-    sync::{Arc, Mutex},
+    collections::VecDeque, fmt, sync::{Arc, Mutex}
 };
 
 use tracing::error;
@@ -16,7 +14,7 @@ use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 use xkbcommon::xkb::Keycode;
 
 use crate::{
-    backend::input::KeyEvent, input::{keyboard::KeyboardHandle, SeatHandler}, utils::{Logical, Rectangle, Serial}, wayland::{compositor, seat::WaylandFocus, text_input::TextInputHandle}
+    backend::input::KeyEvent, input::{keyboard::{KeyboardHandle, WlKeyboardApi}, SeatHandler}, utils::{Logical, Rectangle, Serial}, wayland::{compositor, seat::WaylandFocus, text_input::TextInputHandle}
 };
 
 use super::{
@@ -153,28 +151,18 @@ impl InputMethodHandle {
             }
         });
     }
-    
-    /// If the input method is active and requests filtering events, the keyboard event will be kept. It will be injected back after filtering.
-    pub fn intercept_key<D: SeatHandler + 'static>(
-        &self,
-        kind: KeyEvent,
-        code: Keycode,
-        serial: Serial,
-        time_ms: u32,
-    ) -> bool {
-        let instance = self.inner.lock().unwrap();
-        if let Some(instance) = &instance.instance {
-            let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
-            let mut filter = data.key_filter.lock().unwrap();
-            if let Some(ref mut filter) = filter.as_mut() {
-                filter.keyboard.key(serial.into(), time_ms, code.into(), kind.into());
-                filter.key_events_to_filter.push_back((kind, code, serial, time_ms));
-                true
-            } else {
-                false
-            }
-        } else {
-            false
+}
+
+enum KeyboardEvent {
+    Key(KeyEvent, Keycode, Serial, u32),
+    Keymap,
+}
+
+impl KeyboardEvent {
+    fn serial(&self) -> Option<Serial> {
+        match self {
+            Self::Key(_, _, serial, _) => Some(serial.clone()),
+            Self::Keymap => None,
         }
     }
 }
@@ -184,7 +172,55 @@ pub(crate) struct KeyFilter {
     /// Keyboard provided by the input method client to sniff on target surface's events.
     keyboard: WlKeyboard,
     /// Events waiting for filter decision from the input method client
-    key_events_to_filter: VecDeque<(KeyEvent, Keycode, Serial, u32)>,
+    events_to_filter: Arc<Mutex<VecDeque<KeyboardEvent>>>,
+}
+
+use wayland_server::protocol::{wl_keyboard, wl_surface};
+
+impl WlKeyboardApi for KeyFilter {
+    fn keymap(
+        &self,
+        format: wl_keyboard::KeymapFormat,
+        fd: ::std::os::unix::io::BorrowedFd<'_>,
+        size: u32,
+    ) {
+        self.keyboard.keymap(format, fd, size);
+        dbg!("keymap", format);
+    }
+    fn enter(
+        &self,
+        serial: u32,
+        surface: &wl_surface::WlSurface,
+        keys: Vec<u8>,
+    ) {
+        self.keyboard.enter(serial, surface, keys.clone());
+        dbg!("enter", keys);
+    }
+    fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
+        self.keyboard.leave(serial, surface);
+        dbg!("leave");
+    }
+    fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
+        self.keyboard.key(serial, time, key, state);
+        // TODO: unnecessary Sync requirement
+        self.events_to_filter.lock().unwrap().drain(..); // later
+    }
+    fn modifiers(
+        &self,
+        serial: u32,
+        mods_depressed: u32,
+        mods_latched: u32,
+        mods_locked: u32,
+        group: u32,
+    ) {
+        self.keyboard.modifiers(serial, mods_depressed, mods_latched, mods_locked, group);
+    }
+    fn repeat_info(&self, rate: i32, delay: i32) {
+        self.keyboard.repeat_info(rate, delay);
+    }
+    fn version(&self) -> u32 {
+        self.keyboard.version()
+    }
 }
 
 /// User data of XxInputMethodV1 object
@@ -337,22 +373,28 @@ where
                 }
             }
             Request::KeyboardBind { keyboard } => {
-                data.keyboard_handle.new_kbd(keyboard.clone());
-                let mut key_filter = data.key_filter.lock().unwrap();
-                if key_filter.is_some() {
-                    im.post_error(xx_input_method_v1::Error::KeyboardAlreadyBound, "A keyboard was already bound");
-                } else {
-                    *key_filter = Some(KeyFilter {
-                        keyboard,
-                        key_events_to_filter: VecDeque::new(),
-                    });
-                }
+                let mut key_filter = data.keyboard_handle.with_interceptor(|key_filter| {
+                    if key_filter.is_some() {
+                        im.post_error(xx_input_method_v1::Error::KeyboardAlreadyBound, "A keyboard was already bound");
+                    } else {
+                        *key_filter = Some(Box::new(KeyFilter {
+                            keyboard,
+                            events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
+                        }));
+                    }
+                });
             },
             Request::KeyboardUnbind => {
                 let mut key_filter = data.key_filter.lock().unwrap();
                 if let Some(filter) = key_filter.as_mut() {
-                    for (kind, code, serial, time_ms) in filter.key_events_to_filter.drain(..) {
-                        filter.keyboard.key(serial.into(), time_ms, code.into(), kind.into());
+                    for e in filter.events_to_filter.lock().unwrap().drain(..) {
+                        data.keyboard_handle.arc.known_kbds.for_each_focused(|k| {
+                            match e {
+                                KeyboardEvent::Key(kind, code, serial, time_ms) =>{}
+                                //k.key(serial.into(), time_ms, code.into(), kind.into());
+                                KeyboardEvent::Keymap => {}
+                            }
+                        })
                     }
                     // FIXME: remove kbd
                     //data.keyboard_handle.
@@ -362,29 +404,57 @@ where
             }
             Request::KeyboardConsume { serial, action } => {
                 dbg!(serial, action);
+                /// Wayland enums are not exhaustive, so they require matching on `_`. We filter out unsupported actions early, so with an exhaustive enum we can let Rust find missing patterns in `match`es later.
+                enum Action {
+                    Passthrough,
+                    Consume,
+                }
+                // FIXME: events coming without serial must be processed immediately if no queue
+                let action = match action {
+                    WEnum::Value(KeyboardConsumeAction::Passthrough) => Action::Passthrough,
+                    WEnum::Value(KeyboardConsumeAction::Consume) => Action::Consume,
+                    WEnum::Value(unk) => {
+                        error!("Unsupported action {unk:?}");
+                        return;
+                    },
+                    WEnum::Unknown(unk) => {
+                        error!("Unsupported action {unk}");
+                        return;
+                    },
+                };
+
                 let mut key_filter = data.key_filter.lock().unwrap();
                 if let Some(filter) = key_filter.as_mut() {
-                    if let Some((kind, code, waiting_serial, time_ms)) = filter.key_events_to_filter.pop_back() {
-                        if serial == waiting_serial.0 {
-                            match action {
-                                WEnum::Value(KeyboardConsumeAction::Consume) => {},
-                                WEnum::Value(KeyboardConsumeAction::Passthrough) => {
-                                    data.keyboard_handle.input_forward(state, code, kind, waiting_serial, time_ms, false);
-                                    println!("FIXME: supply modifiers");
-                                },
-                                WEnum::Value(unk) => {
-                                    error!("Unsupported action {unk:?}");
-                                },
-                                WEnum::Unknown(unk) => {
-                                    error!("Unsupported action {unk}");
-                                },
-                            }
+                    let events = filter.events_to_filter.lock().unwrap();
+                    while let Some(e) = events.pop_back() {
+                        let (action, stop) = if let Some(waiting_serial) = e.serial() {
+                            if serial != waiting_serial.0 {
+                                im.post_error(xx_input_method_v1::Error::InvalidSerial, "Next event's serial doesn't match request");
+                                return;
+                            };
+                            (action, true)
                         } else {
-                            im.post_error(xx_input_method_v1::Error::InvalidSerial, "Next event's serial doesn't match request");
+                            // Events without a serial will not get a confirmation. Just pass them through and go to next event.
+                            (Action::Passthrough, false)
+                        };
+                        match (action, e) {
+                            (Action::Consume, KeyboardEvent::Key(_, _, _, _)) => {},
+                            (Action::Consume, KeyboardEvent::Keymap) => {
+                                im.post_error(
+                                    xx_input_method_v1::Error::InvalidSerial,
+                                    "Only Key events may be consumed",
+                                );
+                                return
+                            },
+                            (Action::Passthrough, e) => {
+                                // TODO: forward
+                            },
                         }
-                    } else {
-                        im.post_error(xx_input_method_v1::Error::InvalidSerial, "No event is waiting for confirmation");
+                        if stop {
+                            return;
+                        }
                     }
+                    im.post_error(xx_input_method_v1::Error::InvalidSerial, "No event is waiting for confirmation");
                 } else {
                     im.post_error(xx_input_method_v1::Error::KeyboardNotBound, "No keyboard has been bound");
                 }

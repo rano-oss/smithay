@@ -1360,6 +1360,14 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             .cloned()
             .unwrap()
     }
+    
+    
+    pub(crate) fn with_interceptor<T>(
+        &self,
+        f: impl FnOnce(&mut Option<Box<dyn WlKeyboardApi + Send + Sync>>) -> T,
+    ) -> T {
+        f(&mut self.arc.known_kbds.lock().unwrap().interceptor)
+    }
 }
 
 impl<D> KeyboardHandle<D>
