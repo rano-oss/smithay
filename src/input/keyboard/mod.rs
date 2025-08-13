@@ -11,7 +11,7 @@ use std::sync::RwLock;
 use std::time::Duration;
 use std::{
     default::Default,
-    fmt, io, mem,
+    fmt, io,
     sync::{Arc, Mutex},
 };
 use thiserror::Error;
@@ -402,6 +402,107 @@ pub(crate) trait WlKeyboardApi {
     fn version(&self) -> u32;
 }
 
+fn for_each_kbd(
+    kbds: &Vec<Weak<wl_keyboard::WlKeyboard>>,
+    mut f: impl FnMut(wl_keyboard::WlKeyboard),
+) {
+    for kbd in kbds {
+        let Ok(kbd) = kbd.upgrade() else {
+            continue;
+        };
+        f(kbd.clone())
+    }
+}
+
+impl WlKeyboardApi for wl_keyboard::WlKeyboard {
+    fn keymap(
+        &self,
+        format: wl_keyboard::KeymapFormat,
+        fd: ::std::os::unix::io::BorrowedFd<'_>,
+        size: u32,
+    ) {
+        Self::keymap(self, format, fd, size)
+    }
+
+    fn enter(
+        &self,
+        serial: u32,
+        surface: &wl_surface::WlSurface,
+        keys: Vec<u8>,
+    ) {
+        Self::enter(self, serial, surface, keys.clone())
+    }
+
+    fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
+        Self::leave(self, serial, surface)
+    }
+    
+    fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
+        Self::key(self, serial, time, key, state)
+    }
+    fn modifiers(
+        &self,
+        serial: u32,
+        mods_depressed: u32,
+        mods_latched: u32,
+        mods_locked: u32,
+        group: u32,
+    ) {
+        Self::modifiers(self, serial, mods_depressed, mods_latched, mods_locked, group)
+    }
+    fn repeat_info(&self, rate: i32, delay: i32) {
+        Self::repeat_info(self, rate, delay)
+    }
+    fn version(&self) -> u32 {
+        <Self as Resource>::version(self)
+    }
+}
+
+// FIXME: this might be unneeded
+/// Helper impl fo avoid repeating for_each. But where?
+impl WlKeyboardApi for Vec<Weak<wl_keyboard::WlKeyboard>> {
+    fn keymap(
+        &self,
+        format: wl_keyboard::KeymapFormat,
+        fd: ::std::os::unix::io::BorrowedFd<'_>,
+        size: u32,
+    ) {
+        for_each_kbd(self, |kbd| kbd.keymap(format, fd, size));
+    }
+
+    fn enter(
+        &self,
+        serial: u32,
+        surface: &wl_surface::WlSurface,
+        keys: Vec<u8>,
+    ) {
+        for_each_kbd(self, |kbd| kbd.enter(serial, surface, keys.clone()));
+    }
+
+    fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
+        for_each_kbd(self, |kbd| kbd.leave(serial, surface));
+    }
+    
+    fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
+        for_each_kbd(self, |kbd| kbd.key(serial, time, key, state));
+    }
+    fn modifiers(
+        &self,
+        serial: u32,
+        mods_depressed: u32,
+        mods_latched: u32,
+        mods_locked: u32,
+        group: u32,
+    ) {
+        for_each_kbd(self, |kbd| kbd.modifiers(serial, mods_depressed, mods_latched, mods_locked, group));
+    }
+    fn repeat_info(&self, rate: i32, delay: i32) {
+        for_each_kbd(self, |kbd| kbd.repeat_info(rate, delay));
+    }
+        fn version(&self) -> u32 {
+            0 // FIXME: can't return a single version. What is this even for?
+        }
+}
 
 pub(crate) struct KnownKbds {
     pub(crate) keyboards: Vec<Weak<wl_keyboard::WlKeyboard>>,
@@ -411,7 +512,10 @@ pub(crate) struct KnownKbds {
 
 impl fmt::Debug for KnownKbds {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Ok(())
+        f.debug_struct("KnownKbds")
+            .field("keyboards", &self.keyboards)
+            .field("interceptor", self.interceptor.as_ref().map(|_| "dyn WlKeyboardApi"))
+            .finish()
     }
 }
 
@@ -423,7 +527,7 @@ impl KnownKbds {
             self.keyboards
                 .iter()
                 .filter_map(|k| k.upgrade().ok())
-                .for_each(|k| ())
+                .for_each(|k| f(&k))
         }
     }
     
@@ -439,7 +543,7 @@ impl KnownKbds {
                 .iter()
                 .filter_map(|k| k.upgrade().ok())
                 .filter(|k| k.id().same_client_as(&surface.id()))
-                .for_each(|k| ())
+                .for_each(|k| f(&k))
         }
     }
 }
@@ -987,7 +1091,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         if let GrabStatus::Active(_, handler) = &mut inner.grab {
             handler.unset(data);
         }
-        mem::replace(&mut inner.grab, GrabStatus::None);
+        inner.grab = GrabStatus::None;
     }
 
     /// Check if this keyboard is currently grabbed with this serial

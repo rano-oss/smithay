@@ -69,8 +69,8 @@ where
         };
 
         let guard = self.arc.internal.lock().unwrap();
-        if kbd.version() >= 4 {
-            let rate = if kbd.version() >= 10 {
+        if Resource::version(&kbd) >= 4 {
+            let rate = if Resource::version(&kbd) >= 10 {
                 0 // Enables compositor-side key repeat. See wl_keyboard key event
             } else {
                 guard.repeat_rate

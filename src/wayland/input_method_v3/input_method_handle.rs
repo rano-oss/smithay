@@ -9,12 +9,11 @@ use wl_input_method::input_method::v1::server::{
     xx_input_method_v1::{self, KeyboardConsumeAction, XxInputMethodV1},
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
-use wayland_server::{backend::ClientId, protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface}};
+use wayland_server::{backend::ClientId, protocol::{wl_keyboard::{KeyState, WlKeyboard}, wl_surface::WlSurface}};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
-use xkbcommon::xkb::Keycode;
 
 use crate::{
-    backend::input::KeyEvent, input::{keyboard::{KeyboardHandle, WlKeyboardApi}, SeatHandler}, utils::{Logical, Rectangle, Serial}, wayland::{compositor, seat::WaylandFocus, text_input::TextInputHandle}
+    input::{keyboard::{KeyboardHandle, WlKeyboardApi}, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, seat::WaylandFocus, text_input::TextInputHandle}
 };
 
 use super::{
@@ -153,16 +152,57 @@ impl InputMethodHandle {
     }
 }
 
+/// A reification of wl_keyboard events, just to be able to shift them in time.
+/// Not using the event from wayland libraries directly because they'd need to be translated into a pure Rust call anyway before sending.
 enum KeyboardEvent {
-    Key(KeyEvent, Keycode, Serial, u32),
-    Keymap,
+    Keymap, // FIXME
+    Enter {
+        serial: u32,
+        surface: WlSurface,
+        keys: Vec<u8>,
+    },
+    Leave {
+        serial: u32,
+        surface: WlSurface,
+    },
+    Key {
+        serial: u32,
+        time: u32,
+        key: u32,
+        state: KeyState,
+    },
+    Modifiers {
+        serial: u32,
+        mods_depressed: u32,
+        mods_latched: u32,
+        mods_locked: u32,
+        group: u32,
+    },
+    RepeatInfo {
+        rate: i32,
+        delay: i32,
+    },
 }
 
 impl KeyboardEvent {
-    fn serial(&self) -> Option<Serial> {
+    fn serial(&self) -> Option<u32> {
         match self {
-            Self::Key(_, _, serial, _) => Some(serial.clone()),
-            Self::Keymap => None,
+            Self::Keymap | Self::RepeatInfo {..} => None,
+            Self::Enter { serial, .. }
+            | Self::Leave { serial, .. }
+            | Self::Key { serial, .. }
+            | Self::Modifiers { serial, .. } => Some(*serial),
+        }
+    }
+    
+    fn describe(&self) -> &str {
+        match self {
+            Self::Keymap => "keymap",
+            Self::Enter { .. } => "enter",
+            Self::Leave { .. } => "leave",
+            Self::Key { .. } => "key",
+            Self::Modifiers { .. } => "modifiers",
+            Self::RepeatInfo { .. } => "repeat_info",
         }
     }
 }
@@ -173,6 +213,15 @@ pub(crate) struct KeyFilter {
     keyboard: WlKeyboard,
     /// Events waiting for filter decision from the input method client
     events_to_filter: Arc<Mutex<VecDeque<KeyboardEvent>>>,
+    /// Surface to which events should be sent
+    focused_surface: Option<WlSurface>,
+}
+impl KeyFilter {
+    fn push_event(&self, event: KeyboardEvent) {
+        // TODO: unnecessary (?) Sync requirement causes the need to lock
+        let mut events = self.events_to_filter.lock().unwrap();
+        events.push_front(event);
+    }
 }
 
 use wayland_server::protocol::{wl_keyboard, wl_surface};
@@ -185,6 +234,7 @@ impl WlKeyboardApi for KeyFilter {
         size: u32,
     ) {
         self.keyboard.keymap(format, fd, size);
+        // FIXME: save keymap for replaying
         dbg!("keymap", format);
     }
     fn enter(
@@ -194,16 +244,24 @@ impl WlKeyboardApi for KeyFilter {
         keys: Vec<u8>,
     ) {
         self.keyboard.enter(serial, surface, keys.clone());
-        dbg!("enter", keys);
+                dbg!("enter", &keys);
+        self.push_event(KeyboardEvent::Enter {
+            serial,
+            surface: surface.clone(),
+            keys,
+        });
     }
     fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
         self.keyboard.leave(serial, surface);
+        self.push_event(KeyboardEvent::Leave {
+            serial,
+            surface: surface.clone(),
+        });
         dbg!("leave");
     }
     fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
         self.keyboard.key(serial, time, key, state);
-        // TODO: unnecessary Sync requirement
-        self.events_to_filter.lock().unwrap().drain(..); // later
+        self.push_event(KeyboardEvent::Key { serial, time, key, state });
     }
     fn modifiers(
         &self,
@@ -214,12 +272,20 @@ impl WlKeyboardApi for KeyFilter {
         group: u32,
     ) {
         self.keyboard.modifiers(serial, mods_depressed, mods_latched, mods_locked, group);
+        self.push_event(KeyboardEvent::Modifiers { 
+            serial,
+            mods_depressed,
+            mods_latched,
+            mods_locked,
+            group,
+        });
     }
     fn repeat_info(&self, rate: i32, delay: i32) {
         self.keyboard.repeat_info(rate, delay);
+        self.push_event(KeyboardEvent::RepeatInfo {rate, delay });
     }
     fn version(&self) -> u32 {
-        self.keyboard.version()
+        Resource::version(&self.keyboard)
     }
 }
 
@@ -380,6 +446,7 @@ where
                         *key_filter = Some(Box::new(KeyFilter {
                             keyboard,
                             events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
+                            focused_surface: None,
                         }));
                     }
                 });
@@ -387,14 +454,32 @@ where
             Request::KeyboardUnbind => {
                 let mut key_filter = data.key_filter.lock().unwrap();
                 if let Some(filter) = key_filter.as_mut() {
-                    for e in filter.events_to_filter.lock().unwrap().drain(..) {
-                        data.keyboard_handle.arc.known_kbds.for_each_focused(|k| {
-                            match e {
-                                KeyboardEvent::Key(kind, code, serial, time_ms) =>{}
-                                //k.key(serial.into(), time_ms, code.into(), kind.into());
-                                KeyboardEvent::Keymap => {}
-                            }
-                        })
+                    if let Some(surface) = &filter.focused_surface {
+                        for e in filter.events_to_filter.lock().unwrap().drain(..) {
+                            let keyboards = data.keyboard_handle.arc.known_kbds.lock().unwrap();
+                            keyboards.for_each_focused(surface, |k| {
+                                match &e {
+                                    KeyboardEvent::Keymap => {},
+                                    KeyboardEvent::Enter { serial, surface, keys } => {
+                                        k.enter(*serial, surface, keys.clone())
+                                    },
+                                    KeyboardEvent::Leave { serial, surface } => {
+                                        k.leave(*serial, surface)
+                                    },
+                                    KeyboardEvent::Key { serial, time, key, state } =>{
+                                        k.key(*serial, *time, *key, *state)
+                                    },
+                                    KeyboardEvent::Modifiers { serial, mods_depressed, mods_latched, mods_locked, group } => {
+                                        k.modifiers(*serial, *mods_depressed, *mods_latched, *mods_locked, *group)
+                                    },
+                                    KeyboardEvent::RepeatInfo { rate, delay } => {
+                                        k.repeat_info(*rate, *delay)
+                                    },
+                                }
+                            });
+                        }
+                    } else {
+                        error!("Bound keyboard still has some events but no client surface is in focus")
                     }
                     // FIXME: remove kbd
                     //data.keyboard_handle.
@@ -405,6 +490,7 @@ where
             Request::KeyboardConsume { serial, action } => {
                 dbg!(serial, action);
                 /// Wayland enums are not exhaustive, so they require matching on `_`. We filter out unsupported actions early, so with an exhaustive enum we can let Rust find missing patterns in `match`es later.
+                #[derive(Clone, Copy)]
                 enum Action {
                     Passthrough,
                     Consume,
@@ -425,10 +511,10 @@ where
 
                 let mut key_filter = data.key_filter.lock().unwrap();
                 if let Some(filter) = key_filter.as_mut() {
-                    let events = filter.events_to_filter.lock().unwrap();
+                    let mut events = filter.events_to_filter.lock().unwrap();
                     while let Some(e) = events.pop_back() {
                         let (action, stop) = if let Some(waiting_serial) = e.serial() {
-                            if serial != waiting_serial.0 {
+                            if serial != waiting_serial {
                                 im.post_error(xx_input_method_v1::Error::InvalidSerial, "Next event's serial doesn't match request");
                                 return;
                             };
@@ -437,12 +523,16 @@ where
                             // Events without a serial will not get a confirmation. Just pass them through and go to next event.
                             (Action::Passthrough, false)
                         };
-                        match (action, e) {
-                            (Action::Consume, KeyboardEvent::Key(_, _, _, _)) => {},
-                            (Action::Consume, KeyboardEvent::Keymap) => {
+                        match (action, &e) {
+                            (Action::Consume, KeyboardEvent::Key{..}) => {},
+                            (Action::Consume, KeyboardEvent::Keymap)
+                            | (Action::Consume, KeyboardEvent::Enter { .. })
+                            | (Action::Consume, KeyboardEvent::Leave { .. })
+                            | (Action::Consume, KeyboardEvent::Modifiers { .. })
+                            | (Action::Consume, KeyboardEvent::RepeatInfo { .. }) => {
                                 im.post_error(
                                     xx_input_method_v1::Error::InvalidSerial,
-                                    "Only Key events may be consumed",
+                                    format!("Only key events may be consumed, but requested to consume {}", e.describe())
                                 );
                                 return
                             },
