@@ -154,6 +154,7 @@ impl InputMethodHandle {
 
 /// A reification of wl_keyboard events, just to be able to shift them in time.
 /// Not using the event from wayland libraries directly because they'd need to be translated into a pure Rust call anyway before sending.
+#[derive(Clone)]
 enum KeyboardEvent {
     Keymap, // FIXME
     Enter {
@@ -205,6 +206,27 @@ impl KeyboardEvent {
             Self::RepeatInfo { .. } => "repeat_info",
         }
     }
+
+    fn apply<T: WlKeyboardApi + ?Sized>(self, k: &T) {
+        match self {
+            KeyboardEvent::Keymap => {dbg!("FIXME");},
+            KeyboardEvent::Enter { serial, surface, keys } => {
+                k.enter(serial, &surface, keys)
+            },
+            KeyboardEvent::Leave { serial, surface } => {
+                k.leave(serial, &surface)
+            },
+            KeyboardEvent::Key { serial, time, key, state } =>{
+                k.key(serial, time, key, state)
+            },
+            KeyboardEvent::Modifiers { serial, mods_depressed, mods_latched, mods_locked, group } => {
+                k.modifiers(serial, mods_depressed, mods_latched, mods_locked, group)
+            },
+            KeyboardEvent::RepeatInfo { rate, delay } => {
+                k.repeat_info(rate, delay)
+            },
+        }
+    }
 }
 
 /// Stores data related to filtering key events arriving to text input
@@ -243,8 +265,8 @@ impl WlKeyboardApi for KeyFilter {
         surface: &wl_surface::WlSurface,
         keys: Vec<u8>,
     ) {
-        self.keyboard.enter(serial, surface, keys.clone());
-                dbg!("enter", &keys);
+        //self.keyboard.enter(serial, surface, keys.clone());
+        dbg!("enter", &keys);
         self.push_event(KeyboardEvent::Enter {
             serial,
             surface: surface.clone(),
@@ -252,7 +274,7 @@ impl WlKeyboardApi for KeyFilter {
         });
     }
     fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
-        self.keyboard.leave(serial, surface);
+        //self.keyboard.leave(serial, surface);
         self.push_event(KeyboardEvent::Leave {
             serial,
             surface: surface.clone(),
@@ -457,26 +479,10 @@ where
                     if let Some(surface) = &filter.focused_surface {
                         for e in filter.events_to_filter.lock().unwrap().drain(..) {
                             let keyboards = data.keyboard_handle.arc.known_kbds.lock().unwrap();
-                            keyboards.for_each_focused(surface, |k| {
-                                match &e {
-                                    KeyboardEvent::Keymap => {},
-                                    KeyboardEvent::Enter { serial, surface, keys } => {
-                                        k.enter(*serial, surface, keys.clone())
-                                    },
-                                    KeyboardEvent::Leave { serial, surface } => {
-                                        k.leave(*serial, surface)
-                                    },
-                                    KeyboardEvent::Key { serial, time, key, state } =>{
-                                        k.key(*serial, *time, *key, *state)
-                                    },
-                                    KeyboardEvent::Modifiers { serial, mods_depressed, mods_latched, mods_locked, group } => {
-                                        k.modifiers(*serial, *mods_depressed, *mods_latched, *mods_locked, *group)
-                                    },
-                                    KeyboardEvent::RepeatInfo { rate, delay } => {
-                                        k.repeat_info(*rate, *delay)
-                                    },
-                                }
-                            });
+                            keyboards.for_each_focused(
+                                surface,
+                                |k| e.clone().apply(k)
+                            );
                         }
                     } else {
                         error!("Bound keyboard still has some events but no client surface is in focus")
@@ -563,6 +569,8 @@ where
         data: &InputMethodUserData<D>,
     ) {
         data.handle.inner.lock().unwrap().instance = None;
+        let mut keyboards = data.keyboard_handle.arc.known_kbds.lock().unwrap();
+        keyboards.clear_interceptor();
         data.text_input_handle.leave();
     }
 }

@@ -460,6 +460,7 @@ impl WlKeyboardApi for wl_keyboard::WlKeyboard {
 
 // FIXME: this might be unneeded
 /// Helper impl fo avoid repeating for_each. But where?
+/*
 impl WlKeyboardApi for Vec<Weak<wl_keyboard::WlKeyboard>> {
     fn keymap(
         &self,
@@ -503,7 +504,7 @@ impl WlKeyboardApi for Vec<Weak<wl_keyboard::WlKeyboard>> {
             0 // FIXME: can't return a single version. What is this even for?
         }
 }
-
+*/
 pub(crate) struct KnownKbds {
     pub(crate) keyboards: Vec<Weak<wl_keyboard::WlKeyboard>>,
     /// If present, all events are directed to it rather than the keyboards.
@@ -514,12 +515,15 @@ impl fmt::Debug for KnownKbds {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("KnownKbds")
             .field("keyboards", &self.keyboards)
-            .field("interceptor", self.interceptor.as_ref().map(|_| "dyn WlKeyboardApi"))
+            .field("interceptor", &self.interceptor.as_ref().map(|_| "dyn WlKeyboardApi"))
             .finish()
     }
 }
 
 impl KnownKbds {
+    pub(crate) fn clear_interceptor(&mut self) {
+        self.interceptor = None;
+    }
     pub(crate) fn for_each_active(&self, f: impl Fn(&dyn WlKeyboardApi)) {
         if let Some(kbd) = self.interceptor.as_ref() {
             f(kbd.as_ref())
