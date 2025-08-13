@@ -1,8 +1,8 @@
 use std::{
-    collections::VecDeque, fmt, sync::{Arc, Mutex}
+    any::Any, collections::VecDeque, fmt, sync::{Arc, Mutex}
 };
 
-use tracing::error;
+use tracing::{error, warn};
 
 use wayland_client::WEnum;
 use wl_input_method::input_method::v1::server::{
@@ -319,7 +319,7 @@ pub struct InputMethodUserData<D: SeatHandler> {
     /// Handle to main keyboard for registering sub-keyboards
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     /// Filtering key events before they reach text input
-    pub(crate) key_filter: Arc<Mutex<Option<KeyFilter>>>,
+    //pub(crate) key_filter: Arc<Mutex<Option<KeyFilter>>>,
     /// This is just a copy from Input MethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup. That means other modules don't have to explicitly put D: InputMethodHandler when they call something that ends up calling this.
     /// (Not sure what the purpose of that is, but it seems consistent...)
     pub(crate) popup_geometry:
@@ -461,7 +461,7 @@ where
                 }
             }
             Request::KeyboardBind { keyboard } => {
-                let mut key_filter = data.keyboard_handle.with_interceptor(|key_filter| {
+                data.keyboard_handle.with_interceptor(|key_filter| {
                     if key_filter.is_some() {
                         im.post_error(xx_input_method_v1::Error::KeyboardAlreadyBound, "A keyboard was already bound");
                     } else {
@@ -474,8 +474,19 @@ where
                 });
             },
             Request::KeyboardUnbind => {
-                let mut key_filter = data.key_filter.lock().unwrap();
-                if let Some(filter) = key_filter.as_mut() {
+                data.keyboard_handle.with_interceptor(|key_filter| {
+                    let Some(filter) = key_filter.as_mut()
+                    else {
+                        im.post_error(xx_input_method_v1::Error::KeyboardNotBound, "No keyboard has been bound");
+                        return;
+                    };
+                    let Some(filter) = (AsRef::<dyn WlKeyboardApi + Send + Sync>::as_ref(filter)
+                        as &dyn WlKeyboardApi)
+                        .downcast_ref::<KeyFilter>()
+                    else { 
+                        error!("The registered keyboard interceptor is not the IM one");
+                        return;
+                    };
                     if let Some(surface) = &filter.focused_surface {
                         for e in filter.events_to_filter.lock().unwrap().drain(..) {
                             let keyboards = data.keyboard_handle.arc.known_kbds.lock().unwrap();
@@ -489,9 +500,7 @@ where
                     }
                     // FIXME: remove kbd
                     //data.keyboard_handle.
-                } else {
-                    im.post_error(xx_input_method_v1::Error::KeyboardNotBound, "No keyboard has been bound");
-                }
+                })
             }
             Request::KeyboardConsume { serial, action } => {
                 dbg!(serial, action);
@@ -515,8 +524,20 @@ where
                     },
                 };
 
-                let mut key_filter = data.key_filter.lock().unwrap();
-                if let Some(filter) = key_filter.as_mut() {
+                data.keyboard_handle.with_interceptor(|key_filter| {
+                    let Some(filter) = key_filter.as_mut()
+                    else {
+                        im.post_error(xx_input_method_v1::Error::KeyboardNotBound, "No keyboard has been bound");
+                        return;
+                    };
+                    let Some(filter) = (AsRef::<dyn WlKeyboardApi + Send + Sync>::as_ref(filter)
+                        as &dyn WlKeyboardApi)
+                        .downcast_ref::<KeyFilter>()
+                    else { 
+                        error!("The registered keyboard interceptor is not the IM one");
+                        return;
+                    };
+                
                     let mut events = filter.events_to_filter.lock().unwrap();
                     while let Some(e) = events.pop_back() {
                         let (action, stop) = if let Some(waiting_serial) = e.serial() {
@@ -543,7 +564,15 @@ where
                                 return
                             },
                             (Action::Passthrough, e) => {
-                                // TODO: forward
+                                if let Some(surface) = &filter.focused_surface {
+                                    let keyboards = data.keyboard_handle.arc.known_kbds.lock().unwrap();
+                                    keyboards.for_each_focused(
+                                        surface,
+                                        |k| e.clone().apply(k),
+                                    );
+                                } else {
+                                    warn!("key event without a focused surface");
+                                }
                             },
                         }
                         if stop {
@@ -551,9 +580,7 @@ where
                         }
                     }
                     im.post_error(xx_input_method_v1::Error::InvalidSerial, "No event is waiting for confirmation");
-                } else {
-                    im.post_error(xx_input_method_v1::Error::KeyboardNotBound, "No keyboard has been bound");
-                }
+                })
             }
             Request::Destroy => {
                 // Nothing to do

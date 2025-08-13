@@ -257,7 +257,6 @@ where
                         popup_geometry: D::popup_geometry,
                         popup_repositioned: D::popup_repositioned,
                         keyboard_handle: seat.get_keyboard().unwrap(),
-                        key_filter: Arc::new(Mutex::new(None)),
                     },
                 );
                 handle.add_instance(&instance);

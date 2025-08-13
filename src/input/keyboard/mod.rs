@@ -373,34 +373,36 @@ pub enum Error {
 
 use wayland_server::protocol::{wl_keyboard, wl_surface};
 
-pub(crate) trait WlKeyboardApi {
+pub(crate) trait WlKeyboardApi : Downcast {
     fn keymap(
-            &self,
-            format: wl_keyboard::KeymapFormat,
-            fd: ::std::os::unix::io::BorrowedFd<'_>,
-            size: u32,
-        );
+        &self,
+        format: wl_keyboard::KeymapFormat,
+        fd: ::std::os::unix::io::BorrowedFd<'_>,
+        size: u32,
+    );
     fn enter(
-            &self,
-            serial: u32,
-            surface: &wl_surface::WlSurface,
-            keys: Vec<u8>,
-        );
+        &self,
+        serial: u32,
+        surface: &wl_surface::WlSurface,
+        keys: Vec<u8>,
+    );
     fn leave(&self, serial: u32, surface: &wl_surface::WlSurface);
     fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState);
     fn modifiers(
-            &self,
-            serial: u32,
-            mods_depressed: u32,
-            mods_latched: u32,
-            mods_locked: u32,
-            group: u32,
-        );
+        &self,
+        serial: u32,
+        mods_depressed: u32,
+        mods_latched: u32,
+        mods_locked: u32,
+        group: u32,
+    );
     /// Repeat info cannot be derived from input events, but must be forwarded from the intercepted to the intercepting keyboard instance.
     /// This means intercepting only at the input events entry doesn't work. There must be full low-level interception instead.
     fn repeat_info(&self, rate: i32, delay: i32);
     fn version(&self) -> u32;
 }
+
+impl_downcast!(WlKeyboardApi);
 
 fn for_each_kbd(
     kbds: &Vec<Weak<wl_keyboard::WlKeyboard>>,
