@@ -302,7 +302,8 @@ where
                 }
             }
             Request::KeyboardBind { keyboard, surface, extensions } => {
-                data.keyboard_handle.with_interceptor(|key_filter| {
+                data.keyboard_handle.with_keyboards_mut(|known_kbds| {
+                    let key_filter = &mut known_kbds.interceptor;
                     if key_filter.is_some() {
                         im.post_error(xx_input_method_v1::Error::KeyboardAlreadyBound, "A keyboard was already bound");
                     } else {

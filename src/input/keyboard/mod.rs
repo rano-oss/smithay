@@ -404,18 +404,6 @@ pub(crate) trait WlKeyboardApi : Downcast {
 
 impl_downcast!(WlKeyboardApi);
 
-fn for_each_kbd(
-    kbds: &Vec<Weak<wl_keyboard::WlKeyboard>>,
-    mut f: impl FnMut(wl_keyboard::WlKeyboard),
-) {
-    for kbd in kbds {
-        let Ok(kbd) = kbd.upgrade() else {
-            continue;
-        };
-        f(kbd.clone())
-    }
-}
-
 impl WlKeyboardApi for wl_keyboard::WlKeyboard {
     fn keymap(
         &self,
@@ -460,57 +448,11 @@ impl WlKeyboardApi for wl_keyboard::WlKeyboard {
     }
 }
 
-// FIXME: this might be unneeded
-/// Helper impl fo avoid repeating for_each. But where?
-/*
-impl WlKeyboardApi for Vec<Weak<wl_keyboard::WlKeyboard>> {
-    fn keymap(
-        &self,
-        format: wl_keyboard::KeymapFormat,
-        fd: ::std::os::unix::io::BorrowedFd<'_>,
-        size: u32,
-    ) {
-        for_each_kbd(self, |kbd| kbd.keymap(format, fd, size));
-    }
-
-    fn enter(
-        &self,
-        serial: u32,
-        surface: &wl_surface::WlSurface,
-        keys: Vec<u8>,
-    ) {
-        for_each_kbd(self, |kbd| kbd.enter(serial, surface, keys.clone()));
-    }
-
-    fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
-        for_each_kbd(self, |kbd| kbd.leave(serial, surface));
-    }
-    
-    fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
-        for_each_kbd(self, |kbd| kbd.key(serial, time, key, state));
-    }
-    fn modifiers(
-        &self,
-        serial: u32,
-        mods_depressed: u32,
-        mods_latched: u32,
-        mods_locked: u32,
-        group: u32,
-    ) {
-        for_each_kbd(self, |kbd| kbd.modifiers(serial, mods_depressed, mods_latched, mods_locked, group));
-    }
-    fn repeat_info(&self, rate: i32, delay: i32) {
-        for_each_kbd(self, |kbd| kbd.repeat_info(rate, delay));
-    }
-        fn version(&self) -> u32 {
-            0 // FIXME: can't return a single version. What is this even for?
-        }
-}
-*/
 pub(crate) struct KnownKbds {
     pub(crate) keyboards: Vec<Weak<wl_keyboard::WlKeyboard>>,
     /// If present, all events are directed to it rather than the keyboards.
-    interceptor: Option<Box<dyn WlKeyboardApi + Send + Sync>>
+    /// While this is used only by the input metod, the implementation is hidden behind a trait to limit the knowledge of the input method by the keyboard.
+    pub(crate) interceptor: Option<Box<dyn WlKeyboardApi + Send + Sync>>
 }
 
 impl fmt::Debug for KnownKbds {
@@ -530,27 +472,43 @@ impl KnownKbds {
         if let Some(kbd) = self.interceptor.as_ref() {
             f(kbd.as_ref())
         } else {
-            self.keyboards
-                .iter()
-                .filter_map(|k| k.upgrade().ok())
-                .for_each(|k| f(&k))
+            Self::for_each_active_kbd(&self.keyboards, f);
         }
     }
-    
+
     pub(crate) fn for_each_focused(
         &self,
         surface: &wl_surface::WlSurface,
-        mut f: impl FnMut(&dyn WlKeyboardApi))
-    {
+        mut f: impl FnMut(&dyn WlKeyboardApi),
+    ) {
         if let Some(kbd) = self.interceptor.as_ref() {
             f(kbd.as_ref())
         } else {
-            self.keyboards
-                .iter()
-                .filter_map(|k| k.upgrade().ok())
-                .filter(|k| k.id().same_client_as(&surface.id()))
-                .for_each(|k| f(&k))
+            Self::for_each_focused_kbd(&self.keyboards, surface, f);
         }
+    }
+
+    /// Direct access to the keyboards. For use by the interceptor
+    pub(crate) fn for_each_active_kbd(
+        keyboards: &Vec<Weak<wl_keyboard::WlKeyboard>>,
+        mut f: impl FnMut(&dyn WlKeyboardApi),
+    ) {
+        keyboards
+            .iter()
+            .filter_map(|k| k.upgrade().ok())
+            .for_each(|k| f(&k))
+    }
+
+    pub(crate) fn for_each_focused_kbd(
+        keyboards: &Vec<Weak<wl_keyboard::WlKeyboard>>,
+        surface: &wl_surface::WlSurface,
+        mut f: impl FnMut(&dyn WlKeyboardApi),
+    ) {
+        keyboards
+            .iter()
+            .filter_map(|k| k.upgrade().ok())
+            .filter(|k| k.id().same_client_as(&surface.id()))
+            .for_each(|k| f(&k))
     }
 }
 
@@ -1470,13 +1428,13 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             .cloned()
             .unwrap()
     }
-    
-    
-    pub(crate) fn with_interceptor<T>(
+
+    /// Lock and perform an operation on the collection of wl_keyboard-like objects
+    pub(crate) fn with_keyboards_mut<T>(
         &self,
-        f: impl FnOnce(&mut Option<Box<dyn WlKeyboardApi + Send + Sync>>) -> T,
+        f: impl FnOnce(&mut KnownKbds) -> T,
     ) -> T {
-        f(&mut self.arc.known_kbds.lock().unwrap().interceptor)
+        f(&mut self.arc.known_kbds.lock().unwrap())
     }
 }
 
