@@ -7,7 +7,7 @@ use wl_input_method::input_method::v1::server::{
     xx_input_method_keyboard_v1::XxInputMethodKeyboardV1,
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
-use wayland_server::{backend::ClientId, protocol::{wl_keyboard::{KeyState, WlKeyboard}, wl_surface::WlSurface}};
+use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 use crate::{
@@ -316,7 +316,7 @@ where
                             keyboard,
                             im_keyboard,
                             events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
-                            focused_surface: None,
+                            focused_surface: Arc::new(Mutex::new(None)),
                             im_surface: surface,
                         }));
                     }
