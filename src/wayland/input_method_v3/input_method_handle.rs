@@ -2,19 +2,16 @@ use std::{
     collections::VecDeque, fmt, sync::{Arc, Mutex}
 };
 
-use tracing::{error, warn};
-
-use wayland_server::WEnum;
 use wl_input_method::input_method::v1::server::{
     xx_input_method_v1::{self, XxInputMethodV1},
-    xx_input_method_keyboard_v1::{self, XxInputMethodKeyboardV1},
+    xx_input_method_keyboard_v1::XxInputMethodKeyboardV1,
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
 use wayland_server::{backend::ClientId, protocol::{wl_keyboard::{KeyState, WlKeyboard}, wl_surface::WlSurface}};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 use crate::{
-    input::{keyboard::{KeyboardHandle, WlKeyboardApi}, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, input_method_v3::KeyboardUserData, seat::WaylandFocus, text_input::TextInputHandle}
+    input::{keyboard::KeyboardHandle, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, input_method_v3::KeyboardUserData, seat::WaylandFocus, text_input::TextInputHandle}
 };
 
 use super::{
@@ -183,6 +180,7 @@ impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
 impl<D> Dispatch<XxInputMethodV1, InputMethodUserData<D>, D> for InputMethodManagerState
 where
     D: Dispatch<XxInputMethodV1, InputMethodUserData<D>>,
+    D: Dispatch<XxInputMethodKeyboardV1, KeyboardUserData<D>>,
     D: Dispatch<XxInputPopupSurfaceV2, InputMethodPopupSurfaceUserData>,
     D: SeatHandler,
     D: InputMethodHandler,
@@ -303,7 +301,7 @@ where
                     }
                 }
             }
-            Request::KeyboardBind { keyboard, extensions } => {
+            Request::KeyboardBind { keyboard, surface, extensions } => {
                 data.keyboard_handle.with_interceptor(|key_filter| {
                     if key_filter.is_some() {
                         im.post_error(xx_input_method_v1::Error::KeyboardAlreadyBound, "A keyboard was already bound");
@@ -311,7 +309,7 @@ where
                         let im_keyboard = data_init.init(
                             extensions,
                             KeyboardUserData {
-                                keyboard_handle: keyboard_handle.clone(),
+                                keyboard_handle: data.keyboard_handle.clone(),
                             },
                         );
                         *key_filter = Some(Box::new(KeyFilter {
@@ -319,6 +317,7 @@ where
                             im_keyboard,
                             events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
                             focused_surface: None,
+                            im_surface: surface,
                         }));
                     }
                 });

@@ -101,7 +101,7 @@ mod input_method_keyboard;
 mod input_method_popup_surface;
 mod positioner;
 
-pub use input_method_keyboard::{Keyboard, KeyboardUserData};
+pub use input_method_keyboard::KeyboardUserData;
 pub use input_method_popup_surface::{
     InputMethodPopupSurfaceUserData, PopupParent, PopupSurface, PopupSurfaceState,
 };
@@ -297,7 +297,113 @@ macro_rules! delegate_input_method_manager_v3 {
         ] => $crate::wayland::input_method_v3::InputMethodManagerState);
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_method_keyboard_v1::XxInputMethodKeyboardV1:
-            $crate::wayland::input_method_v3::KeyboardUserData
+            $crate::wayland::input_method_v3::KeyboardUserData<Self>
         ] => $crate::wayland::input_method_v3::InputMethodManagerState);
     };
+}
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use wl_input_method::input_method::v1::server as protocol;
+
+    struct Handler {}
+
+    impl InputMethodHandler for Handler {
+        fn new_popup(&mut self, _surface: PopupSurface) {
+        }
+        fn dismiss_popup(&mut self, _surface: PopupSurface) {
+        }
+        fn popup_repositioned(&mut self, _surface: PopupSurface) {
+        }
+        fn popup_geometry(
+            &self,
+            _parent: &WlSurface,
+            _cursor: &Rectangle<i32, Logical>,
+            _positioner: &PositionerState,
+        ) -> Rectangle<i32, Logical> {
+            unreachable!("Test code not meant to be executed");
+        }
+        fn parent_geometry(&self, _parent: &WlSurface) -> Rectangle<i32, Logical> {
+            unreachable!("Test code not meant to be executed");
+        }
+        fn popup_ack_configure(
+            &mut self,
+            _surface: &WlSurface,
+            _serial: Serial,
+            _client_state: PopupSurfaceState,
+        ) {
+        }
+    }
+    
+    impl SeatHandler for Handler {
+        type KeyboardFocus = WlSurface;
+        type PointerFocus = WlSurface;
+        type TouchFocus = WlSurface;
+        fn seat_state(&mut self) -> &mut crate::input::SeatState<Self> {
+            unreachable!("Test code not meant to be executed");
+        }
+        fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&Self::KeyboardFocus>) {
+        }
+        fn cursor_image(&mut self, _seat: &Seat<Self>, _image: crate::input::pointer::CursorImageStatus) {
+        }
+        fn led_state_changed(&mut self, _seat: &Seat<Self>, _led_state: crate::input::keyboard::LedState) {
+        }
+    }
+
+    delegate_input_method_manager_v3!(Handler);
+
+    fn assert_is_manager_delegate<T>()
+    where
+        T: wayland_server::Dispatch<
+            protocol::xx_input_method_manager_v2::XxInputMethodManagerV2,
+            (),
+        >,
+    {
+    }
+
+    fn assert_is_delegate<T>()
+    where
+        T: SeatHandler,
+        T: wayland_server::Dispatch<protocol::xx_input_method_v1::XxInputMethodV1, InputMethodUserData<T>>,
+    {
+    }
+
+    fn assert_is_popup_delegate<T>()
+    where
+        T: wayland_server::Dispatch<
+            protocol::xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
+            InputMethodPopupSurfaceUserData,
+        >,
+    {
+    }
+
+    fn assert_is_positioner_delegate<T>()
+    where
+        T: wayland_server::Dispatch<
+            protocol::xx_input_popup_positioner_v1::XxInputPopupPositionerV1,
+            PositionerUserData,
+        >,
+    {
+    }
+    
+    fn assert_is_keyboard_delegate<T>()
+    where
+        T: SeatHandler,
+        T: wayland_server::Dispatch<
+            protocol::xx_input_method_keyboard_v1::XxInputMethodKeyboardV1,
+            KeyboardUserData<T>,
+        >,
+    {
+    }
+
+    #[test]
+    fn test_valid_assignment() {
+        assert_is_manager_delegate::<Handler>();
+        assert_is_delegate::<Handler>();
+        assert_is_popup_delegate::<Handler>();
+        assert_is_positioner_delegate::<Handler>();
+        assert_is_keyboard_delegate::<Handler>();
+    }
 }
