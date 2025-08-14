@@ -86,8 +86,6 @@ use crate::{
     utils::{Logical, Rectangle, Serial},
 };
 
-use std::sync::{Arc, Mutex};
-
 pub use input_method_handle::{InputMethodHandle, InputMethodUserData};
 
 use super::text_input::TextInputHandle;
@@ -99,9 +97,11 @@ pub const INPUT_POPUP_SURFACE_ROLE: &str = "zwp_input_popup_surface_v3";
 
 mod configure_tracker;
 mod input_method_handle;
+mod input_method_keyboard;
 mod input_method_popup_surface;
 mod positioner;
 
+pub use input_method_keyboard::{Keyboard, KeyboardUserData};
 pub use input_method_popup_surface::{
     InputMethodPopupSurfaceUserData, PopupParent, PopupSurface, PopupSurfaceState,
 };
@@ -294,6 +294,10 @@ macro_rules! delegate_input_method_manager_v3 {
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_popup_positioner_v1::XxInputPopupPositionerV1:
             $crate::wayland::input_method_v3::PositionerUserData
+        ] => $crate::wayland::input_method_v3::InputMethodManagerState);
+        $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
+            $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_method_keyboard_v1::XxInputMethodKeyboardV1:
+            $crate::wayland::input_method_v3::KeyboardUserData
         ] => $crate::wayland::input_method_v3::InputMethodManagerState);
     };
 }
