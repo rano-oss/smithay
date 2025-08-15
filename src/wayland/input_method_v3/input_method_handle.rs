@@ -315,8 +315,8 @@ where
                     );
                     // TODO: copy keyboards into this
                     *key_filter = Some(Box::new(KeyFilter {
-                        keyboard,
-                        im_keyboard,
+                        im_keyboard: keyboard,
+                        client_keyboards: Arc::downgrade(&known_kbds.keyboards),
                         events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
                         focused_surface: Arc::new(Mutex::new(None)),
                         im_surface: surface,

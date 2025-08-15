@@ -98,9 +98,9 @@ impl KeyboardEvent {
 /// Stores data related to filtering key events arriving to text input
 pub(crate) struct KeyFilter {
     /// Keyboard provided by the input method client to sniff on target surface's events.
-    pub keyboard: WlKeyboard,
-    /// Input method keyboard extensions
-    pub im_keyboard: XxInputMethodKeyboardV1,
+    pub im_keyboard: WlKeyboard,
+    /// Client keyboards to which events can be forwarded
+    pub client_keyboards: std::sync::Weak<Mutex<Vec<wayland_server::Weak<wl_keyboard::WlKeyboard>>>>,
     /// Events waiting for filter decision from the input method client
     pub events_to_filter: Arc<Mutex<VecDeque<KeyboardEvent>>>,
     /// Surface to which events should be sent after filtering
@@ -108,6 +108,7 @@ pub(crate) struct KeyFilter {
     /// Surface on the IM side which should be target of enter and leave
     pub im_surface: WlSurface,
 }
+
 impl KeyFilter {
     fn push_event(&self, event: KeyboardEvent) {
         // TODO: unnecessary (?) Sync requirement causes the need to lock
@@ -125,7 +126,7 @@ impl WlKeyboardApi for KeyFilter {
         fd: ::std::os::unix::io::BorrowedFd<'_>,
         size: u32,
     ) {
-        self.keyboard.keymap(format, fd, size);
+        self.im_keyboard.keymap(format, fd, size);
         // FIXME: not sure if this is safe. What if the original fd closes before the event is dropped?
         if let Ok(fd) = fd.try_clone_to_owned() {
             self.push_event(KeyboardEvent::Keymap{format, fd, size});
@@ -142,7 +143,7 @@ impl WlKeyboardApi for KeyFilter {
     ) {
         let mut target = self.focused_surface.lock().unwrap();
         *target = Some(surface.clone());
-        self.keyboard.enter(serial, &self.im_surface, keys.clone());
+        self.im_keyboard.enter(serial, &self.im_surface, keys.clone());
         //let no_surface = wayland_server::Resource
         dbg!("enter", &keys);
         self.push_event(KeyboardEvent::Enter {
@@ -157,7 +158,7 @@ impl WlKeyboardApi for KeyFilter {
         if target.as_ref() != Some(surface) {
             warn!("Received leave with an unfocused surface");
         }
-        self.keyboard.leave(serial, &self.im_surface);
+        self.im_keyboard.leave(serial, &self.im_surface);
         self.push_event(KeyboardEvent::Leave {
             serial,
             surface: surface.clone(),
@@ -165,7 +166,7 @@ impl WlKeyboardApi for KeyFilter {
         dbg!("leave");
     }
     fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
-        self.keyboard.key(serial, time, key, state);
+        self.im_keyboard.key(serial, time, key, state);
         self.push_event(KeyboardEvent::Key { serial, time, key, state });
     }
     fn modifiers(
@@ -176,7 +177,7 @@ impl WlKeyboardApi for KeyFilter {
         mods_locked: u32,
         group: u32,
     ) {
-        self.keyboard.modifiers(serial, mods_depressed, mods_latched, mods_locked, group);
+        self.im_keyboard.modifiers(serial, mods_depressed, mods_latched, mods_locked, group);
         self.push_event(KeyboardEvent::Modifiers { 
             serial,
             mods_depressed,
@@ -186,11 +187,25 @@ impl WlKeyboardApi for KeyFilter {
         });
     }
     fn repeat_info(&self, rate: i32, delay: i32) {
-        self.keyboard.repeat_info(rate, delay);
+        self.im_keyboard.repeat_info(rate, delay);
         self.push_event(KeyboardEvent::RepeatInfo {rate, delay });
     }
     fn version(&self) -> u32 {
-        Resource::version(&self.keyboard)
+        let mut v = None;
+        let surface = self.focused_surface.lock().unwrap();
+        if let Some(surface) = surface.as_ref() {
+            let keyboards = self.client_keyboards.upgrade().unwrap();
+            let keyboards = keyboards.lock().unwrap();
+            
+            // Hopefully there's only one keyboard registered at the focused surface.
+            // If there are multple ones, they better share the version.
+            KnownKbds::for_each_focused_kbd(
+                &*keyboards,
+                surface,
+                |k| {v = Some(k.version());},
+            );
+        }
+        v.unwrap_or(Resource::version(&self.im_keyboard))
     }
 }
 
