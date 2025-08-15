@@ -11,13 +11,15 @@ use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 use crate::{
-    input::{keyboard::KeyboardHandle, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, input_method_v3::KeyboardUserData, seat::WaylandFocus, text_input::TextInputHandle}
+    input::{keyboard::{KeyboardHandle, WlKeyboardApi}, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, input_method_v3::KeyboardUserData, seat::WaylandFocus, text_input::TextInputHandle}
 };
 
 use super::{
     input_method_keyboard::KeyFilter,
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface}, positioner::{PositionerState, PositionerUserData}, InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE
 };
+
+use tracing::error;
 
 /// Slot for an optional input method
 #[derive(Default, Debug)]
@@ -27,14 +29,27 @@ pub(crate) struct MaybeInstance {
 }
 
 /// Contains input method state
-#[derive(Debug)]
 pub(crate) struct InputMethod {
     pub object: XxInputMethodV1,
     pub serial: u32,
     pub active: bool,
     pub popup_handles: Vec<PopupSurface>,
+    pub keyboard_filter_handle: Arc<Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>>,
     /// Relative to surface on which input method is enabled
     pub cursor_rectangle: Rectangle<i32, Logical>,
+}
+
+impl fmt::Debug for InputMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InputMethod")
+            .field("object", &self.object)
+            .field("serial", &self.serial)
+            .field("active", &self.active)
+            .field("popup_handles", &self.popup_handles)
+            .field("keyboard_filter_handle", &"TODO")
+            .field("cursor_rectangle", &self.cursor_rectangle)
+            .finish()
+    }
 }
 
 impl InputMethod {
@@ -54,18 +69,23 @@ pub struct InputMethodHandle {
 
 impl InputMethodHandle {
     /// Assigns a new instance
-    pub(super) fn add_instance(&self, instance: &XxInputMethodV1) {
+    pub(super) fn add_instance<D: SeatHandler + 'static>(
+        &self,
+        instance: &XxInputMethodV1,
+    ) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(instance) = inner.instance.as_mut() {
             instance.serial = 0;
             instance.object.unavailable();
         } else {
+            let data = instance.data::<InputMethodUserData<D>>().unwrap();
             inner.instance = Some(InputMethod {
                 object: instance.clone(),
                 serial: 0,
                 active: false,
                 popup_handles: vec![],
                 cursor_rectangle: Rectangle::default(),
+                keyboard_filter_handle: data.keyboard_handle.arc.known_kbds.interceptor.clone(),
             });
         }
     }
@@ -131,6 +151,14 @@ impl InputMethodHandle {
     pub(crate) fn activate_input_method<D: SeatHandler + 'static>(&self, _: &mut D, _surface: &WlSurface) {
         self.with_instance(|im| {
             im.object.activate();
+            let filter = im.keyboard_filter_handle.lock().unwrap();
+            if let Some(filter) = filter.as_ref() {
+                if let Some(filter) = KeyFilter::try_from_box_wlkeyboardapi(filter) {
+                    filter.im_filter.notify_version(filter.version())
+                } else { 
+                    error!("The registered keyboard interceptor is not the IM one");
+                };
+            }
             im.active = true;
         });
     }
@@ -307,7 +335,7 @@ where
                 if key_filter.is_some() {
                     im.post_error(xx_input_method_v1::Error::KeyboardAlreadyBound, "A keyboard was already bound");
                 } else {
-                    let im_keyboard = data_init.init(
+                    let im_filter = data_init.init(
                         extensions,
                         KeyboardUserData {
                             keyboard_handle: data.keyboard_handle.clone(),
@@ -316,6 +344,7 @@ where
                     // TODO: copy keyboards into this
                     *key_filter = Some(Box::new(KeyFilter {
                         im_keyboard: keyboard,
+                        im_filter,
                         client_keyboards: Arc::downgrade(&known_kbds.keyboards),
                         events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
                         focused_surface: Arc::new(Mutex::new(None)),

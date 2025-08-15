@@ -259,7 +259,7 @@ where
                         keyboard_handle: seat.get_keyboard().unwrap(),
                     },
                 );
-                handle.add_instance(&instance);
+                handle.add_instance::<D>(&instance);
             }
             xx_input_method_manager_v2::Request::GetPositioner { id } => {
                 data_init.init(id, PositionerUserData::default());

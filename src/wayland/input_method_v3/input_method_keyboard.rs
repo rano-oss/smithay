@@ -112,10 +112,12 @@ pub(crate) enum EventState {
     Delaying,
 }
 
-/// Stores data related to filtering key events arriving to text input
+/// Filters key events to arrive to text input
 pub(crate) struct KeyFilter {
     /// Keyboard provided by the input method client to sniff on target surface's events.
     pub im_keyboard: WlKeyboard,
+    /// Input method extensions assigned to this keyboard instance
+    pub im_filter: XxInputMethodKeyboardV1,
     /// Client keyboards to which events can be forwarded
     pub client_keyboards: std::sync::Weak<Mutex<Vec<wayland_server::Weak<wl_keyboard::WlKeyboard>>>>,
     /// Events waiting for filter decision from the input method client.
@@ -165,6 +167,16 @@ impl KeyFilter {
         } else {
             error!("Bound keyboard has some events but no client surface is in focus")
         }
+    }
+    
+    pub(crate) fn try_from_box_wlkeyboardapi<'a>(
+        filter: &'a Box<dyn WlKeyboardApi + Send + Sync>,
+    ) -> Option<&'a Self> {
+        (
+            AsRef::<dyn WlKeyboardApi + Send + Sync>::as_ref(filter)
+            as &dyn WlKeyboardApi
+        )
+            .downcast_ref::<Self>()
     }
 }
 
