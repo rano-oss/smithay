@@ -12,7 +12,7 @@ use wayland_server::{protocol::{wl_keyboard::{KeyState, WlKeyboard}, wl_surface:
 /// A reification of wl_keyboard events, just to be able to shift them in time.
 /// Not using the event from wayland libraries directly because they'd need to be translated into a pure Rust call anyway before sending.
 #[derive(Debug)]
-pub enum KeyboardEvent {
+pub(crate) enum KeyboardEvent {
     Keymap{
         format: wl_keyboard::KeymapFormat,
         fd: OwnedFd,
@@ -93,6 +93,23 @@ impl KeyboardEvent {
             },
         }
     }
+    
+    /// Returns `true` if the event is filterable by the input method
+    fn is_filterable(&self) -> bool {
+        match self {
+            KeyboardEvent::Key { .. } => true,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum EventState {
+    /// Event is already sent but confirmation has not arrived yet.
+    /// Only for events which must be passed through.
+    Sent,
+    /// Delayed until confirmation arrives
+    Delaying,
 }
 
 /// Stores data related to filtering key events arriving to text input
@@ -101,8 +118,9 @@ pub(crate) struct KeyFilter {
     pub im_keyboard: WlKeyboard,
     /// Client keyboards to which events can be forwarded
     pub client_keyboards: std::sync::Weak<Mutex<Vec<wayland_server::Weak<wl_keyboard::WlKeyboard>>>>,
-    /// Events waiting for filter decision from the input method client
-    pub events_to_filter: Arc<Mutex<VecDeque<KeyboardEvent>>>,
+    /// Events waiting for filter decision from the input method client.
+    /// This queue begins with 0 to N of sent events and contains delayed ones after that.
+    pub events_to_filter: Arc<Mutex<VecDeque<(EventState, KeyboardEvent)>>>,
     /// Surface to which events should be sent after filtering
     pub focused_surface: Arc<Mutex<Option<WlSurface>>>,
     /// Surface on the IM side which should be target of enter and leave
@@ -113,7 +131,40 @@ impl KeyFilter {
     fn push_event(&self, event: KeyboardEvent) {
         // TODO: unnecessary (?) Sync requirement causes the need to lock
         let mut events = self.events_to_filter.lock().unwrap();
-        events.push_front(event);
+        let queue_empty = events.iter().position(|e| match e {
+            (EventState::Delaying, _) => true,
+            _ => false,
+        }).is_some();
+
+        let state = if queue_empty && !event.is_filterable() {
+            // There are no outstanding delayed events to block incoming events, so if this one doesn't need to wait for a filter decision, send it immediately.
+            self.forward(&event);
+            EventState::Sent
+        } else {
+            EventState::Delaying
+        };
+        events.push_front((state, event));
+    }
+
+    fn apply(&self, (state, event): (EventState, KeyboardEvent)) {
+        match state {
+            EventState::Sent => {},
+            EventState::Delaying => self.forward(&event),
+        }
+    }
+    
+    fn forward(&self, event: &KeyboardEvent) {
+        let surface = self.focused_surface.lock().unwrap();
+        if let Some(surface) = surface.as_ref() {
+            let keyboards = self.client_keyboards.upgrade().unwrap();
+            KnownKbds::for_each_focused_kbd(
+                &*keyboards.lock().unwrap(),
+                surface,
+                |k| event.apply(k)
+            );
+        } else {
+            error!("Bound keyboard has some events but no client surface is in focus")
+        }
     }
 }
 
@@ -248,20 +299,9 @@ where
         use xx_input_method_keyboard_v1::Request;
         match request {
             Request::Unbind => {
-                let target = filter.focused_surface.lock().unwrap();
-                if let Some(surface) = target.as_ref() {
-                    for e in filter.events_to_filter.lock().unwrap().drain(..) {
-                        KnownKbds::for_each_focused_kbd(
-                            &*known_kbds.keyboards.lock().unwrap(),
-                            surface,
-                            |k| e.apply(k)
-                        );
-                    }
-                } else {
-                    error!("Bound keyboard still has some events but no client surface is in focus")
+                for e in filter.events_to_filter.lock().unwrap().drain(..) {
+                    filter.apply(e)
                 }
-                    // FIXME: remove kbd
-                    //data.keyboard_handle.
             }
             Request::Filter { serial, action } => {
                 dbg!(serial, action);
@@ -287,7 +327,7 @@ where
             
                 let mut events = filter.events_to_filter.lock().unwrap();
                 while let Some(e) = events.pop_back() {
-                    let (action, stop) = if let Some(waiting_serial) = e.serial() {
+                    let (action, stop) = if let Some(waiting_serial) = e.1.serial() {
                         if serial != waiting_serial {
                             resource.post_error(xx_input_method_keyboard_v1::Error::InvalidSerial, "Next event's serial doesn't match request");
                             return;
@@ -297,30 +337,17 @@ where
                         // Events without a serial will not get a confirmation. Just pass them through and go to next event.
                         (Action::Passthrough, false)
                     };
-                    match (action, &e) {
-                        (Action::Consume, KeyboardEvent::Key{..}) => {},
-                        (Action::Consume, KeyboardEvent::Keymap { .. })
-                        | (Action::Consume, KeyboardEvent::Enter { .. })
-                        | (Action::Consume, KeyboardEvent::Leave { .. })
-                        | (Action::Consume, KeyboardEvent::Modifiers { .. })
-                        | (Action::Consume, KeyboardEvent::RepeatInfo { .. }) => {
+                    match (action, e.1.is_filterable()) {
+                        (Action::Consume, true) => {},
+                        (Action::Consume, false) => {
                             resource.post_error(
                                 xx_input_method_keyboard_v1::Error::InvalidSerial,
-                                format!("Only key events may be consumed, but requested to consume {}", e.describe())
+                                format!("Only key events may be consumed, but requested to consume {}", e.1.describe())
                             );
-                            return
+                            return;
                         },
-                        (Action::Passthrough, e) => {
-                            let target = filter.focused_surface.lock().unwrap();
-                            if let Some(surface) = target.as_ref() {
-                                KnownKbds::for_each_focused_kbd(
-                                    &*known_kbds.keyboards.lock().unwrap(),
-                                    surface,
-                                    |k| e.apply(k),
-                                );
-                            } else {
-                                warn!("key event without a focused surface");
-                            }
+                        (Action::Passthrough, _) => {
+                            filter.apply(e)
                         },
                     }
                     if stop {
