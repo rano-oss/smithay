@@ -302,26 +302,26 @@ where
                 }
             }
             Request::KeyboardBind { keyboard, surface, extensions } => {
-                data.keyboard_handle.with_keyboards_mut(|known_kbds| {
-                    let key_filter = &mut known_kbds.interceptor;
-                    if key_filter.is_some() {
-                        im.post_error(xx_input_method_v1::Error::KeyboardAlreadyBound, "A keyboard was already bound");
-                    } else {
-                        let im_keyboard = data_init.init(
-                            extensions,
-                            KeyboardUserData {
-                                keyboard_handle: data.keyboard_handle.clone(),
-                            },
-                        );
-                        *key_filter = Some(Box::new(KeyFilter {
-                            keyboard,
-                            im_keyboard,
-                            events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
-                            focused_surface: Arc::new(Mutex::new(None)),
-                            im_surface: surface,
-                        }));
-                    }
-                });
+                let known_kbds = &data.keyboard_handle.arc.known_kbds;
+                let mut key_filter = known_kbds.interceptor.lock().unwrap();
+                if key_filter.is_some() {
+                    im.post_error(xx_input_method_v1::Error::KeyboardAlreadyBound, "A keyboard was already bound");
+                } else {
+                    let im_keyboard = data_init.init(
+                        extensions,
+                        KeyboardUserData {
+                            keyboard_handle: data.keyboard_handle.clone(),
+                        },
+                    );
+                    // TODO: copy keyboards into this
+                    *key_filter = Some(Box::new(KeyFilter {
+                        keyboard,
+                        im_keyboard,
+                        events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
+                        focused_surface: Arc::new(Mutex::new(None)),
+                        im_surface: surface,
+                    }));
+                }
             },
             Request::Destroy => {
                 // Nothing to do
@@ -337,7 +337,7 @@ where
         data: &InputMethodUserData<D>,
     ) {
         data.handle.inner.lock().unwrap().instance = None;
-        let mut keyboards = data.keyboard_handle.arc.known_kbds.lock().unwrap();
+        let keyboards = &data.keyboard_handle.arc.known_kbds;
         keyboards.clear_interceptor();
         data.text_input_handle.leave();
     }

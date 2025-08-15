@@ -215,37 +215,38 @@ where
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
+        let known_kbds = &data.keyboard_handle.arc.known_kbds;
+        let filter = known_kbds.interceptor.lock().unwrap();
+        let Some(filter) = filter.as_ref()
+        else {
+            error!("IM has a bound keyboard, but no interceptor is registered");
+            return;
+        };
+        let Some(filter) = (AsRef::<dyn WlKeyboardApi + Send + Sync>::as_ref(filter)
+            as &dyn WlKeyboardApi)
+            .downcast_ref::<KeyFilter>()
+        else { 
+            error!("The registered keyboard interceptor is not the IM one");
+            return;
+        };
+        
         use xx_input_method_keyboard_v1::Request;
         match request {
             Request::Unbind => {
-                data.keyboard_handle.with_keyboards_mut(|known_kbds| {
-                    let Some(filter) = known_kbds.interceptor.as_mut()
-                    else {
-                        resource.post_error(xx_input_method_keyboard_v1::Error::NotBound, "No keyboard has been bound");
-                        return;
-                    };
-                    let Some(filter) = (AsRef::<dyn WlKeyboardApi + Send + Sync>::as_ref(filter)
-                        as &dyn WlKeyboardApi)
-                        .downcast_ref::<KeyFilter>()
-                    else { 
-                        error!("The registered keyboard interceptor is not the IM one");
-                        return;
-                    };
-                    let target = filter.focused_surface.lock().unwrap();
-                    if let Some(surface) = target.as_ref() {
-                        for e in filter.events_to_filter.lock().unwrap().drain(..) {
-                            KnownKbds::for_each_focused_kbd(
-                                &known_kbds.keyboards,
-                                surface,
-                                |k| e.apply(k)
-                            );
-                        }
-                    } else {
-                        error!("Bound keyboard still has some events but no client surface is in focus")
+                let target = filter.focused_surface.lock().unwrap();
+                if let Some(surface) = target.as_ref() {
+                    for e in filter.events_to_filter.lock().unwrap().drain(..) {
+                        KnownKbds::for_each_focused_kbd(
+                            &*known_kbds.keyboards.lock().unwrap(),
+                            surface,
+                            |k| e.apply(k)
+                        );
                     }
+                } else {
+                    error!("Bound keyboard still has some events but no client surface is in focus")
+                }
                     // FIXME: remove kbd
                     //data.keyboard_handle.
-                })
             }
             Request::Filter { serial, action } => {
                 dbg!(serial, action);
@@ -268,65 +269,50 @@ where
                         return;
                     },
                 };
-
-                data.keyboard_handle.with_keyboards_mut(|known_kbds| {
-                    let Some(filter) = known_kbds.interceptor.as_mut()
-                    else {
-                        resource.post_error(xx_input_method_keyboard_v1::Error::NotBound, "No keyboard has been bound");
-                        return;
-                    };
-                    let Some(filter) = (AsRef::<dyn WlKeyboardApi + Send + Sync>::as_ref(filter)
-                        as &dyn WlKeyboardApi)
-                        .downcast_ref::<KeyFilter>()
-                    else { 
-                        error!("The registered keyboard interceptor is not the IM one");
-                        return;
-                    };
-                
-                    let mut events = filter.events_to_filter.lock().unwrap();
-                    while let Some(e) = events.pop_back() {
-                        let (action, stop) = if let Some(waiting_serial) = e.serial() {
-                            if serial != waiting_serial {
-                                resource.post_error(xx_input_method_keyboard_v1::Error::InvalidSerial, "Next event's serial doesn't match request");
-                                return;
-                            };
-                            (action, true)
-                        } else {
-                            // Events without a serial will not get a confirmation. Just pass them through and go to next event.
-                            (Action::Passthrough, false)
-                        };
-                        match (action, &e) {
-                            (Action::Consume, KeyboardEvent::Key{..}) => {},
-                            (Action::Consume, KeyboardEvent::Keymap { .. })
-                            | (Action::Consume, KeyboardEvent::Enter { .. })
-                            | (Action::Consume, KeyboardEvent::Leave { .. })
-                            | (Action::Consume, KeyboardEvent::Modifiers { .. })
-                            | (Action::Consume, KeyboardEvent::RepeatInfo { .. }) => {
-                                resource.post_error(
-                                    xx_input_method_keyboard_v1::Error::InvalidSerial,
-                                    format!("Only key events may be consumed, but requested to consume {}", e.describe())
-                                );
-                                return
-                            },
-                            (Action::Passthrough, e) => {
-                                let target = filter.focused_surface.lock().unwrap();
-                                if let Some(surface) = target.as_ref() {
-                                    KnownKbds::for_each_focused_kbd(
-                                        &known_kbds.keyboards,
-                                        surface,
-                                        |k| e.apply(k),
-                                    );
-                                } else {
-                                    warn!("key event without a focused surface");
-                                }
-                            },
-                        }
-                        if stop {
+            
+                let mut events = filter.events_to_filter.lock().unwrap();
+                while let Some(e) = events.pop_back() {
+                    let (action, stop) = if let Some(waiting_serial) = e.serial() {
+                        if serial != waiting_serial {
+                            resource.post_error(xx_input_method_keyboard_v1::Error::InvalidSerial, "Next event's serial doesn't match request");
                             return;
-                        }
+                        };
+                        (action, true)
+                    } else {
+                        // Events without a serial will not get a confirmation. Just pass them through and go to next event.
+                        (Action::Passthrough, false)
+                    };
+                    match (action, &e) {
+                        (Action::Consume, KeyboardEvent::Key{..}) => {},
+                        (Action::Consume, KeyboardEvent::Keymap { .. })
+                        | (Action::Consume, KeyboardEvent::Enter { .. })
+                        | (Action::Consume, KeyboardEvent::Leave { .. })
+                        | (Action::Consume, KeyboardEvent::Modifiers { .. })
+                        | (Action::Consume, KeyboardEvent::RepeatInfo { .. }) => {
+                            resource.post_error(
+                                xx_input_method_keyboard_v1::Error::InvalidSerial,
+                                format!("Only key events may be consumed, but requested to consume {}", e.describe())
+                            );
+                            return
+                        },
+                        (Action::Passthrough, e) => {
+                            let target = filter.focused_surface.lock().unwrap();
+                            if let Some(surface) = target.as_ref() {
+                                KnownKbds::for_each_focused_kbd(
+                                    &*known_kbds.keyboards.lock().unwrap(),
+                                    surface,
+                                    |k| e.apply(k),
+                                );
+                            } else {
+                                warn!("key event without a focused surface");
+                            }
+                        },
                     }
-                    resource.post_error(xx_input_method_keyboard_v1::Error::InvalidSerial, "No event is waiting for confirmation");
-                })
+                    if stop {
+                        return;
+                    }
+                }
+                resource.post_error(xx_input_method_keyboard_v1::Error::InvalidSerial, "No event is waiting for confirmation");
             }
             _ => {}
         }

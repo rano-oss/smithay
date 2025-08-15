@@ -17,7 +17,7 @@ use crate::{
         keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
         Seat, SeatHandler, SeatState,
     },
-    utils::{iter::new_locked_obj_iter, Serial},
+    utils::{iter::new_locked_obj_iter_from_vec, Serial},
     wayland::{
         input_method::InputMethodSeat, input_method_v3::InputMethodSeat as _, text_input::TextInputSeat,
     },
@@ -42,9 +42,9 @@ where
 
     /// Return all raw [`WlKeyboard`] instances for a particular [`Client`]
     pub fn client_keyboards<'a>(&'a self, client: &Client) -> impl Iterator<Item = WlKeyboard> + 'a {
-        let guard = self.arc.known_kbds.lock().unwrap();
+        let guard = self.arc.known_kbds.keyboards.lock().unwrap();
 
-        new_locked_obj_iter(guard, client.id(), |guard| guard.keyboards.iter())
+        new_locked_obj_iter_from_vec(guard, client.id())
     }
 
     /// Register a new keyboard to this handler
@@ -92,7 +92,7 @@ where
                 );
             }
         }
-        self.arc.known_kbds.lock().unwrap().keyboards.push(kbd.downgrade());
+        self.arc.known_kbds.keyboards.lock().unwrap().push(kbd.downgrade());
     }
 }
 
@@ -140,9 +140,9 @@ where
             handle
                 .arc
                 .known_kbds
+                .keyboards
                 .lock()
                 .unwrap()
-                .keyboards
                 .retain(|k| k.id() != keyboard.id())
         }
     }
@@ -154,7 +154,7 @@ pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
     f: impl FnMut(&dyn WlKeyboardApi),
 ) {
     if let Some(keyboard) = seat.get_keyboard() {
-        let inner = keyboard.arc.known_kbds.lock().unwrap();
+        let inner = &keyboard.arc.known_kbds;
         inner.for_each_focused(surface, f)
     }
 }
