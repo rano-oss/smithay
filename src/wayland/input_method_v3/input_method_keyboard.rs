@@ -148,6 +148,7 @@ impl KeyFilter {
         events.push_front((state, event));
     }
 
+    /// Applies event to the text input application, if event was not already applied.
     fn apply(&self, (state, event): (EventState, KeyboardEvent)) {
         match state {
             EventState::Sent => {},
@@ -196,7 +197,6 @@ impl WlKeyboardApi for KeyFilter {
         } else {
             error!("Failed to clone keymap fd. This will likely crash the client.");
         }
-        dbg!("keymap", format);
     }
     fn enter(
         &self,
@@ -229,7 +229,15 @@ impl WlKeyboardApi for KeyFilter {
         dbg!("leave");
     }
     fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
-        self.im_keyboard.key(serial, time, key, state);
+        let im_state = if wayland_server::Resource::version(&self.im_keyboard) < 10 {
+           match state {
+               wl_keyboard::KeyState::Repeated => wl_keyboard::KeyState::Pressed,
+               other => other,
+           }
+        } else {
+            state
+        };
+        self.im_keyboard.key(serial, time, key, im_state);
         self.push_event(KeyboardEvent::Key { serial, time, key, state });
     }
     fn modifiers(
