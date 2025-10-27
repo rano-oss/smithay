@@ -204,8 +204,10 @@ impl WlKeyboardApi for KeyFilter {
         surface: &wl_surface::WlSurface,
         keys: Vec<u8>,
     ) {
-        let mut target = self.focused_surface.lock().unwrap();
-        *target = Some(surface.clone());
+        {
+            let mut target = self.focused_surface.lock().unwrap();
+            *target = Some(surface.clone());
+        }
         self.im_keyboard.enter(serial, &self.im_surface, keys.clone());
         //let no_surface = wayland_server::Resource
         dbg!("enter", &keys);
@@ -216,10 +218,12 @@ impl WlKeyboardApi for KeyFilter {
         });
     }
     fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
-        let mut target = self.focused_surface.lock().unwrap();
-        let target = target.take();
-        if target.as_ref() != Some(surface) {
-            warn!("Received leave with an unfocused surface");
+        {
+            let mut target = self.focused_surface.lock().unwrap();
+            let target = target.take();
+            if target.as_ref() != Some(surface) {
+                warn!("Received leave with an unfocused surface");
+            }
         }
         self.im_keyboard.leave(serial, &self.im_surface);
         self.push_event(KeyboardEvent::Leave {
@@ -324,7 +328,6 @@ where
                 }
             }
             Request::Filter { serial, action } => {
-                dbg!(serial, action);
                 /// Wayland enums are not exhaustive, so they require matching on `_`. We filter out unsupported actions early, so with an exhaustive enum we can let Rust find missing patterns in `match`es later.
                 #[derive(Clone, Copy)]
                 enum Action {
