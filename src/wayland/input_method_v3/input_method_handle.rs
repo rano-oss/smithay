@@ -1,6 +1,4 @@
-use std::{
-    collections::VecDeque, fmt, sync::{Arc, Mutex}
-};
+use std::{fmt, sync::{Arc, Mutex}};
 
 use wl_input_method::input_method::v1::server::{
     xx_input_method_v1::{self, XxInputMethodV1},
@@ -11,7 +9,7 @@ use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 use crate::{
-    input::{keyboard::{KeyboardHandle, WlKeyboardApi}, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, input_method_v3::{input_method_keyboard::{BoundKeyboard, Focus}, KeyboardUserData}, seat::WaylandFocus, text_input::TextInputHandle}
+    input::{keyboard::{KeyboardHandle, WlKeyboardApi}, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, input_method_v3::{input_method_keyboard::BoundKeyboard, KeyboardUserData}, seat::WaylandFocus, text_input::TextInputHandle}
 };
 
 use super::{
@@ -206,8 +204,6 @@ pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) text_input_handle: TextInputHandle,
     /// Handle to main keyboard for registering sub-keyboards
     pub(crate) keyboard_handle: KeyboardHandle<D>,
-    /// Filtering key events before they reach text input
-    //pub(crate) key_filter: Arc<Mutex<Option<KeyFilter>>>,
     /// This is just a copy from Input MethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup. That means other modules don't have to explicitly put D: InputMethodHandler when they call something that ends up calling this.
     /// (Not sure what the purpose of that is, but it seems consistent...)
     pub(crate) popup_geometry:

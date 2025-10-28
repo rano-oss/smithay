@@ -123,19 +123,6 @@ pub(crate) struct BoundKeyboard {
     pub im_surface: WlSurface,
 }
 
-/// Tracks focus status.
-///
-/// The filter is created as soon as keyboard focus is placed on the application, in order to capture the relevant keyboard instance
-#[derive(Debug)]
-pub(crate) enum Focus {
-    /// No surface in focus, nothing to do with keyboard events
-    NoFocus,
-    /// Keyboard focus present, but input method not (yet) activated. Don't filter.
-    Keyboard(WlSurface),
-    /// Input method requested. Filter events.
-    InputMethod(WlSurface),
-}
-
 /// Filters key events to arrive to text input
 pub(crate) struct KeyFilter {
     pub keyboard: BoundKeyboard,
@@ -145,7 +132,7 @@ pub(crate) struct KeyFilter {
     /// This queue begins with 0 to N of sent events and contains delayed ones after that.
     pub events_to_filter: Arc<Mutex<VecDeque<(EventState, KeyboardEvent)>>>,
     /// Surface to which events should be sent after filtering
-    pub focused_surface: Arc<Mutex<Option<WlSurface>>>,
+    pub focused_surface: WlSurface,
 }
 
 impl KeyFilter {
@@ -161,7 +148,7 @@ impl KeyFilter {
             keyboard: keyboard.clone(),
             client_keyboards: Arc::downgrade(client_keyboards),
             events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
-            focused_surface: Arc::new(Mutex::new(Some(surface.clone()))),
+            focused_surface: surface.clone(),
         };
         keyboard.im_filter.notify_version(ret.version());
         ret
@@ -194,37 +181,16 @@ impl KeyFilter {
     }
     
     fn forward(&self, event: &KeyboardEvent) {
-        let surface = self.focused_surface.lock().unwrap();
-        if let Some(surface) = surface.as_ref() {
-            let keyboards = self.client_keyboards.upgrade().unwrap();
-            KnownKbds::for_each_focused_kbd(
-                &*keyboards.lock().unwrap(),
-                surface,
-                |k| event.apply(k)
-            );
-        } else {
-            error!("Bound keyboard has some events but no client surface is in focus")
-        }
-    }
-    
-    pub(crate) fn try_from_box_wlkeyboardapi<'a>(
-        filter: &'a Box<dyn WlKeyboardApi + Send + Sync>,
-    ) -> Option<&'a Self> {
-        (
-            AsRef::<dyn WlKeyboardApi + Send + Sync>::as_ref(filter)
-            as &dyn WlKeyboardApi
-        )
-            .downcast_ref::<Self>()
-    }
-
-    pub(crate) fn set_target(&self, target: Option<&WlSurface>) {
-        let mut s = self.focused_surface.lock().unwrap();
-        *s = dbg!(target).cloned();
+        let keyboards = self.client_keyboards.upgrade().unwrap();
+        KnownKbds::for_each_focused_kbd(
+            &*keyboards.lock().unwrap(),
+            &self.focused_surface,
+            |k| event.apply(k)
+        );
     }
 }
 
 use wayland_server::protocol::{wl_keyboard, wl_surface};
-use xkbcommon::xkb::keysyms::KEY_XF86RotateWindows;
 
 impl WlKeyboardApi for KeyFilter {
     fn keymap(
@@ -247,10 +213,7 @@ impl WlKeyboardApi for KeyFilter {
         surface: &wl_surface::WlSurface,
         keys: Vec<u8>,
     ) {
-        //self.set_target(Some(surface));
         self.keyboard.im_keyboard.enter(serial, &self.keyboard.im_surface, keys.clone());
-        //let no_surface = wayland_server::Resource
-        dbg!("enter", &keys);
         self.push_event(KeyboardEvent::Enter {
             serial,
             surface: surface.clone(),
@@ -258,13 +221,11 @@ impl WlKeyboardApi for KeyFilter {
         });
     }
     fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
-        //self.set_target(None);
         self.keyboard.im_keyboard.leave(serial, &self.keyboard.im_surface);
         self.push_event(KeyboardEvent::Leave {
             serial,
             surface: surface.clone(),
         });
-        dbg!("leave");
     }
     fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
         let im_state = if wayland_server::Resource::version(&self.keyboard.im_keyboard) < 10 {
@@ -301,19 +262,16 @@ impl WlKeyboardApi for KeyFilter {
     }
     fn version(&self) -> u32 {
         let mut v = None;
-        let surface = self.focused_surface.lock().unwrap();
-        if let Some(surface) = surface.as_ref() {
-            let keyboards = self.client_keyboards.upgrade().unwrap();
-            let keyboards = keyboards.lock().unwrap();
-            
-            // Hopefully there's only one keyboard registered at the focused surface.
-            // If there are multple ones, they better share the version.
-            KnownKbds::for_each_focused_kbd(
-                &*keyboards,
-                surface,
-                |k| {v = Some(k.version());},
-            );
-        }
+        let keyboards = self.client_keyboards.upgrade().unwrap();
+        let keyboards = keyboards.lock().unwrap();
+        
+        // Hopefully there's only one keyboard registered at the focused surface.
+        // If there are multple ones, they better share the version.
+        KnownKbds::for_each_focused_kbd(
+            &*keyboards,
+            &self.focused_surface,
+            |k| {v = Some(k.version());},
+        );
         v.unwrap_or(Resource::version(&self.keyboard.im_keyboard))
     }
 }
