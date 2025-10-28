@@ -246,7 +246,7 @@ where
             }
         };
 
-        match request {
+        match dbg!(request) {
             zwp_text_input_v3::Request::Enable => {
                 pending_state.enable = Some(true);
             }

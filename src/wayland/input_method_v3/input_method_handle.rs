@@ -150,6 +150,7 @@ impl InputMethodHandle {
 
     /// Activate input method on the given surface.
     pub(crate) fn activate_input_method<D: SeatHandler + 'static>(&self, _: &mut D, surface: &WlSurface) {
+        dbg!("activating");
         self.with_instance(|im| {
             dbg!("activating");
             im.object.activate();
@@ -170,7 +171,9 @@ impl InputMethodHandle {
     ///
     /// This includes a complete sequence including .done.
     pub(crate) fn deactivate_input_method<D: SeatHandler + 'static>(&self, state: &mut D) {
+        println!("{}", std::backtrace::Backtrace::force_capture());
         self.with_instance(|im| {
+            dbg!("deactivate im");
             im.object.deactivate();
             im.done();
             im.active = false;
