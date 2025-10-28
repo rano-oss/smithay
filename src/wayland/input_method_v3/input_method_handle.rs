@@ -34,6 +34,7 @@ pub(crate) struct InputMethod {
     pub serial: u32,
     pub active: bool,
     pub popup_handles: Vec<PopupSurface>,
+    /// This can only contain a KeyFilter instance, but it's a clone to a generic handle 
     pub keyboard_filter_handle: Arc<Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>>,
     /// Relative to surface on which input method is enabled
     pub cursor_rectangle: Rectangle<i32, Logical>,
@@ -148,13 +149,15 @@ impl InputMethodHandle {
     }
 
     /// Activate input method on the given surface.
-    pub(crate) fn activate_input_method<D: SeatHandler + 'static>(&self, _: &mut D, _surface: &WlSurface) {
+    pub(crate) fn activate_input_method<D: SeatHandler + 'static>(&self, _: &mut D, surface: &WlSurface) {
         self.with_instance(|im| {
+            dbg!("activating");
             im.object.activate();
             let filter = im.keyboard_filter_handle.lock().unwrap();
             if let Some(filter) = filter.as_ref() {
                 if let Some(filter) = KeyFilter::try_from_box_wlkeyboardapi(filter) {
-                    filter.im_filter.notify_version(filter.version())
+                    filter.im_filter.notify_version(filter.version());
+                    filter.set_target(Some(surface));
                 } else { 
                     error!("The registered keyboard interceptor is not the IM one");
                 };
@@ -174,6 +177,15 @@ impl InputMethodHandle {
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
             for popup in im.popup_handles.drain(..) {
                 (data.dismiss_popup)(state, popup.clone());
+            }
+            let filter = im.keyboard_filter_handle.lock().unwrap();
+            if let Some(filter) = filter.as_ref() {
+                if let Some(filter) = KeyFilter::try_from_box_wlkeyboardapi(filter) {
+                    filter.im_filter.notify_version(filter.version());
+                    filter.set_target(None);
+                } else { 
+                    error!("The registered keyboard interceptor is not the IM one");
+                };
             }
         });
     }

@@ -179,6 +179,11 @@ impl KeyFilter {
         )
             .downcast_ref::<Self>()
     }
+
+    pub(crate) fn set_target(&self, target: Option<&WlSurface>) {
+        let mut s = self.focused_surface.lock().unwrap();
+        *s = dbg!(target).cloned();
+    }
 }
 
 use wayland_server::protocol::{wl_keyboard, wl_surface};
@@ -204,10 +209,7 @@ impl WlKeyboardApi for KeyFilter {
         surface: &wl_surface::WlSurface,
         keys: Vec<u8>,
     ) {
-        {
-            let mut target = self.focused_surface.lock().unwrap();
-            *target = Some(surface.clone());
-        }
+        //self.set_target(Some(surface));
         self.im_keyboard.enter(serial, &self.im_surface, keys.clone());
         //let no_surface = wayland_server::Resource
         dbg!("enter", &keys);
@@ -218,13 +220,7 @@ impl WlKeyboardApi for KeyFilter {
         });
     }
     fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
-        {
-            let mut target = self.focused_surface.lock().unwrap();
-            let target = target.take();
-            if target.as_ref() != Some(surface) {
-                warn!("Received leave with an unfocused surface");
-            }
-        }
+        //self.set_target(None);
         self.im_keyboard.leave(serial, &self.im_surface);
         self.push_event(KeyboardEvent::Leave {
             serial,
