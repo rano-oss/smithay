@@ -11,7 +11,7 @@ use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 use crate::{
-    input::{keyboard::{KeyboardHandle, WlKeyboardApi}, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, input_method_v3::KeyboardUserData, seat::WaylandFocus, text_input::TextInputHandle}
+    input::{keyboard::{KeyboardHandle, WlKeyboardApi}, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, input_method_v3::{input_method_keyboard::{BoundKeyboard, Focus}, KeyboardUserData}, seat::WaylandFocus, text_input::TextInputHandle}
 };
 
 use super::{
@@ -34,6 +34,10 @@ pub(crate) struct InputMethod {
     pub serial: u32,
     pub active: bool,
     pub popup_handles: Vec<PopupSurface>,
+    /// Currently bound keyboard. This is this IM instance's "master copy" to be cloned into KeyFilter instances.
+    /// KeyFilter shall not outlive its input method, so that's fine.
+    // maybe TODO: Arc here and Weak in KeyFilter?
+    pub bound_keyboard: Option<BoundKeyboard>,
     /// This can only contain a KeyFilter instance, but it's a clone to a generic handle 
     pub keyboard_filter_handle: Arc<Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>>,
     /// Relative to surface on which input method is enabled
@@ -86,6 +90,7 @@ impl InputMethodHandle {
                 active: false,
                 popup_handles: vec![],
                 cursor_rectangle: Rectangle::default(),
+                bound_keyboard: None,
                 keyboard_filter_handle: data.keyboard_handle.arc.known_kbds.interceptor.clone(),
             });
         }
@@ -154,15 +159,18 @@ impl InputMethodHandle {
         self.with_instance(|im| {
             dbg!("activating");
             im.object.activate();
-            let filter = im.keyboard_filter_handle.lock().unwrap();
-            if let Some(filter) = filter.as_ref() {
-                if let Some(filter) = KeyFilter::try_from_box_wlkeyboardapi(filter) {
-                    filter.im_filter.notify_version(filter.version());
-                    filter.set_target(Some(surface));
-                } else { 
-                    error!("The registered keyboard interceptor is not the IM one");
-                };
+            let data = im.object.data::<InputMethodUserData<D>>().unwrap();
+            let known_kbds = &data.keyboard_handle.arc.known_kbds;
+            if let Some(bound_keyboard) = im.bound_keyboard.as_ref() {
+                let filter = KeyFilter::create(
+                    bound_keyboard,
+                    &known_kbds.keyboards,
+                    surface,
+                );
+                let mut interceptor = known_kbds.interceptor.lock().unwrap();
+                *interceptor = Some(Box::new(filter));
             }
+            im.keyboard_filter_handle = known_kbds.interceptor.clone();
             im.active = true;
         });
     }
@@ -171,7 +179,6 @@ impl InputMethodHandle {
     ///
     /// This includes a complete sequence including .done.
     pub(crate) fn deactivate_input_method<D: SeatHandler + 'static>(&self, state: &mut D) {
-        println!("{}", std::backtrace::Backtrace::force_capture());
         self.with_instance(|im| {
             dbg!("deactivate im");
             im.object.deactivate();
@@ -181,15 +188,13 @@ impl InputMethodHandle {
             for popup in im.popup_handles.drain(..) {
                 (data.dismiss_popup)(state, popup.clone());
             }
-            let filter = im.keyboard_filter_handle.lock().unwrap();
-            if let Some(filter) = filter.as_ref() {
-                if let Some(filter) = KeyFilter::try_from_box_wlkeyboardapi(filter) {
-                    filter.im_filter.notify_version(filter.version());
-                    filter.set_target(None);
-                } else { 
-                    error!("The registered keyboard interceptor is not the IM one");
-                };
+
+            let known_kbds = &data.keyboard_handle.arc.known_kbds;
+            {
+                let mut interceptor = known_kbds.interceptor.lock().unwrap();
+                *interceptor = None;
             }
+            im.keyboard_filter_handle = Arc::new(Mutex::new(None));
         });
     }
 }
@@ -345,27 +350,22 @@ where
                 }
             }
             Request::KeyboardBind { keyboard, surface, extensions } => {
-                let known_kbds = &data.keyboard_handle.arc.known_kbds;
-                let mut key_filter = known_kbds.interceptor.lock().unwrap();
-                if key_filter.is_some() {
-                    im.post_error(xx_input_method_v1::Error::KeyboardAlreadyBound, "A keyboard was already bound");
-                } else {
-                    let im_filter = data_init.init(
-                        extensions,
-                        KeyboardUserData {
-                            keyboard_handle: data.keyboard_handle.clone(),
-                        },
-                    );
-                    // TODO: copy keyboards into this
-                    *key_filter = Some(Box::new(KeyFilter {
+                let im_filter = data_init.init(
+                    extensions,
+                    KeyboardUserData {
+                        keyboard_handle: data.keyboard_handle.clone(),
+                    },
+                );
+                
+                let mut input_method = data.handle.inner.lock().unwrap();
+                if let Some(instance) = &mut input_method.instance {
+                    instance.bound_keyboard = Some(BoundKeyboard {
                         im_keyboard: keyboard,
                         im_filter,
-                        client_keyboards: Arc::downgrade(&known_kbds.keyboards),
-                        events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
-                        focused_surface: Arc::new(Mutex::new(None)),
                         im_surface: surface,
-                    }));
+                    });
                 }
+                // FIXME: if IM already active, register the filter as keyboard interceptor
             },
             Request::Destroy => {
                 // Nothing to do

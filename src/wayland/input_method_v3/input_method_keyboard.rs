@@ -112,12 +112,33 @@ pub(crate) enum EventState {
     Delaying,
 }
 
-/// Filters key events to arrive to text input
-pub(crate) struct KeyFilter {
+/// Carries data assigned in a im_keyboard::bind request.
+#[derive(Debug, Clone)]
+pub(crate) struct BoundKeyboard {
     /// Keyboard provided by the input method client to sniff on target surface's events.
     pub im_keyboard: WlKeyboard,
     /// Input method extensions assigned to this keyboard instance
     pub im_filter: XxInputMethodKeyboardV1,
+    /// Surface on the IM side which should be target of enter and leave
+    pub im_surface: WlSurface,
+}
+
+/// Tracks focus status.
+///
+/// The filter is created as soon as keyboard focus is placed on the application, in order to capture the relevant keyboard instance
+#[derive(Debug)]
+pub(crate) enum Focus {
+    /// No surface in focus, nothing to do with keyboard events
+    NoFocus,
+    /// Keyboard focus present, but input method not (yet) activated. Don't filter.
+    Keyboard(WlSurface),
+    /// Input method requested. Filter events.
+    InputMethod(WlSurface),
+}
+
+/// Filters key events to arrive to text input
+pub(crate) struct KeyFilter {
+    pub keyboard: BoundKeyboard,
     /// Client keyboards to which events can be forwarded
     pub client_keyboards: std::sync::Weak<Mutex<Vec<wayland_server::Weak<wl_keyboard::WlKeyboard>>>>,
     /// Events waiting for filter decision from the input method client.
@@ -125,11 +146,27 @@ pub(crate) struct KeyFilter {
     pub events_to_filter: Arc<Mutex<VecDeque<(EventState, KeyboardEvent)>>>,
     /// Surface to which events should be sent after filtering
     pub focused_surface: Arc<Mutex<Option<WlSurface>>>,
-    /// Surface on the IM side which should be target of enter and leave
-    pub im_surface: WlSurface,
 }
 
 impl KeyFilter {
+    /// Creates a new instance of key filter and initializes it.
+    pub(crate) fn create(
+        keyboard: &BoundKeyboard,
+        client_keyboards: &Arc<Mutex<
+            Vec<wayland_server::Weak<wl_keyboard::WlKeyboard>>
+        >>,
+        surface: &WlSurface,
+    ) -> Self {
+        let ret = KeyFilter {
+            keyboard: keyboard.clone(),
+            client_keyboards: Arc::downgrade(client_keyboards),
+            events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
+            focused_surface: Arc::new(Mutex::new(Some(surface.clone()))),
+        };
+        keyboard.im_filter.notify_version(ret.version());
+        ret
+    }
+    
     fn push_event(&self, event: KeyboardEvent) {
         // TODO: unnecessary (?) Sync requirement causes the need to lock
         let mut events = self.events_to_filter.lock().unwrap();
@@ -187,6 +224,7 @@ impl KeyFilter {
 }
 
 use wayland_server::protocol::{wl_keyboard, wl_surface};
+use xkbcommon::xkb::keysyms::KEY_XF86RotateWindows;
 
 impl WlKeyboardApi for KeyFilter {
     fn keymap(
@@ -195,7 +233,7 @@ impl WlKeyboardApi for KeyFilter {
         fd: ::std::os::unix::io::BorrowedFd<'_>,
         size: u32,
     ) {
-        self.im_keyboard.keymap(format, fd, size);
+        self.keyboard.im_keyboard.keymap(format, fd, size);
         // FIXME: not sure if this is safe. What if the original fd closes before the event is dropped?
         if let Ok(fd) = fd.try_clone_to_owned() {
             self.push_event(KeyboardEvent::Keymap{format, fd, size});
@@ -210,7 +248,7 @@ impl WlKeyboardApi for KeyFilter {
         keys: Vec<u8>,
     ) {
         //self.set_target(Some(surface));
-        self.im_keyboard.enter(serial, &self.im_surface, keys.clone());
+        self.keyboard.im_keyboard.enter(serial, &self.keyboard.im_surface, keys.clone());
         //let no_surface = wayland_server::Resource
         dbg!("enter", &keys);
         self.push_event(KeyboardEvent::Enter {
@@ -221,7 +259,7 @@ impl WlKeyboardApi for KeyFilter {
     }
     fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
         //self.set_target(None);
-        self.im_keyboard.leave(serial, &self.im_surface);
+        self.keyboard.im_keyboard.leave(serial, &self.keyboard.im_surface);
         self.push_event(KeyboardEvent::Leave {
             serial,
             surface: surface.clone(),
@@ -229,7 +267,7 @@ impl WlKeyboardApi for KeyFilter {
         dbg!("leave");
     }
     fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
-        let im_state = if wayland_server::Resource::version(&self.im_keyboard) < 10 {
+        let im_state = if wayland_server::Resource::version(&self.keyboard.im_keyboard) < 10 {
            match state {
                wl_keyboard::KeyState::Repeated => wl_keyboard::KeyState::Pressed,
                other => other,
@@ -237,7 +275,7 @@ impl WlKeyboardApi for KeyFilter {
         } else {
             state
         };
-        self.im_keyboard.key(serial, time, key, im_state);
+        self.keyboard.im_keyboard.key(serial, time, key, im_state);
         self.push_event(KeyboardEvent::Key { serial, time, key, state });
     }
     fn modifiers(
@@ -248,7 +286,7 @@ impl WlKeyboardApi for KeyFilter {
         mods_locked: u32,
         group: u32,
     ) {
-        self.im_keyboard.modifiers(serial, mods_depressed, mods_latched, mods_locked, group);
+        self.keyboard.im_keyboard.modifiers(serial, mods_depressed, mods_latched, mods_locked, group);
         self.push_event(KeyboardEvent::Modifiers { 
             serial,
             mods_depressed,
@@ -258,7 +296,7 @@ impl WlKeyboardApi for KeyFilter {
         });
     }
     fn repeat_info(&self, rate: i32, delay: i32) {
-        self.im_keyboard.repeat_info(rate, delay);
+        self.keyboard.im_keyboard.repeat_info(rate, delay);
         self.push_event(KeyboardEvent::RepeatInfo {rate, delay });
     }
     fn version(&self) -> u32 {
@@ -276,7 +314,7 @@ impl WlKeyboardApi for KeyFilter {
                 |k| {v = Some(k.version());},
             );
         }
-        v.unwrap_or(Resource::version(&self.im_keyboard))
+        v.unwrap_or(Resource::version(&self.keyboard.im_keyboard))
     }
 }
 
