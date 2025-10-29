@@ -17,8 +17,6 @@ use super::{
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface}, positioner::{PositionerState, PositionerUserData}, InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE
 };
 
-use tracing::error;
-
 /// Slot for an optional input method
 #[derive(Default, Debug)]
 pub(crate) struct MaybeInstance {
@@ -178,7 +176,6 @@ impl InputMethodHandle {
     /// This includes a complete sequence including .done.
     pub(crate) fn deactivate_input_method<D: SeatHandler + 'static>(&self, state: &mut D) {
         self.with_instance(|im| {
-            dbg!("deactivate im");
             im.object.deactivate();
             im.done();
             im.active = false;

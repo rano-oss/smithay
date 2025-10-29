@@ -1,5 +1,6 @@
 use crate::input::keyboard::{KeyboardHandle, KnownKbds, WlKeyboardApi};
 use crate::input::SeatHandler;
+use crate::utils::Serial;
 use std::collections::VecDeque;
 use std::os::fd::{AsFd, OwnedFd};
 use std::sync::{Arc, Mutex};
@@ -326,7 +327,7 @@ where
                     Passthrough,
                     Consume,
                 }
-                // FIXME: events coming without serial must be processed immediately if no queue
+
                 let action = match action {
                     WEnum::Value(FilterAction::Passthrough) => Action::Passthrough,
                     WEnum::Value(FilterAction::Consume) => Action::Consume,
@@ -343,8 +344,8 @@ where
                 let mut events = filter.events_to_filter.lock().unwrap();
                 while let Some(e) = events.pop_back() {
                     let (action, stop) = if let Some(waiting_serial) = e.1.serial() {
-                        if serial != waiting_serial {
-                            resource.post_error(xx_input_method_keyboard_v1::Error::InvalidSerial, "Next event's serial doesn't match request");
+                        if Serial(serial) > Serial(waiting_serial) {
+                            resource.post_error(xx_input_method_keyboard_v1::Error::InvalidSerial, "Filter serial newer than awaited");
                             return;
                         };
                         (action, true)
@@ -356,8 +357,8 @@ where
                         (Action::Consume, true) => {},
                         (Action::Consume, false) => {
                             resource.post_error(
-                                xx_input_method_keyboard_v1::Error::InvalidSerial,
-                                format!("Only key events may be consumed, but requested to consume {}", e.1.describe())
+                                xx_input_method_keyboard_v1::Error::InvalidFilterAction,
+                                format!("Only key events may be filtered, but tried {}", e.1.describe())
                             );
                             return;
                         },
@@ -369,7 +370,7 @@ where
                         return;
                     }
                 }
-                resource.post_error(xx_input_method_keyboard_v1::Error::InvalidSerial, "No event is waiting for confirmation");
+                warn!("Maybe stale filter action {serial}: no event waiting")
             }
             _ => {}
         }

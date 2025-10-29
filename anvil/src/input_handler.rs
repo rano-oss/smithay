@@ -24,7 +24,7 @@ use smithay::{
     },
     utils::{Logical, Point, Serial, Transform, SERIAL_COUNTER as SCOUNTER},
     wayland::{
-        compositor::with_states, input_method::InputMethodSeat, input_method_v3::InputMethodSeat as _, keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat, shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer, LayerSurfaceCachedState}
+        compositor::with_states, input_method::InputMethodSeat, keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat, shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer, LayerSurfaceCachedState}
     },
 };
 
@@ -182,7 +182,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .unwrap_or(false);
 
         let action = keyboard
-            .input(self, keycode, state, serial, time, |data, modifiers, handle| {
+            .input(self, keycode, state, serial, time, |_, modifiers, handle| {
                 let keysym = handle.modified_sym();
 
                 debug!(
