@@ -3,6 +3,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use tracing::warn;
+
 use wl_input_method::{self as wayland_protocols_experimental, text_input::v3::server::xx_text_input_v3::{ChangeCause, ContentHint, ContentPurpose}};
 use wayland_protocols_experimental::input_method::v1::server::{
     xx_input_method_v1::{self, XxInputMethodV1},
@@ -231,6 +233,12 @@ where
                 data.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.delete_surrounding_text(before_length, after_length);
                 });
+            }
+            Request::MoveCursor { cursor, anchor } => {
+                warn!("Unimplemented: MoveCursor {cursor}←{anchor}")
+            }
+            Request::IssueAction { action } => {
+                warn!("Unimplemented: {action:?}")
             }
             Request::Commit { serial } => {
                 let current_serial = data
