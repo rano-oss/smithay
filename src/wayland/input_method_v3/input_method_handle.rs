@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use wl_input_method::{self as wayland_protocols_experimental, text_input::v3::server::xx_text_input_v3::{ChangeCause, ContentHint, ContentPurpose}};
 use wayland_protocols_experimental::input_method::v1::server::{
     xx_input_method_v1::{self, XxInputMethodV1},
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
@@ -17,6 +18,7 @@ use crate::{
 };
 
 use super::{
+    conversions::ConvertInto,
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
     positioner::{PositionerState, PositionerUserData},
     InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
@@ -45,6 +47,18 @@ impl InputMethod {
     pub(crate) fn done(&mut self) {
         self.object.done();
         self.serial += 1;
+    }
+
+    pub(crate) fn set_text_change_cause(&self, cause: impl ConvertInto<ChangeCause>) {
+        self.object.text_change_cause(cause.convert_into())
+    }
+    
+    pub(crate) fn set_content_type(
+        &self,
+        hint: impl ConvertInto<ContentHint>,
+        purpose: impl ConvertInto<ContentPurpose>,
+    ) {
+        self.object.content_type(hint.convert_into(), purpose.convert_into())
     }
 }
 

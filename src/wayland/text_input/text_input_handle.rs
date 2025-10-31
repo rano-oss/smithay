@@ -316,7 +316,7 @@ where
                         input_method.object.text_change_cause(cause);
                     });
                     data.input_method_v3_handle.with_instance(move |input_method| {
-                        input_method.object.text_change_cause(cause);
+                        input_method.set_text_change_cause(cause);
                     });
                 }
 
@@ -325,7 +325,7 @@ where
                         input_method.object.content_type(hint, purpose);
                     });
                     data.input_method_v3_handle.with_instance(move |input_method| {
-                        input_method.object.content_type(hint, purpose);
+                        input_method.set_content_type(hint, purpose);
                     });
                 }
 

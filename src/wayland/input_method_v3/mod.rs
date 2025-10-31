@@ -73,6 +73,7 @@ use wayland_server::{
     GlobalDispatch, New,
 };
 
+use wl_input_method as wayland_protocols_experimental;
 use wayland_protocols_experimental::input_method::v1::{
     server::xx_input_popup_positioner_v1::XxInputPopupPositionerV1,
     server::{
@@ -96,6 +97,7 @@ const MANAGER_VERSION: u32 = 2;
 pub const INPUT_POPUP_SURFACE_ROLE: &str = "zwp_input_popup_surface_v3";
 
 mod configure_tracker;
+mod conversions;
 mod input_method_handle;
 mod input_method_popup_surface;
 mod positioner;
