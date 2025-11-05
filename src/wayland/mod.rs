@@ -82,6 +82,7 @@ pub mod single_pixel_buffer;
 pub mod socket;
 pub mod tablet_manager;
 pub mod text_input;
+pub mod text_input_next;
 pub mod viewporter;
 pub mod virtual_keyboard;
 pub mod xdg_activation;

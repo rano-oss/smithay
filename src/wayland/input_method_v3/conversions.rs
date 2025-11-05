@@ -8,6 +8,24 @@ pub trait ConvertInto<T> {
     fn convert_into(self) -> T;
 }
 
+impl ConvertInto<ChangeCause> for ChangeCause {
+    fn convert_into(self) -> ChangeCause {
+        self
+    }
+}
+
+impl ConvertInto<ContentHint> for ContentHint {
+    fn convert_into(self) -> ContentHint {
+        self
+    }
+}
+
+impl ConvertInto<ContentPurpose> for ContentPurpose {
+    fn convert_into(self) -> ContentPurpose {
+        self
+    }
+}
+
 impl ConvertInto<ChangeCause> for zwp_text_input_v3::ChangeCause {
     fn convert_into(self) -> ChangeCause {
         match self {
