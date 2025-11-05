@@ -16,13 +16,14 @@ use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 use crate::{
     input::SeatHandler,
     utils::{Logical, Rectangle},
-    wayland::{compositor, seat::WaylandFocus, text_input::TextInputHandle},
+    wayland::{compositor, input_method_v3::text_input::TextInput, seat::WaylandFocus},
 };
 
 use super::{
     conversions::ConvertInto,
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
     positioner::{PositionerState, PositionerUserData},
+    text_input::TextInputHandles,
     InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
@@ -174,7 +175,7 @@ impl InputMethodHandle {
 #[derive(Clone)]
 pub struct InputMethodUserData<D: SeatHandler> {
     pub(super) handle: InputMethodHandle,
-    pub(crate) text_input_handle: TextInputHandle,
+    pub(crate) text_input_handles: TextInputHandles,
     /// This is just a copy from Input MethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup. That means other modules don't have to explicitly put D: InputMethodHandler when they call something that ends up calling this.
     /// (Not sure what the purpose of that is, but it seems consistent...)
     pub(crate) popup_geometry:
@@ -187,7 +188,7 @@ impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InputMethodUserData")
             .field("handle", &self.handle)
-            .field("text_input_handle", &self.text_input_handle)
+            .field("text_input_handle", &self.text_input_handles)
             .finish()
     }
 }
@@ -213,8 +214,10 @@ where
         use xx_input_method_v1::Request;
         match request {
             Request::CommitString { text } => {
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
-                    ti.commit_string(Some(text.clone()));
+                data.text_input_handles.with_active_text_input(|ti, _surface| {
+                    match ti {
+                        TextInput::V3(ti) => ti.commit_string(Some(text.clone())),
+                    }
                 });
             }
             Request::SetPreeditString {
@@ -222,23 +225,37 @@ where
                 cursor_begin,
                 cursor_end,
             } => {
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
-                    ti.preedit_string(Some(text.clone()), cursor_begin, cursor_end);
+                data.text_input_handles.with_active_text_input(|ti, _surface| {
+                    match ti {
+                        TextInput::V3(ti) => ti.preedit_string(Some(text.clone()), cursor_begin, cursor_end),
+                    }
                 });
             }
             Request::DeleteSurroundingText {
                 before_length,
                 after_length,
             } => {
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
-                    ti.delete_surrounding_text(before_length, after_length);
+                data.text_input_handles.with_active_text_input(|ti, _surface| {
+                    match ti {
+                        TextInput::V3(ti) => ti.delete_surrounding_text(before_length, after_length),
+                    }
                 });
             }
             Request::MoveCursor { cursor, anchor } => {
-                warn!("Unimplemented: MoveCursor {cursor}←{anchor}")
+                data.text_input_handles.with_active_text_input(|ti, _surface| {
+                    match ti {
+                        TextInput::V3(_) => warn!("Received event not supported by text input: MoveCursor. Were capabilities mixed up?"),
+                        //ti.move_cursor(cursor, anchor),
+                    }
+                });
             }
-            Request::IssueAction { action } => {
-                warn!("Unimplemented: {action:?}")
+            Request::PerformAction { action } => {
+                data.text_input_handles.with_active_text_input(|ti, _surface| {
+                    match ti {
+                        TextInput::V3(_) => warn!("Received event not supported by text input: PerformAction. Were capabilities mixed up?"),
+                        //ti.move_cursor(cursor, anchor),
+                    }
+                });
             }
             Request::Commit { serial } => {
                 let current_serial = data
@@ -251,7 +268,7 @@ where
                     .map(|i| i.serial)
                     .unwrap_or(0);
 
-                data.text_input_handle.done(serial != current_serial);
+                data.text_input_handles.done(serial != current_serial);
             }
             Request::GetInputPopupSurface {
                 id,
@@ -271,7 +288,7 @@ where
                             return;
                         }
 
-                        let parent_surface = match data.text_input_handle.focus().clone() {
+                        let parent_surface = match data.text_input_handles.focus().clone() {
                             Some(parent) => parent,
                             None => {
                                 im.post_error(
@@ -335,6 +352,6 @@ where
         data: &InputMethodUserData<D>,
     ) {
         data.handle.inner.lock().unwrap().instance = None;
-        data.text_input_handle.leave();
+        data.text_input_handles.leave();
     }
 }

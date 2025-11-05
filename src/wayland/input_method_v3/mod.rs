@@ -84,14 +84,14 @@ use wayland_protocols_experimental::input_method::v1::{
 
 use crate::{
     input::{Seat, SeatHandler},
-    utils::{Logical, Rectangle, Serial},
+    utils::{Logical, Rectangle, Serial}, wayland::text_input as text_input_v3,
 };
 
 pub use input_method_handle::{InputMethodHandle, InputMethodUserData};
 
-use super::text_input::TextInputHandle;
+use text_input::TextInputHandles;
 
-const MANAGER_VERSION: u32 = 2;
+const MANAGER_VERSION: u32 = 3;
 
 /// The role of the input method popup.
 pub const INPUT_POPUP_SURFACE_ROLE: &str = "zwp_input_popup_surface_v3";
@@ -101,6 +101,7 @@ mod conversions;
 mod input_method_handle;
 mod input_method_popup_surface;
 mod positioner;
+mod text_input;
 
 pub use input_method_popup_surface::{
     InputMethodPopupSurfaceUserData, PopupParent, PopupSurface, PopupSurfaceState,
@@ -241,18 +242,17 @@ where
                 let seat = Seat::<D>::from_resource(&seat).unwrap();
 
                 let user_data = seat.user_data();
-                user_data.insert_if_missing(TextInputHandle::default);
+                user_data.insert_if_missing(text_input_v3::TextInputHandle::default);
                 user_data.insert_if_missing(InputMethodHandle::default);
                 let handle = user_data.get::<InputMethodHandle>().unwrap();
-                let text_input_handle = user_data.get::<TextInputHandle>().unwrap();
-                text_input_handle.with_focused_text_input(|ti, surface| {
-                    ti.enter(surface);
-                });
+                let text_input_v3_handle = user_data.get::<text_input_v3::TextInputHandle>().unwrap();
+                let text_input_handles = TextInputHandles::new(text_input_v3_handle.clone());
+                text_input_handles.enter();
                 let instance = data_init.init(
                     input_method,
                     InputMethodUserData {
                         handle: handle.clone(),
-                        text_input_handle: text_input_handle.clone(),
+                        text_input_handles,
                         dismiss_popup: D::dismiss_popup,
                         popup_geometry: D::popup_geometry,
                         popup_repositioned: D::popup_repositioned,
