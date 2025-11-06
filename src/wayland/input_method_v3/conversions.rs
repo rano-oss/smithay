@@ -5,6 +5,7 @@ use wl_input_method::text_input::v3::server::xx_text_input_v3::{ChangeCause, Con
 
 /// Converts a type into something that can be consumed by the supported Wayland object.
 pub trait ConvertInto<T> {
+    /// Perform conversion
     fn convert_into(self) -> T;
 }
 
