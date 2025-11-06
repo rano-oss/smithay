@@ -8,20 +8,8 @@ pub trait ConvertInto<T> {
     fn convert_into(self) -> T;
 }
 
-impl ConvertInto<ChangeCause> for ChangeCause {
-    fn convert_into(self) -> ChangeCause {
-        self
-    }
-}
-
-impl ConvertInto<ContentHint> for ContentHint {
-    fn convert_into(self) -> ContentHint {
-        self
-    }
-}
-
-impl ConvertInto<ContentPurpose> for ContentPurpose {
-    fn convert_into(self) -> ContentPurpose {
+impl<T> ConvertInto<T> for T {
+    fn convert_into(self) -> T {
         self
     }
 }
@@ -48,6 +36,33 @@ impl ConvertInto<ContentPurpose> for zwp_text_input_v3::ContentPurpose {
             Self::Normal => ContentPurpose::Normal,
             any => ContentPurpose::try_from(any as u32)
                 .unwrap_or(ContentPurpose::Normal)
+        }
+    }
+}
+
+impl ConvertInto<zwp_text_input_v3::ChangeCause> for ChangeCause {
+    fn convert_into(self) -> zwp_text_input_v3::ChangeCause {
+        use zwp_text_input_v3::ChangeCause::*;
+        match self {
+            Self::InputMethod => InputMethod,
+            Self::Other => Other,
+            _ => Other,
+        }
+    }
+}
+
+impl ConvertInto<zwp_text_input_v3::ContentHint> for ContentHint {
+    fn convert_into(self) -> zwp_text_input_v3::ContentHint {
+        zwp_text_input_v3::ContentHint::from_bits_truncate(self.bits())
+    }
+}
+
+impl ConvertInto<zwp_text_input_v3::ContentPurpose> for ContentPurpose {
+    fn convert_into(self) -> zwp_text_input_v3::ContentPurpose {
+        match self {
+            Self::Normal => zwp_text_input_v3::ContentPurpose::Normal,
+            any => zwp_text_input_v3::ContentPurpose::try_from(any as u32)
+                .unwrap_or(zwp_text_input_v3::ContentPurpose::Normal)
         }
     }
 }

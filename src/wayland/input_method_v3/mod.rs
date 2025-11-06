@@ -87,10 +87,6 @@ use crate::{
     utils::{Logical, Rectangle, Serial}, wayland::text_input as text_input_v3,
 };
 
-pub use input_method_handle::{InputMethodHandle, InputMethodUserData};
-
-use text_input::TextInputHandles;
-
 const MANAGER_VERSION: u32 = 3;
 
 /// The role of the input method popup.
@@ -103,10 +99,13 @@ mod input_method_popup_surface;
 mod positioner;
 mod text_input;
 
+pub use conversions::ConvertInto;
+pub use input_method_handle::{InputMethodHandle, InputMethodUserData};
 pub use input_method_popup_surface::{
     InputMethodPopupSurfaceUserData, PopupParent, PopupSurface, PopupSurfaceState,
 };
 pub use positioner::{PositionerState, PositionerUserData};
+use text_input::TextInputHandles;
 
 /// Adds input method popup to compositor state
 pub trait InputMethodHandler {

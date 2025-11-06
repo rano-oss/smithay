@@ -46,12 +46,6 @@ pub(crate) struct InputMethod {
 }
 
 impl InputMethod {
-    /// Send the done incrementing the serial.
-    pub(crate) fn done(&mut self) {
-        self.object.done();
-        self.serial += 1;
-    }
-
     pub(crate) fn set_text_change_cause(&self, cause: impl ConvertInto<ChangeCause>) {
         self.object.text_change_cause(cause.convert_into())
     }
@@ -62,6 +56,12 @@ impl InputMethod {
         purpose: impl ConvertInto<ContentPurpose>,
     ) {
         self.object.content_type(hint.convert_into(), purpose.convert_into())
+    }
+
+    /// Send the done incrementing the serial.
+    pub(crate) fn done(&mut self) {
+        self.object.done();
+        self.serial += 1;
     }
 }
 

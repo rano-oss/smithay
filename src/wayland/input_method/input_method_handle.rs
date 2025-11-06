@@ -4,6 +4,7 @@ use std::{
 };
 
 use tracing::warn;
+use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::{ChangeCause, ContentHint, ContentPurpose};
 use wayland_protocols_misc::zwp_input_method_v2::server::{
     zwp_input_method_keyboard_grab_v2::ZwpInputMethodKeyboardGrabV2,
     zwp_input_method_v2::{self, ZwpInputMethodV2},
@@ -17,7 +18,7 @@ use wayland_server::{
 use crate::{
     input::{keyboard::KeyboardHandle, SeatHandler},
     utils::{alive_tracker::AliveTracker, Logical, Rectangle, SERIAL_COUNTER},
-    wayland::{compositor, seat::WaylandFocus, text_input::TextInputHandle},
+    wayland::{compositor, input_method_v3::ConvertInto, seat::WaylandFocus, text_input::TextInputHandle},
 };
 
 use super::{
@@ -41,6 +42,18 @@ pub(crate) struct Instance {
 }
 
 impl Instance {
+    pub(crate) fn set_text_change_cause(&self, cause: impl ConvertInto<ChangeCause>) {
+        self.object.text_change_cause(cause.convert_into())
+    }
+
+    pub(crate) fn set_content_type(
+        &self,
+        hint: impl ConvertInto<ContentHint>,
+        purpose: impl ConvertInto<ContentPurpose>,
+    ) {
+        self.object.content_type(hint.convert_into(), purpose.convert_into())
+    }
+
     /// Send the done incrementing the serial.
     pub(crate) fn done(&mut self) {
         self.object.done();
