@@ -22,7 +22,7 @@ use crate::{
         compositor::{add_destruction_hook, remove_destruction_hook, with_states},
         input_method::InputMethodSeat,
         input_method_v3::InputMethodSeat as _,
-        text_input::TextInputSeat,
+        text_input::TextInputSeat, text_input_next::TextInputSeat as _,
     },
 };
 
@@ -243,6 +243,7 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     }
 
     let text_input = seat.text_input();
+    let text_input_next = seat.text_input_next();
     let input_method = seat.input_method();
 
     if input_method.has_instance() {
@@ -257,10 +258,12 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     // NOTE: Always set focus regardless whether the client actually has the
     // text-input global bound due to clients doing lazy global binding.
     text_input.set_focus(Some(surface.clone()));
+    text_input_next.set_focus(Some(surface.clone()));
 
     // Only notify on `enter` once we have an actual IME.
     if input_method.has_instance() || input_method_v3.has_instance() {
         text_input.enter();
+        text_input_next.enter();
     }
 }
 
@@ -282,6 +285,7 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
         };
 
         let text_input = seat.text_input();
+        let text_input_next = seat.text_input_next();
         let input_method = seat.input_method();
 
         if input_method.has_instance() {
@@ -295,6 +299,7 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
 
         if input_method.has_instance() || input_method_v3.has_instance() {
             text_input.leave();
+            text_input_next.leave();
         }
 
         text_input.set_focus(None);

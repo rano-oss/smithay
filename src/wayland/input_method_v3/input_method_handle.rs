@@ -11,7 +11,7 @@ use wayland_protocols_experimental::input_method::v1::server::{
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
 use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
-use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
+use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource, WEnum};
 
 use crate::{
     input::SeatHandler,
@@ -217,6 +217,7 @@ where
                 data.text_input_handles.with_active_text_input(|ti, _surface| {
                     match ti {
                         TextInput::V3(ti) => ti.commit_string(Some(text.clone())),
+                        TextInput::Xx(ti) => ti.commit_string(Some(text.clone())),
                     }
                 });
             }
@@ -228,6 +229,7 @@ where
                 data.text_input_handles.with_active_text_input(|ti, _surface| {
                     match ti {
                         TextInput::V3(ti) => ti.preedit_string(Some(text.clone()), cursor_begin, cursor_end),
+                        TextInput::Xx(ti) => ti.preedit_string(Some(text.clone()), cursor_begin, cursor_end),
                     }
                 });
             }
@@ -238,6 +240,7 @@ where
                 data.text_input_handles.with_active_text_input(|ti, _surface| {
                     match ti {
                         TextInput::V3(ti) => ti.delete_surrounding_text(before_length, after_length),
+                        TextInput::Xx(ti) => ti.delete_surrounding_text(before_length, after_length),
                     }
                 });
             }
@@ -245,7 +248,7 @@ where
                 data.text_input_handles.with_active_text_input(|ti, _surface| {
                     match ti {
                         TextInput::V3(_) => warn!("Received event not supported by text input: MoveCursor. Were capabilities mixed up?"),
-                        //ti.move_cursor(cursor, anchor),
+                        TextInput::Xx(ti) => ti.move_cursor(cursor, anchor),
                     }
                 });
             }
@@ -253,7 +256,10 @@ where
                 data.text_input_handles.with_active_text_input(|ti, _surface| {
                     match ti {
                         TextInput::V3(_) => warn!("Received event not supported by text input: PerformAction. Were capabilities mixed up?"),
-                        //ti.move_cursor(cursor, anchor),
+                        TextInput::Xx(ti) => match action {
+                            WEnum::Value(action) => ti.perform_action(action),
+                            WEnum::Unknown(unk) => warn!("Received unknown action {unk:?}, ignoring"),
+                        },
                     }
                 });
             }

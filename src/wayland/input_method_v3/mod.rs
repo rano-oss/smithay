@@ -84,7 +84,7 @@ use wayland_protocols_experimental::input_method::v1::{
 
 use crate::{
     input::{Seat, SeatHandler},
-    utils::{Logical, Rectangle, Serial}, wayland::text_input as text_input_v3,
+    utils::{Logical, Rectangle, Serial}, wayland::{text_input as text_input_v3, text_input_next},
 };
 
 const MANAGER_VERSION: u32 = 3;
@@ -242,10 +242,14 @@ where
 
                 let user_data = seat.user_data();
                 user_data.insert_if_missing(text_input_v3::TextInputHandle::default);
+                user_data.insert_if_missing(text_input_next::TextInputHandle::default);
                 user_data.insert_if_missing(InputMethodHandle::default);
                 let handle = user_data.get::<InputMethodHandle>().unwrap();
-                let text_input_v3_handle = user_data.get::<text_input_v3::TextInputHandle>().unwrap();
-                let text_input_handles = TextInputHandles::new(text_input_v3_handle.clone());
+                let text_input_v3_handle = user_data.get::<text_input_v3::TextInputHandle>().unwrap();let text_input_next_handle = user_data.get::<text_input_next::TextInputHandle>().unwrap();
+                let text_input_handles = TextInputHandles::new(
+                    text_input_v3_handle.clone(),
+                    text_input_next_handle.clone(),
+                );
                 text_input_handles.enter();
                 let instance = data_init.init(
                     input_method,

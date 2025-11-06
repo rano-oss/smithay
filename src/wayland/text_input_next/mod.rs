@@ -66,18 +66,18 @@ pub use text_input_handle::TextInputUserData;
 use super::input_method;
 use super::input_method_v3;
 
-const MANAGER_VERSION: u32 = 1;
+const MANAGER_VERSION: u32 = 2;
 
 mod text_input_handle;
 
 /// Extends [Seat] with text input functionality
 pub trait TextInputSeat {
     /// Get text input associated with this seat
-    fn text_input(&self) -> &TextInputHandle;
+    fn text_input_next(&self) -> &TextInputHandle;
 }
 
 impl<D: SeatHandler + 'static> TextInputSeat for Seat<D> {
-    fn text_input(&self) -> &TextInputHandle {
+    fn text_input_next(&self) -> &TextInputHandle {
         let user_data = self.user_data();
         user_data.insert_if_missing(TextInputHandle::default);
         user_data.get::<TextInputHandle>().unwrap()
