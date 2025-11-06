@@ -1,11 +1,10 @@
-use std::collections::HashSet;
 use std::mem;
 use std::sync::{Arc, Mutex};
 
 use tracing::{debug, warn};
 use wl_input_method as wayland_protocols_experimental;
 use wayland_protocols_experimental::text_input::v3::server::xx_text_input_v3::{
-    self, Action, ChangeCause, ContentHint, ContentPurpose, SupportedFeatures, XxTextInputV3,
+    self, ChangeCause, ContentHint, ContentPurpose, SupportedFeatures, XxTextInputV3,
 };
 use wayland_server::backend::{ClientId, ObjectId};
 use wayland_server::{protocol::wl_surface::WlSurface, Dispatch, Resource};
@@ -352,7 +351,7 @@ where
                         .set_text_input_rectangle::<D>(state, rect);
                     data.input_method_v3_handle.set_cursor_rectangle::<D>(state, rect);
                 }
-                
+
                 if let Some(actions) = update.available_actions.take() {
                     data.input_method_v3_handle.with_instance(move |input_method| {
                         input_method.object.available_actions(actions);

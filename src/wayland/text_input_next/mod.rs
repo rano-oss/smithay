@@ -185,16 +185,45 @@ where
 macro_rules! delegate_text_input_next_manager {
     ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
         $crate::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::text_input::zv3::server::xx_text_input_manager_v3::XxTextInputManagerV3: ()
-        ] => $crate::wayland::text_input::TextInputManagerState);
+            $crate::reexports::wayland_protocols_experimental::text_input::v3::server::xx_text_input_manager_v3::XxTextInputManagerV3: ()
+        ] => $crate::wayland::text_input_next::TextInputManagerState);
 
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::text_input::zv3::server::xx_text_input_manager_v3::XxTextInputManagerV3: ()
-        ] => $crate::wayland::text_input::TextInputManagerState);
+            $crate::reexports::wayland_protocols_experimental::text_input::v3::server::xx_text_input_manager_v3::XxTextInputManagerV3: ()
+        ] => $crate::wayland::text_input_next::TextInputManagerState);
 
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::text_input::zv3::server::xx_text_input_v3::XxTextInputV3:
-            $crate::wayland::text_input::TextInputUserData
-        ] => $crate::wayland::text_input::TextInputManagerState);
+            $crate::reexports::wayland_protocols_experimental::text_input::v3::server::xx_text_input_v3::XxTextInputV3:
+            $crate::wayland::text_input_next::TextInputUserData
+        ] => $crate::wayland::text_input_next::TextInputManagerState);
     };
+}
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    struct Handler {}
+
+    delegate_text_input_next_manager!(Handler);
+
+    fn assert_is_manager_delegate<T>()
+    where
+        T: wayland_server::Dispatch<XxTextInputManagerV3, ()>,
+    {
+    }
+
+    fn assert_is_delegate<T>()
+    where
+        T: wayland_server::Dispatch<XxTextInputV3, TextInputUserData>,
+    {
+    }
+
+    
+    #[test]
+    fn test_valid_assignment() {
+        assert_is_manager_delegate::<Handler>();
+        assert_is_delegate::<Handler>();
+    }
 }

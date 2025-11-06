@@ -18,7 +18,7 @@ use smithay::{
     delegate_input_method_manager, delegate_input_method_manager_v3, delegate_keyboard_shortcuts_inhibit,
     delegate_layer_shell, delegate_output, delegate_pointer_constraints, delegate_pointer_gestures,
     delegate_presentation, delegate_primary_selection, delegate_relative_pointer, delegate_seat,
-    delegate_security_context, delegate_shm, delegate_tablet_manager, delegate_text_input_manager,
+    delegate_security_context, delegate_shm, delegate_tablet_manager, delegate_text_input_manager, delegate_text_input_next_manager,
     delegate_viewporter, delegate_virtual_keyboard_manager, delegate_xdg_activation, delegate_xdg_decoration,
     delegate_xdg_shell,
     desktop::{
@@ -91,6 +91,7 @@ use smithay::{
         socket::ListeningSocketSource,
         tablet_manager::{TabletManagerState, TabletSeatHandler},
         text_input::TextInputManagerState,
+        text_input_next,
         viewporter::ViewporterState,
         virtual_keyboard::VirtualKeyboardManagerState,
         xdg_activation::{
@@ -318,6 +319,8 @@ impl<BackendData: Backend> TabletSeatHandler for AnvilState<BackendData> {
 delegate_tablet_manager!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
 delegate_text_input_manager!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
+
+delegate_text_input_next_manager!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
 impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
     fn new_popup(&mut self, surface: PopupSurface) {
@@ -702,6 +705,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         let fifo_manager_state = FifoManagerState::new::<Self>(&dh);
         let commit_timing_manager_state = CommitTimingManagerState::new::<Self>(&dh);
         TextInputManagerState::new::<Self>(&dh);
+        text_input_next::TextInputManagerState::new::<Self>(&dh);
         InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
         InputMethodManagerStateV3::new::<Self, _>(&dh, |_client| true);
         VirtualKeyboardManagerState::new::<Self, _>(&dh, |_client| true);
