@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{borrow::Cow, fmt};
 
 use tracing::{error, instrument, trace, warn};
 use wayland_server::{
@@ -54,6 +54,10 @@ where
     /// This should be done first, before anything else is done with this keyboard.
     #[instrument(parent = &self.arc.span, skip(self))]
     pub(crate) fn new_kbd(&self, kbd: WlKeyboard) {
+        self.register_kbd(&kbd, None);
+        self.arc.known_kbds.keyboards.lock().unwrap().push(kbd.downgrade());
+    }
+    pub(crate) fn register_kbd(&self, kbd: &WlKeyboard, intercept_to: Option<&WlSurface>) {
         trace!("Sending keymap to client");
 
         // prepare a tempfile with the keymap, to send it to the client
@@ -69,8 +73,8 @@ where
         };
 
         let guard = self.arc.internal.lock().unwrap();
-        if Resource::version(&kbd) >= 4 {
-            let rate = if Resource::version(&kbd) >= 10 {
+        if Resource::version(kbd) >= 4 {
+            let rate = if Resource::version(kbd) >= 10 {
                 0 // Enables compositor-side key repeat. See wl_keyboard key event
             } else {
                 guard.repeat_rate
@@ -78,10 +82,17 @@ where
             kbd.repeat_info(rate, guard.repeat_delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {
-            if focused.same_client_as(&kbd.id()) {
+            let surface = if let Some(intercept_surface) = intercept_to {
+                Some(Cow::Borrowed(intercept_surface))
+            } else if focused.same_client_as(&kbd.id()) {
+                focused.wl_surface()
+            } else {
+                None
+            };
+            if let Some(surface) = surface {
                 let serialized = guard.mods_state.serialized;
                 let keys = serialize_pressed_keys(guard.pressed_keys.iter().copied());
-                kbd.enter((*serial).into(), &focused.wl_surface().unwrap(), keys);
+                kbd.enter((*serial).into(), &surface, keys);
                 // Modifiers must be send after enter event.
                 kbd.modifiers(
                     (*serial).into(),
@@ -92,7 +103,6 @@ where
                 );
             }
         }
-        self.arc.known_kbds.keyboards.lock().unwrap().push(kbd.downgrade());
     }
 }
 

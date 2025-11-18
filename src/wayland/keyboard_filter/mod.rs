@@ -14,6 +14,7 @@ use wl_input_method::{input_method::v1::server::xx_input_method_v1::XxInputMetho
 
 use crate::{input::{keyboard::KeyboardHandle, SeatHandler}, utils::Serial, wayland::input_method_v3::InputMethodUserData};
 
+mod fake_seat;
 mod queue;
 
 pub(crate) use queue::DispatchQueue;
