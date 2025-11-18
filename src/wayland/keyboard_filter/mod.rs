@@ -1,7 +1,16 @@
-use wayland_server::{backend::GlobalId, protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface}, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource};
-use wl_input_method::keyboard_filter::v1::server::{xx_keyboard_filter_manager_v1::{self, XxKeyboardFilterManagerV1}, xx_keyboard_filter_v1::XxKeyboardFilterV1};
+//! Filtering key presses
+//!
+//! This Wayland protocol allows an application to register itself as a filter for key presses destined for another application.
+//!
+//! The current implementation supports filtering for input method purposes.
 
-use crate::{input::{keyboard::KeyboardHandle, SeatHandler}, wayland::input_method_v3::InputMethodUserData};
+use tracing::{warn, error, debug};
+
+use wayland_client::WEnum;
+use wayland_server::{backend::GlobalId, protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface}, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource};
+use wl_input_method::keyboard_filter::v1::server::{xx_keyboard_filter_manager_v1::{self, XxKeyboardFilterManagerV1}, xx_keyboard_filter_v1::{self, FilterAction, XxKeyboardFilterV1}};
+
+use crate::{input::{keyboard::KeyboardHandle, SeatHandler}, utils::Serial, wayland::input_method_v3::InputMethodUserData};
 
 mod queue;
 
@@ -171,7 +180,9 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) keyboard_handle: Option<KeyboardHandle<D>>,
 }
 
-
+fn get_filter<'a>() -> &'a queue::DispatchQueue {
+    panic!();
+}
 
 impl<D> Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>, D> for KeyboardFilterManagerState
 where
@@ -191,6 +202,7 @@ where
         /*
         let known_kbds = &data.keyboard_handle.arc.known_kbds;
         let filter = known_kbds.interceptor.lock().unwrap();
+        
         let Some(filter) = filter.as_ref()
         else {
             error!("IM has a bound keyboard, but no interceptor is registered");
@@ -203,8 +215,10 @@ where
             error!("The registered keyboard interceptor is not the IM one");
             return;
         };
+        */
+        let filter = get_filter();
         
-        use xx_input_method_keyboard_v1::Request;
+        use xx_keyboard_filter_v1::Request;
         match request {
             Request::Unbind => {
                 for e in filter.events_to_filter.lock().unwrap().drain(..) {
@@ -236,7 +250,7 @@ where
                 while let Some(e) = events.pop_back() {
                     let (action, stop) = if let Some(waiting_serial) = e.1.serial() {
                         if Serial(serial) > Serial(waiting_serial) {
-                            resource.post_error(xx_input_method_keyboard_v1::Error::InvalidSerial, "Filter serial newer than awaited");
+                            resource.post_error(xx_keyboard_filter_v1::Error::InvalidSerial, "Filter serial newer than awaited");
                             return;
                         };
                         (action, true)
@@ -244,18 +258,17 @@ where
                         // Events without a serial will not get a confirmation. Just pass them through and go to next event.
                         (Action::Passthrough, false)
                     };
-                    match (action, e.1.is_filterable()) {
-                        (Action::Consume, true) => {},
-                        (Action::Consume, false) => {
-                            resource.post_error(
-                                xx_input_method_keyboard_v1::Error::InvalidFilterAction,
-                                format!("Only key events may be filtered, but tried {}", e.1.describe())
-                            );
-                            return;
-                        },
-                        (Action::Passthrough, _) => {
+                    if e.1.is_filterable() {
+                        if let Action::Passthrough = action {
                             filter.apply(e)
-                        },
+                        }
+                    } else {
+                        /*resource.post_error(
+                            xx_keyboard_filter_v1::Error::InvalidFilterAction,
+                            format!("Only key events may be filtered, but tried {}", e.1.describe())
+                        );*/
+                        error!("FIXME: Wrong event to filter");
+                        return;
                     }
                     if stop {
                         return;
@@ -265,8 +278,6 @@ where
             }
             _ => {}
         }
-        */
-        panic!()
     }
 }
 

@@ -4,14 +4,17 @@ use wayland_server::protocol::{wl_keyboard, wl_surface::WlSurface};
 
 use crate::input::keyboard::KnownKbds;
 
-struct KeyboardEvent;
+pub struct KeyboardEvent;
 
 impl KeyboardEvent {
-    fn is_filterable(&self) -> bool {
+    pub(crate) fn is_filterable(&self) -> bool {
         panic!()
     }
     fn apply<T>(&self, t:T) {
         panic!()
+    }
+    pub(crate) fn serial(&self) -> Option<u32> {
+        panic!();
     }
 }
 
@@ -73,7 +76,7 @@ impl DispatchQueue {
     }
 
     /// Applies event to the text input application, if event was not already applied.
-    fn apply(&self, (state, event): (EventState, KeyboardEvent)) {
+    pub(crate) fn apply(&self, (state, event): (EventState, KeyboardEvent)) {
         match state {
             EventState::Sent => {},
             EventState::Delaying => self.forward(&event),
