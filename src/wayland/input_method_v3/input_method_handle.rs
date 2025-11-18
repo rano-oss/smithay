@@ -2,18 +2,16 @@ use std::{fmt, sync::{Arc, Mutex}};
 
 use wl_input_method::input_method::v1::server::{
     xx_input_method_v1::{self, XxInputMethodV1},
-    xx_input_method_keyboard_v1::XxInputMethodKeyboardV1,
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
 use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 use crate::{
-    input::{keyboard::{KeyboardHandle, WlKeyboardApi}, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, input_method_v3::{input_method_keyboard::BoundKeyboard, KeyboardUserData}, seat::WaylandFocus, text_input::TextInputHandle}
+    input::{keyboard::{KeyboardHandle, WlKeyboardApi}, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle}
 };
 
 use super::{
-    input_method_keyboard::KeyFilter,
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface}, positioner::{PositionerState, PositionerUserData}, InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE
 };
 
@@ -30,10 +28,10 @@ pub(crate) struct InputMethod {
     pub serial: u32,
     pub active: bool,
     pub popup_handles: Vec<PopupSurface>,
-    /// Currently bound keyboard. This is this IM instance's "master copy" to be cloned into KeyFilter instances.
+    /// Currently bound filter. This is this IM instance's "master copy" to be cloned into KeyFilter instances.
     /// KeyFilter shall not outlive its input method, so that's fine.
     // maybe TODO: Arc here and Weak in KeyFilter?
-    pub bound_keyboard: Option<BoundKeyboard>,
+    pub filter: Option<keyboard_filter::Filter>,
     /// This can only contain a KeyFilter instance, but it's a clone to a generic handle 
     pub keyboard_filter_handle: Arc<Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>>,
     /// Relative to surface on which input method is enabled
@@ -86,7 +84,7 @@ impl InputMethodHandle {
                 active: false,
                 popup_handles: vec![],
                 cursor_rectangle: Rectangle::default(),
-                bound_keyboard: None,
+                filter: None,
                 keyboard_filter_handle: data.keyboard_handle.arc.known_kbds.interceptor.clone(),
             });
         }
@@ -151,20 +149,18 @@ impl InputMethodHandle {
 
     /// Activate input method on the given surface.
     pub(crate) fn activate_input_method<D: SeatHandler + 'static>(&self, _: &mut D, surface: &WlSurface) {
-        dbg!("activating");
         self.with_instance(|im| {
-            dbg!("activating");
             im.object.activate();
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
             let known_kbds = &data.keyboard_handle.arc.known_kbds;
-            if let Some(bound_keyboard) = im.bound_keyboard.as_ref() {
-                let filter = KeyFilter::create(
+            if let Some(bound_keyboard) = im.filter.as_ref() {
+                let filter = keyboard_filter::DispatchQueue::create(
                     bound_keyboard,
                     &known_kbds.keyboards,
                     surface,
                 );
                 let mut interceptor = known_kbds.interceptor.lock().unwrap();
-                *interceptor = Some(Box::new(filter));
+                //*interceptor = Some(Box::new(filter));
             }
             im.keyboard_filter_handle = known_kbds.interceptor.clone();
             im.active = true;
@@ -221,7 +217,7 @@ impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
 impl<D> Dispatch<XxInputMethodV1, InputMethodUserData<D>, D> for InputMethodManagerState
 where
     D: Dispatch<XxInputMethodV1, InputMethodUserData<D>>,
-    D: Dispatch<XxInputMethodKeyboardV1, KeyboardUserData<D>>,
+    //D: Dispatch<XxInputMethodKeyboardV1, KeyboardUserData<D>>,
     D: Dispatch<XxInputPopupSurfaceV2, InputMethodPopupSurfaceUserData>,
     D: SeatHandler,
     D: InputMethodHandler,
@@ -342,24 +338,6 @@ where
                     }
                 }
             }
-            Request::KeyboardBind { keyboard, surface, extensions } => {
-                let im_filter = data_init.init(
-                    extensions,
-                    KeyboardUserData {
-                        keyboard_handle: data.keyboard_handle.clone(),
-                    },
-                );
-                
-                let mut input_method = data.handle.inner.lock().unwrap();
-                if let Some(instance) = &mut input_method.instance {
-                    instance.bound_keyboard = Some(BoundKeyboard {
-                        im_keyboard: keyboard,
-                        im_filter,
-                        im_surface: surface,
-                    });
-                }
-                // FIXME: if IM already active, register the filter as keyboard interceptor
-            },
             Request::Destroy => {
                 // Nothing to do
             }

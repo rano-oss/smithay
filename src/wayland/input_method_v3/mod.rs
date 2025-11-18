@@ -97,11 +97,9 @@ pub const INPUT_POPUP_SURFACE_ROLE: &str = "zwp_input_popup_surface_v3";
 
 mod configure_tracker;
 mod input_method_handle;
-mod input_method_keyboard;
 mod input_method_popup_surface;
 mod positioner;
 
-pub use input_method_keyboard::KeyboardUserData;
 pub use input_method_popup_surface::{
     InputMethodPopupSurfaceUserData, PopupParent, PopupSurface, PopupSurfaceState,
 };
@@ -295,10 +293,6 @@ macro_rules! delegate_input_method_manager_v3 {
             $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_popup_positioner_v1::XxInputPopupPositionerV1:
             $crate::wayland::input_method_v3::PositionerUserData
         ] => $crate::wayland::input_method_v3::InputMethodManagerState);
-        $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_method_keyboard_v1::XxInputMethodKeyboardV1:
-            $crate::wayland::input_method_v3::KeyboardUserData<Self>
-        ] => $crate::wayland::input_method_v3::InputMethodManagerState);
     };
 }
 
@@ -387,16 +381,6 @@ mod test {
         >,
     {
     }
-    
-    fn assert_is_keyboard_delegate<T>()
-    where
-        T: SeatHandler,
-        T: wayland_server::Dispatch<
-            protocol::xx_input_method_keyboard_v1::XxInputMethodKeyboardV1,
-            KeyboardUserData<T>,
-        >,
-    {
-    }
 
     #[test]
     fn test_valid_assignment() {
@@ -404,6 +388,5 @@ mod test {
         assert_is_delegate::<Handler>();
         assert_is_popup_delegate::<Handler>();
         assert_is_positioner_delegate::<Handler>();
-        assert_is_keyboard_delegate::<Handler>();
     }
 }
