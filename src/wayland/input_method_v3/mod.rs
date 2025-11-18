@@ -90,7 +90,7 @@ pub use input_method_handle::{InputMethodHandle, InputMethodUserData};
 
 use super::text_input::TextInputHandle;
 
-const MANAGER_VERSION: u32 = 3;
+const MANAGER_VERSION: u32 = 2;
 
 /// The role of the input method popup.
 pub const INPUT_POPUP_SURFACE_ROLE: &str = "zwp_input_popup_surface_v3";

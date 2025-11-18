@@ -373,7 +373,7 @@ pub enum Error {
 
 use wayland_server::protocol::{wl_keyboard, wl_surface};
 
-pub(crate) trait WlKeyboardApi : Downcast {
+pub(crate) trait WlKeyboardApi {
     fn keymap(
         &self,
         format: wl_keyboard::KeymapFormat,
@@ -401,8 +401,6 @@ pub(crate) trait WlKeyboardApi : Downcast {
     fn repeat_info(&self, rate: i32, delay: i32);
     fn version(&self) -> u32;
 }
-
-impl_downcast!(WlKeyboardApi);
 
 impl WlKeyboardApi for wl_keyboard::WlKeyboard {
     fn keymap(
@@ -1530,6 +1528,7 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         time: u32,
     ) {
         // TODO: put interception here. FIXME: what to call to replay the event?
+        dbg!(key_state);
         let (focus, _) = match self.inner.focus.as_mut() {
             Some(focus) => focus,
             None => return,
