@@ -257,6 +257,12 @@ impl fmt::Debug for Xkb {
 // same thread
 unsafe impl Send for Xkb {}
 
+struct XkbRelatedState<'a> {
+    pub(crate) mods_state: &'a ModifiersState,
+    xkb: &'a Arc<Mutex<Xkb>>,
+    pub(crate) led_state: &'a LedState,
+}
+
 pub(crate) struct KbdInternal<D: SeatHandler> {
     pub(crate) focus: Option<(<D as SeatHandler>::KeyboardFocus, Serial)>,
     pending_focus: Option<<D as SeatHandler>::KeyboardFocus>,
@@ -1601,11 +1607,21 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         serial: Serial,
         time: u32,
     ) {
-        Self::input_generic(&mut self.inner, self.seat, data, keycode, key_state, modifiers, serial, time)
+        Self::input_generic(
+            XkbRelatedState {
+                mods_state: &self.inner.mods_state,
+                xkb: &self.inner.xkb,
+                led_state: &self.inner.led_state,
+            },
+            self.inner.focus.as_mut(),
+            self.seat,
+            data, keycode, key_state, modifiers, serial, time)
     }
     
     pub(crate) fn input_generic(
-        inner: &mut KbdInternal<D>,
+        //inner: &mut KbdInternal<D>,
+        inner: XkbRelatedState<'a>,
+        focus: Option<impl &KeyboardTargetSimple<D>>,
         seat: &Seat<D>,
         data: &mut D,
         keycode: Keycode,
