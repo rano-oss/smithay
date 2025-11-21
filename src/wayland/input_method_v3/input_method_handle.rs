@@ -8,7 +8,7 @@ use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 use crate::{
-    input::{keyboard::{KeyboardHandle, WlKeyboardApi}, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle}
+    input::{keyboard::{KeyboardHandle, WlKeyboardApi}, Seat, SeatHandler}, utils::{Logical, Rectangle}, wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle}
 };
 
 use super::{
@@ -193,6 +193,7 @@ impl InputMethodHandle {
 /// User data of XxInputMethodV1 object
 #[derive(Clone)]
 pub struct InputMethodUserData<D: SeatHandler> {
+    pub(crate) seat: Seat<D>,
     pub(super) handle: InputMethodHandle,
     pub(crate) text_input_handle: TextInputHandle,
     /// Handle to main keyboard for registering sub-keyboards

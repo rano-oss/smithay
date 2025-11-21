@@ -5,7 +5,9 @@ use crate::reexports::calloop::LoopHandle;
 use crate::utils::{IsAlive, Serial, SERIAL_COUNTER};
 use calloop::RegistrationToken;
 use downcast_rs::{impl_downcast, Downcast};
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
 #[cfg(feature = "wayland_frontend")]
 use std::sync::RwLock;
 use std::time::Duration;
@@ -34,6 +36,55 @@ pub use modifiers_state::{ModifiersState, SerializedMods};
 
 mod xkb_config;
 pub use xkb_config::XkbConfig;
+
+
+/// Trait representing object that can receive keyboard interactions
+pub trait KeyboardTargetSimple<D>
+where
+    D: SeatHandler,
+{
+    /// A key was pressed on a keyboard from a given seat
+    fn key(
+        &self,
+        seat: &Seat<D>,
+        key: KeysymHandle<'_>,
+        state: KeyEvent,
+        serial: Serial,
+        time: u32,
+    );
+    /// Hold modifiers were changed on a keyboard from a given seat
+    fn modifiers(&self, seat: &Seat<D>, modifiers: ModifiersState, serial: Serial);
+}
+
+struct KeyboardTargetWithData<'a, D>
+where
+    D: SeatHandler,
+{
+    target: &'a <D as SeatHandler>::KeyboardFocus,
+    data: Rc<RefCell<&'a mut D>>,
+}
+
+impl<'a, D> KeyboardTargetSimple<D> for KeyboardTargetWithData<'a, D>
+where
+    D: SeatHandler,
+{
+    fn key(
+        &self,
+        seat: &Seat<D>,
+        key: KeysymHandle<'_>,
+        state: KeyEvent,
+        serial: Serial,
+        time: u32,
+    ) {
+        let mut data = self.data.borrow_mut();
+        self.target.key(seat, &mut data, key, state, serial, time)
+    }
+    fn modifiers(&self, seat: &Seat<D>, modifiers: ModifiersState, serial: Serial) {
+        let mut data = self.data.borrow_mut();
+        self.target.modifiers(seat, &mut data, modifiers, serial)
+    }
+}
+    
 
 /// Trait representing object that can receive keyboard interactions
 pub trait KeyboardTarget<D>: IsAlive + fmt::Debug + Send
@@ -255,7 +306,7 @@ impl<D: SeatHandler> fmt::Debug for KbdInternal<D> {
 unsafe impl<D: SeatHandler> Send for KbdInternal<D> {}
 
 impl<D: SeatHandler + 'static> KbdInternal<D> {
-    fn new(xkb_config: XkbConfig<'_>, repeat_rate: i32, repeat_delay: i32) -> Result<KbdInternal<D>, ()> {
+    pub(crate) fn new(xkb_config: XkbConfig<'_>, repeat_rate: i32, repeat_delay: i32) -> Result<KbdInternal<D>, ()> {
         // we create a new context for each keyboard because libxkbcommon is actually NOT threadsafe
         // so confining it inside the KbdInternal allows us to use Rusts mutability rules to make
         // sure nothing goes wrong.
@@ -895,6 +946,27 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         keymap_file: &KeymapFile,
         mods: ModifiersState,
     ) -> bool {
+        let seat = self.get_seat(data);
+        let mut target = focus.as_ref().map(|focus: &&mut <D as SeatHandler>::KeyboardFocus| KeyboardTargetWithData {
+            target: *focus,
+            data: Rc::new(RefCell::new(data)),
+        });
+        self.send_keymap_decoupled(
+            &seat,
+            &target.as_mut(),
+            keymap_file,
+            mods,
+        )
+    }
+    
+    #[cfg(feature = "wayland_frontend")]
+    pub(crate) fn send_keymap_decoupled(
+        &self,
+        seat: &Seat<D>,
+        focus: &Option<&mut impl KeyboardTargetSimple<D>>,
+        keymap_file: &KeymapFile,
+        mods: ModifiersState,
+    ) -> bool {
         use std::os::unix::io::AsFd;
         use tracing::warn;
         use wayland_server::protocol::wl_keyboard::KeymapFormat;
@@ -921,9 +993,8 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         });
 
         // Send updated modifiers.
-        let seat = self.get_seat(data);
         if let Some(focus) = focus {
-            focus.modifiers(&seat, data, mods, SERIAL_COUNTER.next_serial());
+            focus.modifiers(&seat, mods, SERIAL_COUNTER.next_serial());
         }
 
         true
@@ -1465,6 +1536,9 @@ impl<D: SeatHandler> fmt::Debug for KeyboardInnerHandle<'_, D> {
 }
 
 impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
+    pub(crate) fn repeat_info(&self) -> (i32, i32) {
+        (self.inner.repeat_delay, self.inner.repeat_rate)
+    }
     /// Change the current grab on this keyboard to the provided grab
     ///
     /// Overwrites any current grab.
@@ -1527,31 +1601,44 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         serial: Serial,
         time: u32,
     ) {
+        Self::input_generic(&mut self.inner, self.seat, data, keycode, key_state, modifiers, serial, time)
+    }
+    
+    pub(crate) fn input_generic(
+        inner: &mut KbdInternal<D>,
+        seat: &Seat<D>,
+        data: &mut D,
+        keycode: Keycode,
+        key_state: KeyEvent,
+        modifiers: Option<ModifiersState>,
+        serial: Serial,
+        time: u32,
+    ) {
         // TODO: put interception here. FIXME: what to call to replay the event?
         dbg!(key_state);
-        let (focus, _) = match self.inner.focus.as_mut() {
+        let (focus, _) = match inner.focus.as_mut() {
             Some(focus) => focus,
             None => return,
         };
 
         // Ensure keymap is up to date.
         #[cfg(feature = "wayland_frontend")]
-        if let Some(keyboard_handle) = self.seat.get_keyboard() {
+        if let Some(keyboard_handle) = seat.get_keyboard() {
             let keymap_file = keyboard_handle.arc.keymap.lock().unwrap();
-            let mods = self.inner.mods_state;
+            let mods = inner.mods_state;
             keyboard_handle.send_keymap(data, &Some(focus), &keymap_file, mods);
         }
 
         // key event must be sent before modifiers event for libxkbcommon
         // to process them correctly
         let key = KeysymHandle {
-            xkb: &self.inner.xkb,
+            xkb: &inner.xkb,
             keycode,
         };
 
-        focus.key(self.seat, data, key, key_state, serial, time);
+        focus.key(seat, data, key, key_state, serial, time);
         if let Some(mods) = modifiers {
-            focus.modifiers(self.seat, data, mods, serial);
+            focus.modifiers(seat, data, mods, serial);
         }
     }
 

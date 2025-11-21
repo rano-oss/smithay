@@ -249,6 +249,7 @@ where
                 let instance = data_init.init(
                     input_method,
                     InputMethodUserData {
+                        seat: seat.clone(),
                         handle: handle.clone(),
                         text_input_handle: text_input_handle.clone(),
                         dismiss_popup: D::dismiss_popup,

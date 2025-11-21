@@ -6,15 +6,16 @@
 
 use std::{collections::HashSet, sync::{Arc, Mutex}};
 
-use tracing::{warn, error, debug};
+use tracing::{warn, error};
 
 use wayland_client::WEnum;
 use wayland_server::{backend::GlobalId, protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface}, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource};
 use wl_input_method::{input_method::v1::server::xx_input_method_v1::XxInputMethodV1, keyboard_filter::v1::server::{xx_keyboard_filter_manager_v1::{self, XxKeyboardFilterManagerV1}, xx_keyboard_filter_v1::{self, FilterAction, XxKeyboardFilterV1}}};
 
-use crate::{input::{keyboard::KeyboardHandle, SeatHandler}, utils::Serial, wayland::input_method_v3::InputMethodUserData};
+use crate::{input::{keyboard::KeyboardHandle, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::input_method_v3::InputMethodUserData};
 
 mod fake_seat;
+mod grab;
 mod queue;
 
 pub(crate) use queue::DispatchQueue;
@@ -28,7 +29,7 @@ pub struct KeyboardFilterManagerGlobalData {
 }
 
 /// Data accesible from XxKeyboardFilterManagerV1
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct KeyboardFilterManagerUserData {
     inner: Arc<Mutex<KeyboardFilterManagerUserDataInner>>,
 }
@@ -75,6 +76,7 @@ impl<D> GlobalDispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerGlobalDat
 where
     D: GlobalDispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData>,
     D: Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
+    //D: SeatHandler,
     D: 'static,
 {
     fn bind(
@@ -85,7 +87,12 @@ where
         _: &KeyboardFilterManagerGlobalData,
         data_init: &mut DataInit<'_, D>,
     ) {
-        data_init.init(resource, KeyboardFilterManagerUserData::default());
+        data_init.init(
+            resource,
+            KeyboardFilterManagerUserData {
+                inner: Arc::new(Mutex::new(Default::default())),
+            }
+        );
     }
 
     fn can_view(client: Client, global_data: &KeyboardFilterManagerGlobalData) -> bool {
@@ -101,7 +108,7 @@ where
     D: 'static,
 {
     fn request(
-        _state: &mut D,
+        state: &mut D,
         _client: &Client,
         resource: &XxKeyboardFilterManagerV1,
         request: xx_keyboard_filter_manager_v1::Request,
@@ -128,6 +135,17 @@ where
                         return;
                     };
                 }
+                let imdata = input_method.data::<InputMethodUserData<D>>().unwrap();
+                let seat = &imdata.seat;
+                let keyboard_handle = seat.get_keyboard().unwrap().clone();
+                
+                keyboard_handle.set_grab(
+                    state,
+                    grab::KeyboardFilterGrab::new(surface.clone()),
+                    // WARNING: no idea what the serial is for
+                    SERIAL_COUNTER.next_serial(),
+                );
+                
                 let filter = data_init.init::<XxKeyboardFilterV1, _>(
                     extensions,
                     KeyboardFilterUserData {

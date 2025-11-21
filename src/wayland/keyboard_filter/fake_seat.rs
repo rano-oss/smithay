@@ -1,7 +1,7 @@
 use crate::input::{keyboard::{KeyboardHandle, XkbConfig}, Seat, SeatHandler, SeatState};
 
 pub(crate) fn fake_seat<D: SeatHandler + 'static>(
-    xkb_config: XkbConfig,
+    xkb_config: XkbConfig<'_>,
     repeat_delay: i32,
     repeat_rate: i32,
 ) -> Seat<D> {
