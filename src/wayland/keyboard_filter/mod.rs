@@ -138,10 +138,11 @@ where
                 let imdata = input_method.data::<InputMethodUserData<D>>().unwrap();
                 let seat = &imdata.seat;
                 let keyboard_handle = seat.get_keyboard().unwrap().clone();
+                let keymap_file = keyboard_handle.arc.keymap.clone();
                 
                 keyboard_handle.set_grab(
                     state,
-                    grab::KeyboardFilterGrab::new(surface.clone()),
+                    grab::KeyboardFilterGrab::new(surface.clone(), keymap_file),
                     // WARNING: no idea what the serial is for
                     SERIAL_COUNTER.next_serial(),
                 );

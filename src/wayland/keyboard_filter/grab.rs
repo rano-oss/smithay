@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use wayland_server::protocol::wl_surface::WlSurface;
 use xkbcommon::xkb::Keycode;
 
-use crate::{backend::input::KeyEvent, input::{keyboard::{GrabStartData, KbdInternal, KeyboardGrab, KeyboardInnerHandle, KeyboardTarget, KeyboardTargetSimple, ModifiersState, XkbConfig}, Seat, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::seat::WaylandFocus};
+use crate::{backend::input::KeyEvent, input::{keyboard::{GrabStartData, KbdInternal, KeyboardGrab, KeyboardInnerHandle, KeyboardTarget, KeyboardTargetSimple, KeymapFile, ModifiersState, XkbConfig}, Seat, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::seat::WaylandFocus};
 
 
 fn kbi<D: SeatHandler + 'static>(
@@ -39,9 +39,12 @@ impl<D: SeatHandler> KeyboardTargetSimple<D> for SurfaceTarget {
 }
 
 /// Keyboard filtering grab
-#[derive(Clone)]
+//#[derive(Clone)]
 pub struct KeyboardFilterGrab {
-    pub(crate) inner: Arc<Mutex<GrabInner>>,
+    inner: Arc<Mutex<GrabInner>>,
+    /// Shared with the actual keyboard.
+    /// This is racy: updates get applied immediately even when events get delayed.
+    keymap: Arc<Mutex<KeymapFile>>,
     target_surface: SurfaceTarget,
 }
 
@@ -50,10 +53,11 @@ struct GrabInner {
 }
 
 impl KeyboardFilterGrab {
-    pub fn new(target_surface: WlSurface) -> Self {
+    pub fn new(target_surface: WlSurface, keymap: Arc<Mutex<KeymapFile>>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(GrabInner { queue: () })),
             target_surface: SurfaceTarget(target_surface),
+            keymap,
         }
     }
     /// Send the input to the focused keyboards
@@ -101,7 +105,7 @@ where
 {
     fn input(
         &mut self,
-        data: &mut D,
+        _data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
         keycode: Keycode,
         key_event: KeyEvent,
@@ -118,21 +122,20 @@ where
             repeat_delay,
             repeat_rate,
         );
-        let kb = fake_seat.get_keyboard().unwrap();
+        let mut kb = fake_seat.get_keyboard().unwrap();
         // Keyboard does NOT need focus because it's passed explicitly.
         // It *can't* carry the correct (redirected) focus anyway because focus is of a generic type defined by the compositor.
         // Alternatively, we could modify KeyboardTarget to have a From<WlSurface>...
         
         // Keyboard must have a correct keymap file
         //FIXME
+        Arc::get_mut(&mut kb.arc).unwrap().keymap = self.keymap.clone();
+        let kb = kb;
         
         let inner = kb.arc.internal.lock().unwrap();
         let inner = inner.xkb_related_state();
 
-        //fake_seat.get_keyboard().unwrap().set_grab(data, , SERIAL_COUNTER.next_serial());
-        //.arc.internal.lock().unwrap().
         KeyboardInnerHandle::<D>::input_generic(
-        //Self::input_dupe(
             inner,
             Some(&self.target_surface),
             &fake_seat,

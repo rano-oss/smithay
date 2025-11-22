@@ -581,7 +581,7 @@ impl KnownKbds {
 pub(crate) struct KbdRc<D: SeatHandler> {
     pub(crate) internal: Mutex<KbdInternal<D>>,
     #[cfg(feature = "wayland_frontend")]
-    pub(crate) keymap: Mutex<KeymapFile>,
+    pub(crate) keymap: Arc<Mutex<KeymapFile>>,
     #[cfg(feature = "wayland_frontend")]
     pub(crate) known_kbds: KnownKbds,
     #[cfg(feature = "wayland_frontend")]
@@ -917,7 +917,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         Ok(Self {
             arc: Arc::new(KbdRc {
                 #[cfg(feature = "wayland_frontend")]
-                keymap: Mutex::new(keymap_file),
+                keymap: Arc::new(Mutex::new(keymap_file)),
                 internal: Mutex::new(internal),
                 #[cfg(feature = "wayland_frontend")]
                 known_kbds: KnownKbds {
@@ -961,7 +961,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         mods: ModifiersState,
     ) -> bool {
         let seat = self.get_seat(data);
-        let mut target = focus.as_ref().map(|focus: &&mut <D as SeatHandler>::KeyboardFocus| KeyboardTargetWithData {
+        let target = focus.as_ref().map(|focus: &&mut <D as SeatHandler>::KeyboardFocus| KeyboardTargetWithData {
             target: *focus,
             data: Rc::new(RefCell::new(data)),
         });
@@ -1638,7 +1638,6 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         serial: Serial,
         time: u32,
     ) {
-        // TODO: put interception here. FIXME: what to call to replay the event?
         dbg!(key_state);
         let focus = match focus.as_ref() {
             Some(focus) => *focus,
