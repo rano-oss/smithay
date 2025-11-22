@@ -258,7 +258,7 @@ impl fmt::Debug for Xkb {
 unsafe impl Send for Xkb {}
 
 struct XkbRelatedState<'a> {
-    pub(crate) mods_state: &'a ModifiersState,
+    pub(crate) mods_state: ModifiersState,
     xkb: &'a Arc<Mutex<Xkb>>,
     pub(crate) led_state: &'a LedState,
 }
@@ -959,7 +959,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         });
         self.send_keymap_decoupled(
             &seat,
-            &target.as_mut(),
+            &target.as_ref(),
             keymap_file,
             mods,
         )
@@ -969,7 +969,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     pub(crate) fn send_keymap_decoupled(
         &self,
         seat: &Seat<D>,
-        focus: &Option<&mut impl KeyboardTargetSimple<D>>,
+        focus: &Option<&impl KeyboardTargetSimple<D>>,
         keymap_file: &KeymapFile,
         mods: ModifiersState,
     ) -> bool {
@@ -1607,23 +1607,27 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         serial: Serial,
         time: u32,
     ) {
+        let focus = self.inner.focus.as_ref()
+            .map(|(f, _)| KeyboardTargetWithData {
+                target: f,
+                data: Rc::new(RefCell::new(data)),
+            });
         Self::input_generic(
             XkbRelatedState {
-                mods_state: &self.inner.mods_state,
+                mods_state: self.inner.mods_state,
                 xkb: &self.inner.xkb,
                 led_state: &self.inner.led_state,
             },
-            self.inner.focus.as_mut(),
+            focus.as_ref(),
             self.seat,
-            data, keycode, key_state, modifiers, serial, time)
+            keycode, key_state, modifiers, serial, time)
     }
     
     pub(crate) fn input_generic(
         //inner: &mut KbdInternal<D>,
-        inner: XkbRelatedState<'a>,
-        focus: Option<impl &KeyboardTargetSimple<D>>,
+        inner: XkbRelatedState<'_>,
+        focus: Option<&impl KeyboardTargetSimple<D>>,
         seat: &Seat<D>,
-        data: &mut D,
         keycode: Keycode,
         key_state: KeyEvent,
         modifiers: Option<ModifiersState>,
@@ -1632,8 +1636,8 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
     ) {
         // TODO: put interception here. FIXME: what to call to replay the event?
         dbg!(key_state);
-        let (focus, _) = match inner.focus.as_mut() {
-            Some(focus) => focus,
+        let focus = match focus.as_ref() {
+            Some(focus) => *focus,
             None => return,
         };
 
@@ -1642,7 +1646,7 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         if let Some(keyboard_handle) = seat.get_keyboard() {
             let keymap_file = keyboard_handle.arc.keymap.lock().unwrap();
             let mods = inner.mods_state;
-            keyboard_handle.send_keymap(data, &Some(focus), &keymap_file, mods);
+            keyboard_handle.send_keymap_decoupled(seat, &Some(focus), &keymap_file, mods);
         }
 
         // key event must be sent before modifiers event for libxkbcommon
@@ -1652,9 +1656,9 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
             keycode,
         };
 
-        focus.key(seat, data, key, key_state, serial, time);
+        focus.key(seat, key, key_state, serial, time);
         if let Some(mods) = modifiers {
-            focus.modifiers(seat, data, mods, serial);
+            focus.modifiers(seat, mods, serial);
         }
     }
 
