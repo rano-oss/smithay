@@ -257,7 +257,7 @@ impl fmt::Debug for Xkb {
 // same thread
 unsafe impl Send for Xkb {}
 
-struct XkbRelatedState<'a> {
+pub(crate) struct XkbRelatedState<'a> {
     pub(crate) mods_state: ModifiersState,
     xkb: &'a Arc<Mutex<Xkb>>,
     pub(crate) led_state: &'a LedState,
@@ -342,6 +342,14 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
             grab: GrabStatus::None,
             key_repeat_timer: Arc::new(Mutex::new(None)),
         })
+    }
+
+    pub(crate) fn xkb_related_state<'a>(&'a self) -> XkbRelatedState<'a> {
+        XkbRelatedState {
+            mods_state: self.mods_state,
+            xkb: &self.xkb,
+            led_state: &self.led_state,
+        }
     }
 
     // returns whether the modifiers or led state has changed
@@ -1613,16 +1621,12 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
                 data: Rc::new(RefCell::new(data)),
             });
         Self::input_generic(
-            XkbRelatedState {
-                mods_state: self.inner.mods_state,
-                xkb: &self.inner.xkb,
-                led_state: &self.inner.led_state,
-            },
+            self.inner.xkb_related_state(),
             focus.as_ref(),
             self.seat,
             keycode, key_state, modifiers, serial, time)
     }
-    
+
     pub(crate) fn input_generic(
         //inner: &mut KbdInternal<D>,
         inner: XkbRelatedState<'_>,
