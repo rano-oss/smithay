@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use wayland_server::protocol::wl_surface::WlSurface;
+use wayland_server::protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface};
 use xkbcommon::xkb::Keycode;
 
 use crate::{backend::input::KeyEvent, input::{keyboard::{GrabStartData, KbdInternal, KeyboardGrab, KeyboardInnerHandle, KeyboardTarget, KeyboardTargetSimple, KeymapFile, ModifiersState, XkbConfig}, Seat, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::seat::WaylandFocus};
@@ -19,25 +19,6 @@ fn kbi<D: SeatHandler + 'static>(
     internal
 }
 
-#[derive(Clone)]
-struct SurfaceTarget(WlSurface);
-
-impl<D: SeatHandler> KeyboardTargetSimple<D> for SurfaceTarget {
-    fn key(
-        &self,
-        seat: &Seat<D>,
-        key: crate::input::keyboard::KeysymHandle<'_>,
-        state: KeyEvent,
-        serial: Serial,
-        time: u32,
-    ) {
-        unimplemented!()
-    }
-    fn modifiers(&self, seat: &Seat<D>, modifiers: ModifiersState, serial: Serial) {
-        unimplemented!()
-    }
-}
-
 /// Keyboard filtering grab
 //#[derive(Clone)]
 pub struct KeyboardFilterGrab {
@@ -45,7 +26,7 @@ pub struct KeyboardFilterGrab {
     /// Shared with the actual keyboard.
     /// This is racy: updates get applied immediately even when events get delayed.
     keymap: Arc<Mutex<KeymapFile>>,
-    target_surface: SurfaceTarget,
+    target_surface: WlSurface,
 }
 
 struct GrabInner {
@@ -56,46 +37,9 @@ impl KeyboardFilterGrab {
     pub fn new(target_surface: WlSurface, keymap: Arc<Mutex<KeymapFile>>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(GrabInner { queue: () })),
-            target_surface: SurfaceTarget(target_surface),
+            target_surface,
             keymap,
         }
-    }
-    /// Send the input to the focused keyboards
-    pub fn input_dupe<D: SeatHandler + 'static>(
-        inner: &mut KbdInternal<D>,
-        seat: &Seat<D>,
-        data: &mut D,
-        keycode: Keycode,
-        key_state: KeyEvent,
-        modifiers: Option<ModifiersState>,
-        serial: Serial,
-        time: u32,
-    ) {
-        dbg!(key_state);
-        let (focus, _) = match inner.focus.as_mut() {
-            Some(focus) => focus,
-            None => return,
-        };
-
-        // Ensure keymap is up to date.
-        #[cfg(feature = "wayland_frontend")]
-        if let Some(keyboard_handle) = seat.get_keyboard() {
-            let keymap_file = keyboard_handle.arc.keymap.lock().unwrap();
-            let mods = inner.mods_state;
-            keyboard_handle.send_keymap(data, &Some(focus), &keymap_file, mods);
-        }
-/*
-        // key event must be sent before modifiers event for libxkbcommon
-        // to process them correctly
-        let key = KeysymHandle {
-            xkb: &inner.xkb,
-            keycode,
-        };
-
-        focus.key(seat, data, key, key_state, serial, time);
-        if let Some(mods) = modifiers {
-            focus.modifiers(seat, data, mods, serial);
-        }*/
     }
 }
 

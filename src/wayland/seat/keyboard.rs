@@ -14,7 +14,7 @@ use super::WaylandFocus;
 use crate::{
     backend::input::{KeyEvent, Keycode},
     input::{
-        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
+        keyboard::{KeyboardHandle, KeyboardTarget, KeyboardTargetSimple, KeysymHandle, ModifiersState, WlKeyboardApi},
         Seat, SeatHandler, SeatState,
     },
     utils::{iter::new_locked_obj_iter_from_vec, Serial},
@@ -261,6 +261,41 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
             );
         })
     }
+}
+
+impl<D: SeatHandler + 'static> KeyboardTargetSimple<D> for WlSurface {
+    fn key(
+        &self,
+        seat: &Seat<D>,
+        key: KeysymHandle<'_>,
+        event: KeyEvent,
+        serial: Serial,
+        time: u32,
+    ) {
+        for_each_focused_kbds(seat, self, |kbd| {
+            let compatible = match (event, kbd.version() < 10) {
+                (KeyEvent::Repeated, true) => false,
+                _ => true,
+            };
+            if compatible {
+                kbd.key(serial.into(), time, key.raw_code().raw() - 8, event.into())
+            }
+        })
+    }
+
+    fn modifiers(&self, seat: &Seat<D>, modifiers: ModifiersState, serial: Serial) {
+        for_each_focused_kbds(seat, self, |kbd| {
+            let modifiers = modifiers.serialized;
+            kbd.modifiers(
+                serial.into(),
+                modifiers.depressed,
+                modifiers.latched,
+                modifiers.locked,
+                modifiers.layout_effective,
+            );
+        })
+    }
+
 }
 
 impl From<KeyEvent> for WlKeyState {
