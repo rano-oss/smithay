@@ -12,7 +12,7 @@ use wayland_client::WEnum;
 use wayland_server::{backend::GlobalId, protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface}, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource};
 use wl_input_method::{input_method::v1::server::xx_input_method_v1::XxInputMethodV1, keyboard_filter::v1::server::{xx_keyboard_filter_manager_v1::{self, XxKeyboardFilterManagerV1}, xx_keyboard_filter_v1::{self, FilterAction, XxKeyboardFilterV1}}};
 
-use crate::{input::{keyboard::KeyboardHandle, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::input_method_v3::InputMethodUserData};
+use crate::{input::{keyboard::KeyboardHandle, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::{input_method_v3::InputMethodUserData, seat::WaylandFocus}};
 
 mod fake_seat;
 mod grab;
@@ -105,6 +105,7 @@ where
     D: Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
     D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>>,
     D: SeatHandler,
+    <D as SeatHandler>::KeyboardFocus: WaylandFocus,
     D: 'static,
 {
     fn request(
@@ -118,6 +119,7 @@ where
     ) {
         match request {
             xx_keyboard_filter_manager_v1::Request::BindToInputMethod { keyboard, input_method, surface, extensions } => {
+                dbg!("Binding stub");
                 {
                     let bind = data.inner.lock().unwrap();
                     if bind.bound_keyboards.contains(&keyboard) {
@@ -142,7 +144,7 @@ where
                 
                 keyboard_handle.set_grab(
                     state,
-                    grab::KeyboardFilterGrab::new(surface.clone(), keymap_file),
+                    grab::KeyboardFilterGrab::new(keyboard.clone(), surface.clone(), keymap_file),
                     // WARNING: no idea what the serial is for
                     SERIAL_COUNTER.next_serial(),
                 );

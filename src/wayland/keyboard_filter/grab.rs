@@ -20,9 +20,9 @@ fn kbi<D: SeatHandler + 'static>(
 }
 
 /// Keyboard filtering grab
-//#[derive(Clone)]
 pub struct KeyboardFilterGrab {
     inner: Arc<Mutex<GrabInner>>,
+    keyboard: WlKeyboard,
     /// Shared with the actual keyboard.
     /// This is racy: updates get applied immediately even when events get delayed.
     keymap: Arc<Mutex<KeymapFile>>,
@@ -34,8 +34,9 @@ struct GrabInner {
 }
 
 impl KeyboardFilterGrab {
-    pub fn new(target_surface: WlSurface, keymap: Arc<Mutex<KeymapFile>>) -> Self {
+    pub fn new(keyboard: WlKeyboard, target_surface: WlSurface, keymap: Arc<Mutex<KeymapFile>>) -> Self {
         Self {
+            keyboard,
             inner: Arc::new(Mutex::new(GrabInner { queue: () })),
             target_surface,
             keymap,
@@ -46,6 +47,7 @@ impl KeyboardFilterGrab {
 impl<D> KeyboardGrab<D> for KeyboardFilterGrab
 where
     D: SeatHandler + 'static,
+    <D as SeatHandler>::KeyboardFocus: WaylandFocus,
 {
     fn input(
         &mut self,
@@ -65,15 +67,13 @@ where
             XkbConfig::default(),
             repeat_delay,
             repeat_rate,
+            self.keymap.clone(),
         );
-        let mut kb = fake_seat.get_keyboard().unwrap();
+        let kb = fake_seat.get_keyboard().unwrap();
         // Keyboard does NOT need focus because it's passed explicitly.
         // It *can't* carry the correct (redirected) focus anyway because focus is of a generic type defined by the compositor.
         // Alternatively, we could modify KeyboardTarget to have a From<WlSurface>...
-        
-        // Keyboard must have a correct keymap file
-        Arc::get_mut(&mut kb.arc).unwrap().keymap = self.keymap.clone();
-        let kb = kb;
+        kb.register_kbd(&self.keyboard, Some(&self.target_surface));
         
         let inner = kb.arc.internal.lock().unwrap();
         let inner = inner.xkb_related_state();

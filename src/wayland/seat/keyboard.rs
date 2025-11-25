@@ -55,7 +55,6 @@ where
     #[instrument(parent = &self.arc.span, skip(self))]
     pub(crate) fn new_kbd(&self, kbd: WlKeyboard) {
         self.register_kbd(&kbd, None);
-        self.arc.known_kbds.keyboards.lock().unwrap().push(kbd.downgrade());
     }
     pub(crate) fn register_kbd(&self, kbd: &WlKeyboard, intercept_to: Option<&WlSurface>) {
         trace!("Sending keymap to client");
@@ -103,6 +102,7 @@ where
                 );
             }
         }
+        self.arc.known_kbds.keyboards.lock().unwrap().push(kbd.downgrade());
     }
 }
 

@@ -39,7 +39,7 @@ pub use xkb_config::XkbConfig;
 
 
 /// Trait representing object that can receive keyboard interactions
-pub trait KeyboardTargetSimple<D>
+pub trait KeyboardTargetSimple<D> : std::fmt::Debug
 where
     D: SeatHandler,
 {
@@ -62,6 +62,15 @@ where
 {
     target: &'a <D as SeatHandler>::KeyboardFocus,
     data: Rc<RefCell<&'a mut D>>,
+}
+
+impl<'a, D> std::fmt::Debug for KeyboardTargetWithData<'a, D>
+where
+    D: SeatHandler,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ok(())
+}
 }
 
 impl<'a, D> KeyboardTargetSimple<D> for KeyboardTargetWithData<'a, D>
@@ -570,6 +579,7 @@ impl KnownKbds {
         surface: &wl_surface::WlSurface,
         mut f: impl FnMut(&dyn WlKeyboardApi),
     ) {
+        dbg!(keyboards);
         keyboards
             .iter()
             .filter_map(|k| k.upgrade().ok())
