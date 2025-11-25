@@ -13,29 +13,18 @@ use smithay::{
         renderer::element::{
             default_primary_scanout_output_compare, utils::select_dmabuf_feedback, RenderElementStates,
         },
-    },
-    delegate_compositor, delegate_data_control, delegate_data_device, delegate_fractional_scale,
-    delegate_input_method_manager, delegate_input_method_manager_v3, delegate_keyboard_shortcuts_inhibit,
-    delegate_layer_shell, delegate_output, delegate_pointer_constraints, delegate_pointer_gestures,
-    delegate_presentation, delegate_primary_selection, delegate_relative_pointer, delegate_seat,
-    delegate_security_context, delegate_shm, delegate_tablet_manager, delegate_text_input_manager,
-    delegate_viewporter, delegate_virtual_keyboard_manager, delegate_xdg_activation, delegate_xdg_decoration,
-    delegate_xdg_shell,
-    desktop::{
+    }, delegate_compositor, delegate_data_control, delegate_data_device, delegate_fractional_scale, delegate_input_method_manager, delegate_input_method_manager_v3, delegate_keyboard_filter_manager_v1, delegate_keyboard_shortcuts_inhibit, delegate_layer_shell, delegate_output, delegate_pointer_constraints, delegate_pointer_gestures, delegate_presentation, delegate_primary_selection, delegate_relative_pointer, delegate_seat, delegate_security_context, delegate_shm, delegate_tablet_manager, delegate_text_input_manager, delegate_viewporter, delegate_virtual_keyboard_manager, delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell, desktop::{
         space::SpaceElement,
         utils::{
             surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
             update_surface_primary_scanout_output, with_surfaces_surface_tree, OutputPresentationFeedback,
         },
         PopupKind, PopupManager, Space,
-    },
-    input::{
+    }, input::{
         keyboard::{Keysym, LedState, XkbConfig},
         pointer::{CursorImageStatus, CursorImageSurfaceData, PointerHandle},
         Seat, SeatHandler, SeatState,
-    },
-    output::Output,
-    reexports::{
+    }, output::Output, reexports::{
         calloop::{generic::Generic, Interest, LoopHandle, Mode, PostAction},
         wayland_protocols::xdg::decoration::{
             self as xdg_decoration, zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
@@ -45,32 +34,15 @@ use smithay::{
             protocol::{wl_data_source::WlDataSource, wl_surface::WlSurface},
             Client, Display, DisplayHandle, Resource,
         },
-    },
-    utils::{Clock, Logical, Monotonic, Point, Rectangle, Time},
-    wayland::{
-        commit_timing::{CommitTimerBarrierStateUserData, CommitTimingManagerState},
-        compositor::{get_parent, with_states, CompositorClientState, CompositorHandler, CompositorState},
-        dmabuf::DmabufFeedback,
-        fifo::{FifoBarrierCachedState, FifoManagerState},
-        fractional_scale::{with_fractional_scale, FractionalScaleHandler, FractionalScaleManagerState},
-        input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface},
-        input_method_v3::{
+    }, utils::{Clock, Logical, Monotonic, Point, Rectangle, Time}, wayland::{
+        commit_timing::{CommitTimerBarrierStateUserData, CommitTimingManagerState}, compositor::{get_parent, with_states, CompositorClientState, CompositorHandler, CompositorState}, dmabuf::DmabufFeedback, fifo::{FifoBarrierCachedState, FifoManagerState}, fractional_scale::{with_fractional_scale, FractionalScaleHandler, FractionalScaleManagerState}, input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface}, input_method_v3::{
             self, InputMethodHandler as InputMethodHandlerV3,
             InputMethodManagerState as InputMethodManagerStateV3, PopupSurface as PopupSurfaceV3,
-        },
-        keyboard_shortcuts_inhibit::{
+        }, keyboard_filter::KeyboardFilterManagerState, keyboard_shortcuts_inhibit::{
             KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
-        },
-        output::{OutputHandler, OutputManagerState},
-        pointer_constraints::{with_pointer_constraint, PointerConstraintsHandler, PointerConstraintsState},
-        pointer_gestures::PointerGesturesState,
-        presentation::PresentationState,
-        relative_pointer::RelativePointerManagerState,
-        seat::WaylandFocus,
-        security_context::{
+        }, output::{OutputHandler, OutputManagerState}, pointer_constraints::{with_pointer_constraint, PointerConstraintsHandler, PointerConstraintsState}, pointer_gestures::PointerGesturesState, presentation::PresentationState, relative_pointer::RelativePointerManagerState, seat::WaylandFocus, security_context::{
             SecurityContext, SecurityContextHandler, SecurityContextListenerSource, SecurityContextState,
-        },
-        selection::{
+        }, selection::{
             data_device::{
                 set_data_device_focus, ClientDndGrabHandler, DataDeviceHandler, DataDeviceState,
                 ServerDndGrabHandler,
@@ -78,26 +50,16 @@ use smithay::{
             primary_selection::{set_primary_focus, PrimarySelectionHandler, PrimarySelectionState},
             wlr_data_control::{DataControlHandler, DataControlState},
             SelectionHandler,
-        },
-        shell::{
+        }, shell::{
             wlr_layer::WlrLayerShellState,
             xdg::{
                 decoration::{XdgDecorationHandler, XdgDecorationState},
                 ToplevelSurface, XdgShellState,
             },
-        },
-        shm::{ShmHandler, ShmState},
-        single_pixel_buffer::SinglePixelBufferState,
-        socket::ListeningSocketSource,
-        tablet_manager::{TabletManagerState, TabletSeatHandler},
-        text_input::TextInputManagerState,
-        viewporter::ViewporterState,
-        virtual_keyboard::VirtualKeyboardManagerState,
-        xdg_activation::{
+        }, shm::{ShmHandler, ShmState}, single_pixel_buffer::SinglePixelBufferState, socket::ListeningSocketSource, tablet_manager::{TabletManagerState, TabletSeatHandler}, text_input::TextInputManagerState, viewporter::ViewporterState, virtual_keyboard::VirtualKeyboardManagerState, xdg_activation::{
             XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData,
-        },
-        xdg_foreign::{XdgForeignHandler, XdgForeignState},
-    },
+        }, xdg_foreign::{XdgForeignHandler, XdgForeignState}
+    }
 };
 
 #[cfg(feature = "xwayland")]
@@ -402,6 +364,8 @@ impl<BackendData: Backend> InputMethodHandlerV3 for AnvilState<BackendData> {
 
 delegate_input_method_manager_v3!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
+delegate_keyboard_filter_manager_v1!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
+
 impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for AnvilState<BackendData> {
     fn keyboard_shortcuts_inhibit_state(&mut self) -> &mut KeyboardShortcutsInhibitState {
         &mut self.keyboard_shortcuts_inhibit_state
@@ -705,6 +669,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
         InputMethodManagerStateV3::new::<Self, _>(&dh, |_client| true);
         VirtualKeyboardManagerState::new::<Self, _>(&dh, |_client| true);
+        KeyboardFilterManagerState::new::<Self, _>(&dh, |_client| true);
         // Expose global only if backend supports relative motion events
         if BackendData::HAS_RELATIVE_MOTION {
             RelativePointerManagerState::new::<Self>(&dh);

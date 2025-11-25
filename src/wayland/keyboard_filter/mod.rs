@@ -189,37 +189,13 @@ macro_rules! delegate_keyboard_filter_manager_v1 {
             $crate::wayland::keyboard_filter::KeyboardFilterManagerGlobalData
         ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols_experimental::keyboard_filter::v1::server::xx_keyboard_filter_manager_v1::XxKeyboardFilterManagerV1: KeyboardFilterManagerUserData
+            $crate::reexports::wayland_protocols_experimental::keyboard_filter::v1::server::xx_keyboard_filter_manager_v1::XxKeyboardFilterManagerV1: $crate::wayland::keyboard_filter::KeyboardFilterManagerUserData
         ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             $crate::reexports::wayland_protocols_experimental::keyboard_filter::v1::server::xx_keyboard_filter_v1::XxKeyboardFilterV1: $crate::wayland::keyboard_filter::KeyboardFilterUserData<Self>
         ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
     }
 }
-/*
-impl<D> Dispatch<XxKeyboardFilterManagerV1, InputMethodUserData<D>, D> for InputMethodManagerState
-where
-    D: Dispatch<XxInputMethodV1, InputMethodUserData<D>>,
-    //D: Dispatch<XxInputMethodKeyboardV1, KeyboardUserData<D>>,
-    D: Dispatch<XxInputPopupSurfaceV2, InputMethodPopupSurfaceUserData>,
-    D: SeatHandler,
-    D: InputMethodHandler,
-    <D as SeatHandler>::KeyboardFocus: WaylandFocus,
-    D: 'static,
-{
-    fn request(
-        state: &mut D,
-        _client: &Client,
-        im: &XxInputMethodV1,
-        request: xx_input_method_v1::Request,
-        data: &InputMethodUserData<D>,
-        _dh: &DisplayHandle,
-        data_init: &mut DataInit<'_, D>,
-    ) {
-            Request::KeyboardBind { keyboard, surface, extensions } => {
-                
-            },*/
-
 
 /// Carries data assigned in a ::bind request.
 #[derive(Debug, Clone)]

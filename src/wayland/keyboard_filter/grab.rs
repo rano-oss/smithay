@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use wayland_server::protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface};
 use xkbcommon::xkb::Keycode;
 
-use crate::{backend::input::KeyEvent, input::{keyboard::{GrabStartData, KbdInternal, KeyboardGrab, KeyboardInnerHandle, KeyboardTarget, KeyboardTargetSimple, KeymapFile, ModifiersState, XkbConfig}, Seat, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::seat::WaylandFocus};
+use crate::{backend::input::KeyEvent, input::{keyboard::{GrabStartData, KbdInternal, KeyboardGrab, KeyboardInnerHandle, KeymapFile, ModifiersState, XkbConfig}, SeatHandler}, utils::Serial, wayland::seat::WaylandFocus};
 
 
 fn kbi<D: SeatHandler + 'static>(
@@ -72,7 +72,6 @@ where
         // Alternatively, we could modify KeyboardTarget to have a From<WlSurface>...
         
         // Keyboard must have a correct keymap file
-        //FIXME
         Arc::get_mut(&mut kb.arc).unwrap().keymap = self.keymap.clone();
         let kb = kb;
         
