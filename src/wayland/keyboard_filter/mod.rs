@@ -119,7 +119,7 @@ where
     D: 'static,
 {
     fn request(
-        state: &mut D,
+        _state: &mut D,
         _client: &Client,
         resource: &XxKeyboardFilterManagerV1,
         request: xx_keyboard_filter_manager_v1::Request,
@@ -398,7 +398,7 @@ mod test {
     {
     }
 
-    fn assert_is_delegate()
+    fn assert_is_delegate<T>()
     where
         T: SeatHandler,
         T: wayland_server::Dispatch<protocol::xx_keyboard_filter_v1::XxKeyboardFilterV1, KeyboardFilterUserData>,
