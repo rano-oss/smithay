@@ -12,7 +12,7 @@ use wayland_client::WEnum;
 use wayland_server::{backend::GlobalId, protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface}, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, Weak};
 use wl_input_method::{input_method::v1::server::xx_input_method_v1::XxInputMethodV1, keyboard_filter::v1::server::{xx_keyboard_filter_manager_v1::{self, XxKeyboardFilterManagerV1}, xx_keyboard_filter_v1::{self, FilterAction, XxKeyboardFilterV1}}};
 
-use crate::{input::{keyboard::KeyboardHandle, Seat, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::{input_method_v3::InputMethodUserData, seat::WaylandFocus}};
+use crate::{input::{keyboard::KeyboardHandle, Seat, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::{input_method_v3::InputMethodUserData, seat::{KeyboardUserData, WaylandFocus}}};
 
 mod fake_seat;
 mod grab;
@@ -75,7 +75,6 @@ impl<D> GlobalDispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerGlobalDat
 where
     D: GlobalDispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData>,
     D: Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
-    //D: SeatHandler,
     D: 'static,
 {
     fn bind(
@@ -113,7 +112,7 @@ fn register_kbd<D>(
 impl<D> Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData, D> for KeyboardFilterManagerState
 where
     D: Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
-    D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData>,
+    D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>>,
     D: SeatHandler,
     <D as SeatHandler>::KeyboardFocus: WaylandFocus,
     D: 'static,
@@ -148,9 +147,14 @@ where
                     };
                 }
 
+                let imdata = input_method.data::<InputMethodUserData<D>>().unwrap();
+
+                let keyboard_data = keyboard.data::<KeyboardUserData<D>>().unwrap();
+                
                 let keyboard_filter = data_init.init::<XxKeyboardFilterV1, _>(
                     extensions,
                     KeyboardFilterUserData {
+                        keyboard_handle: keyboard_data.handle.as_ref().expect("Seat doesn't support keyboard").clone(),
                         manager_data: data.inner.clone(),
                         queue_slot: Default::default(),
                         bound_keyboard: keyboard.clone(),
@@ -158,7 +162,6 @@ where
                     },
                 );
                 
-                let imdata = input_method.data::<InputMethodUserData<D>>().unwrap();
                 {
                     let mut im_filter = imdata.keyboard_filter.lock().unwrap();
                     *im_filter = Some(Filter {
@@ -198,7 +201,7 @@ macro_rules! delegate_keyboard_filter_manager_v1 {
             $crate::reexports::wayland_protocols_experimental::keyboard_filter::v1::server::xx_keyboard_filter_manager_v1::XxKeyboardFilterManagerV1: $crate::wayland::keyboard_filter::KeyboardFilterManagerUserData
         ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols_experimental::keyboard_filter::v1::server::xx_keyboard_filter_v1::XxKeyboardFilterV1: $crate::wayland::keyboard_filter::KeyboardFilterUserData
+            $crate::reexports::wayland_protocols_experimental::keyboard_filter::v1::server::xx_keyboard_filter_v1::XxKeyboardFilterV1: $crate::wayland::keyboard_filter::KeyboardFilterUserData<Self>
         ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
     }
 }
@@ -248,7 +251,7 @@ impl<D> Filter<D>
                 SERIAL_COUNTER.next_serial(),
             );
         }
-        let filter_data = self.keyboard_filter.data::<KeyboardFilterUserData>().unwrap();
+        let filter_data = self.keyboard_filter.data::<KeyboardFilterUserData<D>>().unwrap();
         *filter_data.queue_slot.lock().unwrap() = Some(queue);
     }
 }
@@ -264,16 +267,18 @@ impl<D> Filter<D>
 
 /// Accessible through XxKeyboardFilterV1 instance.
 #[derive(Debug)]
-pub struct KeyboardFilterUserData {
+pub struct KeyboardFilterUserData<D: SeatHandler> {
+    /// Keyboard to which events after filtering get directed
+    keyboard_handle: KeyboardHandle<D>,
     queue_slot: Arc<Mutex<Option<DispatchQueue>>>,
     manager_data: Arc<Mutex<KeyboardFilterManagerUserDataInner>>,
     bound_keyboard: WlKeyboard,
     bound_input_method: XxInputMethodV1,
 }
 
-impl<D> Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData, D> for KeyboardFilterManagerState
+impl<D> Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>, D> for KeyboardFilterManagerState
 where
-    D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData>,
+    D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>>,
     D: SeatHandler,
     D: 'static,
 {
@@ -282,7 +287,7 @@ where
         _client: &Client,
         resource: &XxKeyboardFilterV1,
         request: <XxKeyboardFilterV1 as Resource>::Request,
-        data: &KeyboardFilterUserData,
+        data: &KeyboardFilterUserData<D>,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
@@ -361,6 +366,26 @@ where
             _ => {}
         }
     }
+    fn destroyed(
+        state: &mut D,
+        _client: wayland_backend::server::ClientId,
+        _resource: &XxKeyboardFilterV1,
+        data: &KeyboardFilterUserData<D>,
+    ) {
+        {
+            let queue = data.queue_slot.lock().unwrap();
+            if let Some(queue) = queue.as_ref() {
+                for e in queue.events().lock().unwrap().drain(..) {
+                    queue.apply(e)
+                }
+            }
+        }
+        // FIXME: this might unset another grab.
+        data.keyboard_handle.unset_grab(state);
+        let mut mgr = data.manager_data.lock().unwrap();
+        mgr.bound_keyboards.remove(&data.bound_keyboard);
+        mgr.bound_ims.remove(&data.bound_input_method);
+    }
 }
 
 #[cfg(test)]
@@ -401,7 +426,7 @@ mod test {
     fn assert_is_delegate<T>()
     where
         T: SeatHandler,
-        T: wayland_server::Dispatch<protocol::xx_keyboard_filter_v1::XxKeyboardFilterV1, KeyboardFilterUserData>,
+        T: wayland_server::Dispatch<protocol::xx_keyboard_filter_v1::XxKeyboardFilterV1, KeyboardFilterUserData<T>>,
     {
     }
 
