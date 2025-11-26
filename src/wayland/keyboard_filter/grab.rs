@@ -94,7 +94,5 @@ where
         &GrabStartData { focus: None }
     }
 
-    fn unset(&mut self, data: &mut D) {
-        unimplemented!()
-    }
+    fn unset(&mut self, _data: &mut D) {}
 }
