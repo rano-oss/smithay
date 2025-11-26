@@ -252,10 +252,11 @@ where
                         seat: seat.clone(),
                         handle: handle.clone(),
                         text_input_handle: text_input_handle.clone(),
+                        keyboard_handle: seat.get_keyboard().unwrap(),
+                        keyboard_filter: Default::default(),
                         dismiss_popup: D::dismiss_popup,
                         popup_geometry: D::popup_geometry,
                         popup_repositioned: D::popup_repositioned,
-                        keyboard_handle: seat.get_keyboard().unwrap(),
                     },
                 );
                 handle.add_instance::<D>(&instance);

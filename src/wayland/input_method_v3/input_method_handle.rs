@@ -28,11 +28,7 @@ pub(crate) struct InputMethod {
     pub serial: u32,
     pub active: bool,
     pub popup_handles: Vec<PopupSurface>,
-    /// Currently bound filter. This is this IM instance's "master copy" to be cloned into KeyFilter instances.
-    /// KeyFilter shall not outlive its input method, so that's fine.
-    // maybe TODO: Arc here and Weak in KeyFilter?
-    pub filter: Option<keyboard_filter::Filter>,
-    /// This can only contain a KeyFilter instance, but it's a clone to a generic handle 
+    /// TODO: unused, previous experiment
     pub keyboard_filter_handle: Arc<Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>>,
     /// Relative to surface on which input method is enabled
     pub cursor_rectangle: Rectangle<i32, Logical>,
@@ -45,7 +41,7 @@ impl fmt::Debug for InputMethod {
             .field("serial", &self.serial)
             .field("active", &self.active)
             .field("popup_handles", &self.popup_handles)
-            .field("keyboard_filter_handle", &"TODO")
+            .field("filter", &"TODO")
             .field("cursor_rectangle", &self.cursor_rectangle)
             .finish()
     }
@@ -84,7 +80,6 @@ impl InputMethodHandle {
                 active: false,
                 popup_handles: vec![],
                 cursor_rectangle: Rectangle::default(),
-                filter: None,
                 keyboard_filter_handle: data.keyboard_handle.arc.known_kbds.interceptor.clone(),
             });
         }
@@ -148,21 +143,20 @@ impl InputMethodHandle {
     }
 
     /// Activate input method on the given surface.
-    pub(crate) fn activate_input_method<D: SeatHandler + 'static>(&self, _: &mut D, surface: &WlSurface) {
+    pub(crate) fn activate_input_method<D: SeatHandler + 'static>(&self, state: &mut D, surface: &WlSurface) {
         self.with_instance(|im| {
             im.object.activate();
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
             let known_kbds = &data.keyboard_handle.arc.known_kbds;
-            if let Some(bound_keyboard) = im.filter.as_ref() {
-                let filter = keyboard_filter::DispatchQueue::create(
-                    bound_keyboard,
+            let filter = data.keyboard_filter.lock().unwrap();
+            if let Some(keyboard_filter) = filter.as_ref() {
+                keyboard_filter.activate_grab(
+                    state,
+                    &data.seat,
                     &known_kbds.keyboards,
                     surface,
                 );
-                let mut interceptor = known_kbds.interceptor.lock().unwrap();
-                //*interceptor = Some(Box::new(filter));
             }
-            im.keyboard_filter_handle = known_kbds.interceptor.clone();
             im.active = true;
         });
     }
@@ -198,6 +192,9 @@ pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) text_input_handle: TextInputHandle,
     /// Handle to main keyboard for registering sub-keyboards
     pub(crate) keyboard_handle: KeyboardHandle<D>,
+    /// Currently bound filter. This is this IM instance's "master copy" to be cloned into KeyFilter instances.
+    /// KeyFilter shall not outlive its input method, so that's fine.
+    pub(crate) keyboard_filter: Arc<Mutex<Option<keyboard_filter::Filter<D>>>>,
     /// This is just a copy from Input MethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup. That means other modules don't have to explicitly put D: InputMethodHandler when they call something that ends up calling this.
     /// (Not sure what the purpose of that is, but it seems consistent...)
     pub(crate) popup_geometry:

@@ -9,10 +9,10 @@ use std::{collections::HashSet, sync::{Arc, Mutex}};
 use tracing::{warn, error};
 
 use wayland_client::WEnum;
-use wayland_server::{backend::GlobalId, protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface}, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource};
+use wayland_server::{backend::GlobalId, protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface}, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, Weak};
 use wl_input_method::{input_method::v1::server::xx_input_method_v1::XxInputMethodV1, keyboard_filter::v1::server::{xx_keyboard_filter_manager_v1::{self, XxKeyboardFilterManagerV1}, xx_keyboard_filter_v1::{self, FilterAction, XxKeyboardFilterV1}}};
 
-use crate::{input::{keyboard::KeyboardHandle, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::{input_method_v3::InputMethodUserData, seat::WaylandFocus}};
+use crate::{input::{keyboard::KeyboardHandle, Seat, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::{input_method_v3::InputMethodUserData, seat::WaylandFocus}};
 
 mod fake_seat;
 mod grab;
@@ -52,7 +52,6 @@ impl KeyboardFilterManagerState {
     where
         D: GlobalDispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData>,
         D: Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
-        //D: Dispatch<XxInputMethodV1, InputMethodUserData<D>>,
         D: SeatHandler,
         D: 'static,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
@@ -100,10 +99,21 @@ where
     }
 }
 
+fn register_kbd<D>(
+    keyboard_handle: &KeyboardHandle<D>,
+    new_keyboard: &WlKeyboard,
+    surface_target: Option<&WlSurface>,
+)
+    where D: SeatHandler + 'static,
+    <D as SeatHandler>::KeyboardFocus: WaylandFocus,
+{
+    keyboard_handle.register_kbd(new_keyboard, surface_target)
+}
+
 impl<D> Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData, D> for KeyboardFilterManagerState
 where
     D: Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
-    D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>>,
+    D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData>,
     D: SeatHandler,
     <D as SeatHandler>::KeyboardFocus: WaylandFocus,
     D: 'static,
@@ -137,40 +147,34 @@ where
                         return;
                     };
                 }
-                let imdata = input_method.data::<InputMethodUserData<D>>().unwrap();
-                let seat = &imdata.seat;
-                let keyboard_handle = seat.get_keyboard().unwrap().clone();
-                let keymap_file = keyboard_handle.arc.keymap.clone();
-                
-                keyboard_handle.set_grab(
-                    state,
-                    grab::KeyboardFilterGrab::new(keyboard.clone(), surface.clone(), keymap_file),
-                    // WARNING: no idea what the serial is for
-                    SERIAL_COUNTER.next_serial(),
-                );
-                
-                let filter = data_init.init::<XxKeyboardFilterV1, _>(
+
+                let keyboard_filter = data_init.init::<XxKeyboardFilterV1, _>(
                     extensions,
                     KeyboardFilterUserData {
                         manager_data: data.inner.clone(),
-                      //  keyboard_handle: data.keyboard_handle.clone(),
-                        keyboard_handle: None,
+                        queue_slot: Default::default(),
                         bound_keyboard: keyboard.clone(),
                         bound_input_method: input_method.clone(),
                     },
                 );
+                
+                let imdata = input_method.data::<InputMethodUserData<D>>().unwrap();
+                {
+                    let mut im_filter = imdata.keyboard_filter.lock().unwrap();
+                    *im_filter = Some(Filter {
+                        intercept_keyboard: keyboard.clone(),
+                        intercept_surface: surface,
+                        keyboard_filter,
+                        register_kbd,
+                    });
+                }
+                
                 {
                     let mut bind = data.inner.lock().unwrap();
                     bind.bound_keyboards.insert(keyboard);
                     bind.bound_ims.insert(input_method);
                 }
                 
-/*                let mut input_method = input_method.data::<InputMethodUserData<D>>().unwrap();
-                    instance.bound_keyboard = Some(Filter {
-                        im_keyboard: keyboard,
-                        filter,
-                        im_surface: surface,
-                    });*/
                 // FIXME: if IM already active, register the filter as keyboard interceptor
             },
             xx_keyboard_filter_manager_v1::Request::Destroy => {
@@ -194,39 +198,82 @@ macro_rules! delegate_keyboard_filter_manager_v1 {
             $crate::reexports::wayland_protocols_experimental::keyboard_filter::v1::server::xx_keyboard_filter_manager_v1::XxKeyboardFilterManagerV1: $crate::wayland::keyboard_filter::KeyboardFilterManagerUserData
         ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols_experimental::keyboard_filter::v1::server::xx_keyboard_filter_v1::XxKeyboardFilterV1: $crate::wayland::keyboard_filter::KeyboardFilterUserData<Self>
+            $crate::reexports::wayland_protocols_experimental::keyboard_filter::v1::server::xx_keyboard_filter_v1::XxKeyboardFilterV1: $crate::wayland::keyboard_filter::KeyboardFilterUserData
         ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
     }
 }
 
-/// Carries data assigned in a ::bind request.
+/// Handle for the input method to use
 #[derive(Debug, Clone)]
-pub(crate) struct Filter {
+pub(crate) struct Filter<D>
+    where D: SeatHandler
+{
+    intercept_keyboard: WlKeyboard,
+    intercept_surface: WlSurface,
+    /// Needed to access queue slot. KeyboardGrab doesn't have access to this struct directly, and it shouldn't. This is exclusively to help input method register a new grab and is kept simple and Arc-free.
+    keyboard_filter: XxKeyboardFilterV1,
+    register_kbd: fn(
+        &KeyboardHandle<D>,
+        &WlKeyboard,
+        Option<&WlSurface>,
+    ),
+}
+
+impl<D> Filter<D>
+    where
+    D: SeatHandler + 'static,
+{
+    pub fn activate_grab(
+        &self,
+        state: &mut D,
+        seat: &Seat<D>,
+        keyboards: &Arc<Mutex<Vec<Weak<WlKeyboard>>>>,
+        surface: &WlSurface,
+    ) {
+        let queue = DispatchQueue::new(keyboards, surface);
+        {
+            let keyboard_handle = seat.get_keyboard().unwrap().clone();
+            let keymap_file = keyboard_handle.arc.keymap.clone();
+            
+            keyboard_handle.set_grab(
+                state,
+                grab::KeyboardFilterGrab::new(
+                    self.register_kbd,
+                    self.intercept_keyboard.clone(), 
+                    self.intercept_surface.clone(),
+                    keymap_file,
+                    queue.clone(),
+                ),
+                // WARNING: no idea what the serial is for
+                SERIAL_COUNTER.next_serial(),
+            );
+        }
+        let filter_data = self.keyboard_filter.data::<KeyboardFilterUserData>().unwrap();
+        *filter_data.queue_slot.lock().unwrap() = Some(queue);
+    }
+}
+
+/*
     /// Keyboard provided by the filter client to sniff on target surface's events.
     pub im_keyboard: WlKeyboard,
     /// Keyboard filter assigned to this keyboard instance
     pub filter: XxKeyboardFilterV1,
     /// Surface on the filterer side which should be target of enter and leave
     pub im_surface: WlSurface,
-}
+}*/
 
 /// Accessible through XxKeyboardFilterV1 instance.
 #[derive(Debug)]
-pub struct KeyboardFilterUserData<D: SeatHandler> {
-    //pub(crate) keyboard_handle: KeyboardHandle<D>,
-    pub(crate) keyboard_handle: Option<KeyboardHandle<D>>,
+pub struct KeyboardFilterUserData {
+    queue_slot: Arc<Mutex<Option<DispatchQueue>>>,
     manager_data: Arc<Mutex<KeyboardFilterManagerUserDataInner>>,
     bound_keyboard: WlKeyboard,
     bound_input_method: XxInputMethodV1,
 }
 
-fn get_filter<'a>() -> &'a queue::DispatchQueue {
-    panic!();
-}
-
-impl<D> Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>, D> for KeyboardFilterManagerState
+impl<D> Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData, D> for KeyboardFilterManagerState
 where
-    D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>>,
+    D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData>,
     D: SeatHandler,
     D: 'static,
 {
@@ -235,40 +282,32 @@ where
         _client: &Client,
         resource: &XxKeyboardFilterV1,
         request: <XxKeyboardFilterV1 as Resource>::Request,
-        data: &KeyboardFilterUserData<D>,
+        data: &KeyboardFilterUserData,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
-        /*
-        let known_kbds = &data.keyboard_handle.arc.known_kbds;
-        let filter = known_kbds.interceptor.lock().unwrap();
-        
-        let Some(filter) = filter.as_ref()
-        else {
-            error!("IM has a bound keyboard, but no interceptor is registered");
-            return;
-        };
-        let Some(filter) = (AsRef::<dyn WlKeyboardApi + Send + Sync>::as_ref(filter)
-            as &dyn WlKeyboardApi)
-            .downcast_ref::<KeyFilter>()
-        else { 
-            error!("The registered keyboard interceptor is not the IM one");
-            return;
-        };
-        */
-        let filter = get_filter();
-        
+        let queue = data.queue_slot.lock().unwrap();
         use xx_keyboard_filter_v1::Request;
         match request {
             Request::Unbind => {
-                for e in filter.events_to_filter.lock().unwrap().drain(..) {
-                    filter.apply(e)
+                if let Some(queue) = queue.as_ref() {
+                    for e in queue.events().lock().unwrap().drain(..) {
+                        queue.apply(e)
+                    }
                 }
                 let mut mgr = data.manager_data.lock().unwrap();
                 mgr.bound_keyboards.remove(&data.bound_keyboard);
                 mgr.bound_ims.remove(&data.bound_input_method);
             }
             Request::Filter { serial, action } => {
+                let Some(queue) = queue.as_ref() else {
+                    resource.post_error(
+                        xx_keyboard_filter_v1::Error::InvalidSerial,
+                        "No outstanding events to filter",
+                    );
+                    return;
+                };
+                
                 /// Wayland enums are not exhaustive, so they require matching on `_`. We filter out unsupported actions early, so with an exhaustive enum we can let Rust find missing patterns in `match`es later.
                 #[derive(Clone, Copy)]
                 enum Action {
@@ -289,7 +328,7 @@ where
                     },
                 };
             
-                let mut events = filter.events_to_filter.lock().unwrap();
+                let mut events = queue.events().lock().unwrap();
                 while let Some(e) = events.pop_back() {
                     let (action, stop) = if let Some(waiting_serial) = e.1.serial() {
                         if Serial(serial) > Serial(waiting_serial) {
@@ -303,7 +342,7 @@ where
                     };
                     if e.1.is_filterable() {
                         if let Action::Passthrough = action {
-                            filter.apply(e)
+                            queue.apply(e)
                         }
                     } else {
                         /*resource.post_error(
@@ -359,10 +398,10 @@ mod test {
     {
     }
 
-    fn assert_is_delegate<T>()
+    fn assert_is_delegate()
     where
         T: SeatHandler,
-        T: wayland_server::Dispatch<protocol::xx_keyboard_filter_v1::XxKeyboardFilterV1, KeyboardFilterUserData<T>>,
+        T: wayland_server::Dispatch<protocol::xx_keyboard_filter_v1::XxKeyboardFilterV1, KeyboardFilterUserData>,
     {
     }
 

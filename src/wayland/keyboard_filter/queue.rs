@@ -4,6 +4,7 @@ use wayland_server::protocol::{wl_keyboard, wl_surface::WlSurface};
 
 use crate::input::keyboard::KnownKbds;
 
+#[derive(Debug)]
 pub struct KeyboardEvent;
 
 impl KeyboardEvent {
@@ -28,29 +29,32 @@ pub(crate) enum EventState {
     Delaying,
 }
 
-/// Filters key events to arrive to text input
+/// Filters key events to arrive to text input.
+///
+/// Cloning creates another reference
+#[derive(Clone, Debug)]
 pub(crate) struct DispatchQueue {
-    pub filter: super::Filter,
+    //filter: super::Filter,
     /// Client keyboards to which events can be forwarded
-    pub client_keyboards: std::sync::Weak<Mutex<Vec<wayland_server::Weak<wl_keyboard::WlKeyboard>>>>,
+    client_keyboards: std::sync::Weak<Mutex<Vec<wayland_server::Weak<wl_keyboard::WlKeyboard>>>>,
     /// Events waiting for filter decision from the input method client.
     /// This queue begins with 0 to N of sent events and contains delayed ones after that.
-    pub events_to_filter: Arc<Mutex<VecDeque<(EventState, KeyboardEvent)>>>,
+    events_to_filter: Arc<Mutex<VecDeque<(EventState, KeyboardEvent)>>>,
     /// Surface to which events should be sent after filtering
-    pub focused_surface: WlSurface,
+    focused_surface: WlSurface,
 }
 
 impl DispatchQueue {
     /// Creates a new instance of key filter and initializes it.
-    pub(crate) fn create(
-        filter: &super::Filter,
+    pub(crate) fn new(
+        //filter: &super::Filter,
         client_keyboards: &Arc<Mutex<
             Vec<wayland_server::Weak<wl_keyboard::WlKeyboard>>
         >>,
         surface: &WlSurface,
     ) -> Self {
         Self {
-            filter: filter.clone(),
+            //filter: filter.clone(),
             client_keyboards: Arc::downgrade(client_keyboards),
             events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
             focused_surface: surface.clone(),
@@ -90,5 +94,9 @@ impl DispatchQueue {
             &self.focused_surface,
             |k| event.apply(k)
         );
+    }
+    
+    pub(crate) fn events(&self) -> &Arc<Mutex<VecDeque<(EventState, KeyboardEvent)>>> {
+        &self.events_to_filter
     }
 }
