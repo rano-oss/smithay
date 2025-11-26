@@ -1,30 +1,27 @@
-use std::{collections::VecDeque, sync::{Arc, Mutex}};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::{Arc, Mutex}};
 
 use wayland_server::protocol::{wl_keyboard, wl_surface::WlSurface};
+use xkbcommon::xkb::Keycode;
 
-use crate::input::keyboard::KnownKbds;
+use crate::{backend::input::KeyEvent, input::{keyboard::{KeyboardHandle, KeyboardInnerHandle, KeyboardTargetWithData, ModifiersState}, SeatHandler}, utils::Serial};
 
-#[derive(Debug)]
-pub struct KeyboardEvent;
-
-impl KeyboardEvent {
-    pub(crate) fn is_filterable(&self) -> bool {
-        panic!()
-    }
-    fn apply<T>(&self, t:T) {
-        panic!()
-    }
-    pub(crate) fn serial(&self) -> Option<u32> {
-        panic!();
-    }
+#[derive(Clone, Copy)]
+pub enum Action {
+    Passthrough,
+    Consume,
 }
 
+#[derive(Debug)]
+pub struct KeyboardEvent {
+    pub keycode: Keycode,
+    pub key_event: KeyEvent,
+    pub modifiers: Option<ModifiersState>,
+    pub serial: Serial,
+    pub time: u32,
+}
 
 #[derive(Debug)]
 pub(crate) enum EventState {
-    /// Event is already sent but confirmation has not arrived yet.
-    /// Only for events which must be passed through.
-    Sent,
     /// Delayed until confirmation arrives
     Delaying,
 }
@@ -36,63 +33,66 @@ pub(crate) enum EventState {
 pub(crate) struct DispatchQueue {
     //filter: super::Filter,
     /// Client keyboards to which events can be forwarded
-    client_keyboards: std::sync::Weak<Mutex<Vec<wayland_server::Weak<wl_keyboard::WlKeyboard>>>>,
+    //client_keyboards: std::sync::Weak<Mutex<Vec<wayland_server::Weak<wl_keyboard::WlKeyboard>>>>,
     /// Events waiting for filter decision from the input method client.
     /// This queue begins with 0 to N of sent events and contains delayed ones after that.
     events_to_filter: Arc<Mutex<VecDeque<(EventState, KeyboardEvent)>>>,
-    /// Surface to which events should be sent after filtering
-    focused_surface: WlSurface,
+    // Surface to which events should be sent after filtering
+    //focused_surface: WlSurface,
 }
 
 impl DispatchQueue {
     /// Creates a new instance of key filter and initializes it.
     pub(crate) fn new(
         //filter: &super::Filter,
-        client_keyboards: &Arc<Mutex<
+        /*client_keyboards: &Arc<Mutex<
             Vec<wayland_server::Weak<wl_keyboard::WlKeyboard>>
         >>,
-        surface: &WlSurface,
+        surface: &WlSurface,*/
     ) -> Self {
         Self {
             //filter: filter.clone(),
-            client_keyboards: Arc::downgrade(client_keyboards),
+            //client_keyboards: Arc::downgrade(client_keyboards),
             events_to_filter: Arc::new(Mutex::new(VecDeque::new())),
-            focused_surface: surface.clone(),
+            //focused_surface: surface.clone(),
         }
     }
     
-    fn push_event(&self, event: KeyboardEvent) {
+    pub(crate) fn push_event(&self, event: KeyboardEvent) {
         // TODO: unnecessary (?) Sync requirement causes the need to lock
         let mut events = self.events_to_filter.lock().unwrap();
-        let queue_empty = events.iter().position(|e| match e {
-            (EventState::Delaying, _) => true,
-            _ => false,
-        }).is_some();
-
-        let state = if queue_empty && !event.is_filterable() {
-            // There are no outstanding delayed events to block incoming events, so if this one doesn't need to wait for a filter decision, send it immediately.
-            self.forward(&event);
-            EventState::Sent
-        } else {
-            EventState::Delaying
-        };
-        events.push_front((state, event));
+        events.push_front((EventState::Delaying, event));
     }
 
     /// Applies event to the text input application, if event was not already applied.
-    pub(crate) fn apply(&self, (state, event): (EventState, KeyboardEvent)) {
-        match state {
-            EventState::Sent => {},
-            EventState::Delaying => self.forward(&event),
-        }
-    }
-    
-    fn forward(&self, event: &KeyboardEvent) {
-        let keyboards = self.client_keyboards.upgrade().unwrap();
-        KnownKbds::for_each_focused_kbd(
-            &*keyboards.lock().unwrap(),
-            &self.focused_surface,
-            |k| event.apply(k)
+    pub(crate) fn apply<D: SeatHandler + 'static>(
+        &self,
+        (_, event): (EventState, KeyboardEvent),
+        action: Action,
+        keyboard: &KeyboardHandle<D>,
+        data: &mut D,
+    ) {
+        let seat = &keyboard.get_seat(data);
+        let focus = keyboard.current_focus();
+        let focus = focus.as_ref()
+            .map(|f| KeyboardTargetWithData {
+                target: f,
+                data: Rc::new(RefCell::new(data)),
+            });
+        let inner = keyboard.arc.internal.lock().unwrap();
+        KeyboardInnerHandle::<D>::input_generic(
+            inner.xkb_related_state(),
+            focus.as_ref(),
+            seat,
+            event.keycode,
+            event.key_event,
+            event.modifiers,
+            event.serial,
+            event.time,
+            match action {
+                Action::Passthrough => true,
+                Action::Consume => false,
+            },
         );
     }
     

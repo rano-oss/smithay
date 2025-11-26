@@ -12,7 +12,7 @@ use wayland_client::WEnum;
 use wayland_server::{backend::GlobalId, protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface}, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, Weak};
 use wl_input_method::{input_method::v1::server::xx_input_method_v1::XxInputMethodV1, keyboard_filter::v1::server::{xx_keyboard_filter_manager_v1::{self, XxKeyboardFilterManagerV1}, xx_keyboard_filter_v1::{self, FilterAction, XxKeyboardFilterV1}}};
 
-use crate::{input::{keyboard::KeyboardHandle, Seat, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::{input_method_v3::InputMethodUserData, seat::{KeyboardUserData, WaylandFocus}}};
+use crate::{input::{keyboard::KeyboardHandle, Seat, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::{input_method_v3::InputMethodUserData, keyboard_filter::queue::Action, seat::{KeyboardUserData, WaylandFocus}}};
 
 mod fake_seat;
 mod grab;
@@ -230,10 +230,10 @@ impl<D> Filter<D>
         &self,
         state: &mut D,
         seat: &Seat<D>,
-        keyboards: &Arc<Mutex<Vec<Weak<WlKeyboard>>>>,
-        surface: &WlSurface,
+        //keyboards: &Arc<Mutex<Vec<Weak<WlKeyboard>>>>,
+        //surface: &WlSurface,
     ) {
-        let queue = DispatchQueue::new(keyboards, surface);
+        let queue = DispatchQueue::new();//keyboards, surface);
         {
             let keyboard_handle = seat.get_keyboard().unwrap().clone();
             let keymap_file = keyboard_handle.arc.keymap.clone();
@@ -283,7 +283,7 @@ where
     D: 'static,
 {
     fn request(
-        _state: &mut D,
+        state: &mut D,
         _client: &Client,
         resource: &XxKeyboardFilterV1,
         request: <XxKeyboardFilterV1 as Resource>::Request,
@@ -297,7 +297,12 @@ where
             Request::Unbind => {
                 if let Some(queue) = queue.as_ref() {
                     for e in queue.events().lock().unwrap().drain(..) {
-                        queue.apply(e)
+                        queue.apply(
+                            e,
+                            Action::Passthrough,
+                            &data.keyboard_handle,
+                            state,
+                        );
                     }
                 }
                 let mut mgr = data.manager_data.lock().unwrap();
@@ -312,13 +317,6 @@ where
                     );
                     return;
                 };
-                
-                /// Wayland enums are not exhaustive, so they require matching on `_`. We filter out unsupported actions early, so with an exhaustive enum we can let Rust find missing patterns in `match`es later.
-                #[derive(Clone, Copy)]
-                enum Action {
-                    Passthrough,
-                    Consume,
-                }
 
                 let action = match action {
                     WEnum::Value(FilterAction::Passthrough) => Action::Passthrough,
@@ -335,28 +333,15 @@ where
             
                 let mut events = queue.events().lock().unwrap();
                 while let Some(e) = events.pop_back() {
-                    let (action, stop) = if let Some(waiting_serial) = e.1.serial() {
-                        if Serial(serial) > Serial(waiting_serial) {
+                    let (action, stop) = {
+                        if Serial(serial) > e.1.serial {
                             resource.post_error(xx_keyboard_filter_v1::Error::InvalidSerial, "Filter serial newer than awaited");
                             return;
                         };
                         (action, true)
-                    } else {
-                        // Events without a serial will not get a confirmation. Just pass them through and go to next event.
-                        (Action::Passthrough, false)
                     };
-                    if e.1.is_filterable() {
-                        if let Action::Passthrough = action {
-                            queue.apply(e)
-                        }
-                    } else {
-                        /*resource.post_error(
-                            xx_keyboard_filter_v1::Error::InvalidFilterAction,
-                            format!("Only key events may be filtered, but tried {}", e.1.describe())
-                        );*/
-                        error!("FIXME: Wrong event to filter");
-                        return;
-                    }
+                    //if e.1.is_filterable() {
+                        queue.apply(e, action, &data.keyboard_handle, state);
                     if stop {
                         return;
                     }
@@ -376,7 +361,7 @@ where
             let queue = data.queue_slot.lock().unwrap();
             if let Some(queue) = queue.as_ref() {
                 for e in queue.events().lock().unwrap().drain(..) {
-                    queue.apply(e)
+                    queue.apply(e, Action::Passthrough, &data.keyboard_handle, state)
                 }
             }
         }

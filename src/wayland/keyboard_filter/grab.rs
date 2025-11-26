@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use wayland_server::protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface};
 use xkbcommon::xkb::Keycode;
 
-use crate::{backend::input::KeyEvent, input::{keyboard::{GrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle, KeymapFile, ModifiersState, XkbConfig}, SeatHandler}, utils::Serial, wayland::keyboard_filter::DispatchQueue};
+use crate::{backend::input::KeyEvent, input::{keyboard::{GrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle, KeymapFile, ModifiersState, XkbConfig}, SeatHandler}, utils::Serial, wayland::keyboard_filter::{queue::KeyboardEvent, DispatchQueue}};
 
 
 /// Keyboard filtering grab
@@ -55,7 +55,10 @@ where
         
         let (repeat_delay, repeat_rate) = handle.repeat_info();
         let q = &self.inner;
-
+        q.push_event(KeyboardEvent {
+            keycode, key_event, modifiers, serial, time,
+        });
+        // The keyboard is recreated every time to keep code simple, even if it prints on the console and calls xkb code. Recreating means the demo doesn't have to worry about stale values.
         let fake_seat = super::fake_seat::fake_seat(
             XkbConfig::default(),
             repeat_delay,
@@ -76,6 +79,7 @@ where
             Some(&self.target_surface),
             &fake_seat,
             keycode, key_event, modifiers, serial, time,
+            true,
         )
     }
 

@@ -147,14 +147,14 @@ impl InputMethodHandle {
         self.with_instance(|im| {
             im.object.activate();
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
-            let known_kbds = &data.keyboard_handle.arc.known_kbds;
+            //let known_kbds = &data.keyboard_handle.arc.known_kbds;
             let filter = data.keyboard_filter.lock().unwrap();
             if let Some(keyboard_filter) = filter.as_ref() {
                 keyboard_filter.activate_grab(
                     state,
                     &data.seat,
-                    &known_kbds.keyboards,
-                    surface,
+//                    &known_kbds.keyboards,
+//                    surface,
                 );
             }
             im.active = true;

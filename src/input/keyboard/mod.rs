@@ -56,12 +56,12 @@ where
     fn modifiers(&self, seat: &Seat<D>, modifiers: ModifiersState, serial: Serial);
 }
 
-struct KeyboardTargetWithData<'a, D>
+pub(crate) struct KeyboardTargetWithData<'a, D>
 where
     D: SeatHandler,
 {
-    target: &'a <D as SeatHandler>::KeyboardFocus,
-    data: Rc<RefCell<&'a mut D>>,
+    pub target: &'a <D as SeatHandler>::KeyboardFocus,
+    pub data: Rc<RefCell<&'a mut D>>,
 }
 
 impl<'a, D> std::fmt::Debug for KeyboardTargetWithData<'a, D>
@@ -1515,7 +1515,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         *self.arc.last_enter.lock().unwrap()
     }
 
-    fn get_seat(&self, data: &mut D) -> Seat<D> {
+    pub(crate) fn get_seat(&self, data: &mut D) -> Seat<D> {
         let seat_state = data.seat_state();
         seat_state
             .seats
@@ -1634,11 +1634,12 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
             self.inner.xkb_related_state(),
             focus.as_ref(),
             self.seat,
-            keycode, key_state, modifiers, serial, time)
+            keycode, key_state, modifiers, serial, time,
+            true,
+        )
     }
 
     pub(crate) fn input_generic(
-        //inner: &mut KbdInternal<D>,
         inner: XkbRelatedState<'_>,
         focus: Option<&impl KeyboardTargetSimple<D>>,
         seat: &Seat<D>,
@@ -1647,6 +1648,7 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         modifiers: Option<ModifiersState>,
         serial: Serial,
         time: u32,
+        send_key: bool,
     ) {
         dbg!(key_state);
         let focus = match focus.as_ref() {
@@ -1662,14 +1664,16 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
             keyboard_handle.send_keymap_decoupled(seat, &Some(focus), &keymap_file, mods);
         }
 
-        // key event must be sent before modifiers event for libxkbcommon
-        // to process them correctly
-        let key = KeysymHandle {
-            xkb: &inner.xkb,
-            keycode,
-        };
+        if send_key {
+            // key event must be sent before modifiers event for libxkbcommon
+            // to process them correctly
+            let key = KeysymHandle {
+                xkb: &inner.xkb,
+                keycode,
+            };
 
-        focus.key(seat, key, key_state, serial, time);
+            focus.key(seat, key, key_state, serial, time);
+        }
         if let Some(mods) = modifiers {
             focus.modifiers(seat, mods, serial);
         }
