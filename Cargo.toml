@@ -145,3 +145,15 @@ harness = false
 [profile.release-with-debug]
 inherits = "release"
 debug = true
+
+[patch.crates-io]
+wayland-backend = {path = "../../wayland-rs/wayland-backend"}
+wayland-client = {path = "../../wayland-rs/wayland-client"}
+wayland-cursor = {path = "../../wayland-rs/wayland-cursor"}
+wayland-sys = {path = "../../wayland-rs/wayland-sys"}
+wayland-protocols = {path = "../../wayland-rs/wayland-protocols"}
+wayland-protocols-experimental = {path = "../../wayland-rs/wayland-protocols-experimental"}
+wayland-protocols-misc = {path = "../../wayland-rs/wayland-protocols-misc"}
+wayland-protocols-wlr = {path = "../../wayland-rs/wayland-protocols-wlr"}
+wayland-scanner = {path = "../../wayland-rs/wayland-scanner"}
+wayland-server = {path = "../../wayland-rs/wayland-server" }
