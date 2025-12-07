@@ -5,7 +5,8 @@ use std::{
 
 use tracing::warn;
 
-use wl_input_method::{self as wayland_protocols_experimental, text_input::v3::server::xx_text_input_v3::{ChangeCause, ContentHint, ContentPurpose}};
+//use wl_input_method as wayland_protocols_experimental;
+use wayland_protocols_experimental::text_input::v3::server::xx_text_input_v3::{ChangeCause, ContentHint, ContentPurpose};
 use wayland_protocols_experimental::input_method::v1::server::{
     xx_input_method_v1::{self, XxInputMethodV1},
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,

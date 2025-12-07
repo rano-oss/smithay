@@ -73,7 +73,7 @@ use wayland_server::{
     GlobalDispatch, New,
 };
 
-use wl_input_method as wayland_protocols_experimental;
+//use wl_input_method as wayland_protocols_experimental;
 use wayland_protocols_experimental::input_method::v1::{
     server::xx_input_popup_positioner_v1::XxInputPopupPositionerV1,
     server::{

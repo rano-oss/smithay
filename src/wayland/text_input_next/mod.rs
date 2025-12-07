@@ -50,7 +50,7 @@
 //! # delegate_compositor!(State);
 //! ```
 //!
-use wl_input_method as wayland_protocols_experimental;
+//use wl_input_method as wayland_protocols_experimental;
 
 use wayland_protocols_experimental::text_input::v3::server::{
     xx_text_input_manager_v3::{self, XxTextInputManagerV3},

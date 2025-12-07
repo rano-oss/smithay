@@ -1,7 +1,7 @@
 /*! Conversions between text-input types */
 
 use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3;
-use wl_input_method::text_input::v3::server::xx_text_input_v3::{ChangeCause, ContentHint, ContentPurpose};
+use wayland_protocols_experimental::text_input::v3::server::xx_text_input_v3::{ChangeCause, ContentHint, ContentPurpose};
 
 /// Converts a type into something that can be consumed by the supported Wayland object.
 pub trait ConvertInto<T> {
