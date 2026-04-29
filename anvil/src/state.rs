@@ -2,7 +2,7 @@
 use std::os::unix::io::OwnedFd;
 use std::{
     collections::HashMap,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
 
@@ -12,51 +12,50 @@ use smithay::{
     backend::{
         input::TabletToolDescriptor,
         renderer::element::{
-            RenderElementStates, default_primary_scanout_output_compare, utils::select_dmabuf_feedback,
+            default_primary_scanout_output_compare, utils::select_dmabuf_feedback, RenderElementStates,
         },
     },
     delegate_compositor, delegate_data_control, delegate_data_device, delegate_fixes,
-    delegate_fractional_scale, delegate_input_method_manager, delegate_keyboard_shortcuts_inhibit,
-    delegate_layer_shell, delegate_output, delegate_pointer_constraints, delegate_pointer_gestures,
-    delegate_presentation, delegate_primary_selection, delegate_relative_pointer, delegate_seat,
-    delegate_security_context, delegate_shm, delegate_tablet_manager, delegate_text_input_manager,
-    delegate_viewporter, delegate_virtual_keyboard_manager, delegate_xdg_activation, delegate_xdg_decoration,
-    delegate_xdg_shell,
+    delegate_fractional_scale, delegate_input_method_manager, delegate_input_method_manager_v3,
+    delegate_keyboard_shortcuts_inhibit, delegate_layer_shell, delegate_output, delegate_pointer_constraints,
+    delegate_pointer_gestures, delegate_presentation, delegate_primary_selection, delegate_relative_pointer,
+    delegate_seat, delegate_security_context, delegate_shm, delegate_tablet_manager,
+    delegate_text_input_manager, delegate_viewporter, delegate_virtual_keyboard_manager,
+    delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell,
     desktop::{
-        PopupKind, PopupManager, Space,
         space::SpaceElement,
         utils::{
-            OutputPresentationFeedback, surface_presentation_feedback_flags_from_states,
-            surface_primary_scanout_output, update_surface_primary_scanout_output,
-            with_surfaces_surface_tree,
+            surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
+            update_surface_primary_scanout_output, with_surfaces_surface_tree, OutputPresentationFeedback,
         },
+        PopupKind, PopupManager, Space,
     },
     input::{
-        Seat, SeatHandler, SeatState,
         dnd::{DnDGrab, DndGrabHandler, DndTarget, GrabType, Source},
         keyboard::{Keysym, LedState, XkbConfig},
         pointer::{CursorImageStatus, Focus, PointerHandle},
+        Seat, SeatHandler, SeatState,
     },
     output::Output,
     reexports::{
-        calloop::{Interest, LoopHandle, Mode, PostAction, generic::Generic},
+        calloop::{generic::Generic, Interest, LoopHandle, Mode, PostAction},
         wayland_protocols::xdg::decoration::{
             self as xdg_decoration, zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
         },
         wayland_server::{
-            Client, Display, DisplayHandle, Resource,
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::wl_surface::WlSurface,
+            Client, Display, DisplayHandle, Resource,
         },
     },
     utils::{Clock, Logical, Monotonic, Point, Rectangle, Serial, Time},
     wayland::{
         commit_timing::{CommitTimerBarrierStateUserData, CommitTimingManagerState},
-        compositor::{CompositorClientState, CompositorHandler, CompositorState, get_parent, with_states},
+        compositor::{get_parent, with_states, CompositorClientState, CompositorHandler, CompositorState},
         dmabuf::DmabufFeedback,
         fifo::{FifoBarrierCachedState, FifoManagerState},
         fixes::FixesState,
-        fractional_scale::{FractionalScaleHandler, FractionalScaleManagerState, with_fractional_scale},
+        fractional_scale::{with_fractional_scale, FractionalScaleHandler, FractionalScaleManagerState},
         image_capture_source::{
             ImageCaptureSource, ImageCaptureSourceHandler, ImageCaptureSourceState,
             OutputCaptureSourceHandler, OutputCaptureSourceState,
@@ -65,11 +64,15 @@ use smithay::{
             BufferConstraints, Frame, ImageCopyCaptureHandler, ImageCopyCaptureState, Session, SessionRef,
         },
         input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface},
+        input_method_v3::{
+            self, InputMethodHandler as InputMethodHandlerV3,
+            InputMethodManagerState as InputMethodManagerStateV3, PopupSurface as PopupSurfaceV3,
+        },
         keyboard_shortcuts_inhibit::{
             KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
         },
         output::{OutputHandler, OutputManagerState},
-        pointer_constraints::{PointerConstraintsHandler, PointerConstraintsState, with_pointer_constraint},
+        pointer_constraints::{with_pointer_constraint, PointerConstraintsHandler, PointerConstraintsState},
         pointer_gestures::PointerGesturesState,
         presentation::PresentationState,
         relative_pointer::RelativePointerManagerState,
@@ -78,16 +81,16 @@ use smithay::{
             SecurityContext, SecurityContextHandler, SecurityContextListenerSource, SecurityContextState,
         },
         selection::{
-            SelectionHandler,
-            data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, set_data_device_focus},
-            primary_selection::{PrimarySelectionHandler, PrimarySelectionState, set_primary_focus},
+            data_device::{set_data_device_focus, DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler},
+            primary_selection::{set_primary_focus, PrimarySelectionHandler, PrimarySelectionState},
             wlr_data_control::{DataControlHandler, DataControlState},
+            SelectionHandler,
         },
         shell::{
             wlr_layer::WlrLayerShellState,
             xdg::{
-                ToplevelSurface, XdgShellState,
                 decoration::{XdgDecorationHandler, XdgDecorationState},
+                ToplevelSurface, XdgShellState,
             },
         },
         shm::{ShmHandler, ShmState},
@@ -372,6 +375,64 @@ impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
 }
 
 delegate_input_method_manager!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
+
+impl<BackendData: Backend> InputMethodHandlerV3 for AnvilState<BackendData> {
+    fn new_popup(&mut self, surface: PopupSurfaceV3) {
+        if let Err(err) = self.popups.track_popup(PopupKind::from(surface)) {
+            warn!("Failed to track popup: {}", err);
+        }
+    }
+
+    fn popup_repositioned(&mut self, _: PopupSurfaceV3) {}
+
+    fn dismiss_popup(&mut self, surface: PopupSurfaceV3) {
+        let parent = surface.get_parent().surface.clone();
+        let _ = PopupManager::dismiss_popup(&parent, &PopupKind::from(surface));
+    }
+
+    fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
+        self.space
+            .elements()
+            .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
+            .unwrap_or_default()
+    }
+
+    fn popup_geometry(
+        &self,
+        parent: &WlSurface,
+        cursor: &Rectangle<i32, Logical>,
+        positioner: &input_method_v3::PositionerState,
+    ) -> Rectangle<i32, Logical> {
+        let Some(window) = self.window_for_surface(&parent) else {
+            panic!("Input method popup without parent window");
+        };
+
+        let mut outputs_for_window = self.space.outputs_for_element(&window);
+        if outputs_for_window.is_empty() {
+            return Default::default();
+        }
+
+        // Get a union of all outputs' geometries.
+        let mut outputs_geo = self
+            .space
+            .output_geometry(&outputs_for_window.pop().unwrap())
+            .unwrap();
+        for output in outputs_for_window {
+            outputs_geo = outputs_geo.merge(self.space.output_geometry(&output).unwrap());
+        }
+
+        let window_geo = self.space.element_geometry(&window).unwrap();
+
+        // The target geometry for the positioner should be relative to its parent's geometry, so
+        // we will compute that here.
+        let mut target = outputs_geo;
+        target.loc -= window_geo.loc;
+
+        positioner.get_geometry_from_anchor(*cursor, target)
+    }
+}
+
+delegate_input_method_manager_v3!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
 impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for AnvilState<BackendData> {
     fn keyboard_shortcuts_inhibit_state(&mut self) -> &mut KeyboardShortcutsInhibitState {
@@ -730,6 +791,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         let commit_timing_manager_state = CommitTimingManagerState::new::<Self>(&dh);
         TextInputManagerState::new::<Self>(&dh);
         InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
+        InputMethodManagerStateV3::new::<Self, _>(&dh, |_client| true);
         VirtualKeyboardManagerState::new::<Self, _>(&dh, |_client| true);
         // Expose global only if backend supports relative motion events
         if BackendData::HAS_RELATIVE_MOTION {

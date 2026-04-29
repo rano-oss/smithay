@@ -1,16 +1,17 @@
 use std::mem;
 use std::sync::{Arc, Mutex};
 
-use tracing::debug;
-use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::{
-    self, ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3,
-};
+use tracing::{debug, warn};
 use wayland_server::backend::{ClientId, ObjectId};
-use wayland_server::{Dispatch, Resource, protocol::wl_surface::WlSurface};
+use wayland_server::{protocol::wl_surface::WlSurface, Dispatch, Resource};
+use wl_input_method::text_input::mr::server::zwp_text_input_v3;
+use zwp_text_input_v3::{ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::input_method::InputMethodHandle;
+use crate::wayland::compositor::{self, HookId};
+use crate::wayland::input_method;
+use crate::wayland::input_method_v3;
 
 use super::TextInputManagerState;
 
@@ -75,6 +76,7 @@ impl TextInputHandle {
             instance: instance.clone(),
             serial: 0,
             pending_state: Default::default(),
+            stage2_cursor_rectangle: None,
         });
     }
 
@@ -111,6 +113,12 @@ impl TextInputHandle {
         inner.active_text_input_id = None;
         // NOTE: we implement it in a symmetrical way with `enter`.
         inner.with_focused_client_all_text_inputs(|text_input, focus, _| {
+            if text_input.version() >= 2 {
+                let data = text_input.data::<TextInputUserData>().unwrap();
+                let mut hook = data.surface_commit_hook.lock().unwrap();
+                let hook = hook.take().unwrap();
+                compositor::remove_post_commit_hook(&focus, hook);
+            }
             text_input.leave(focus);
         });
     }
@@ -123,6 +131,8 @@ impl TextInputHandle {
         // be send for each of them.
         inner.with_focused_client_all_text_inputs(|text_input, focus, _| {
             text_input.enter(focus);
+            let data = text_input.data::<TextInputUserData>().unwrap();
+            (data.on_enter)(text_input, focus);
         });
     }
 
@@ -185,13 +195,24 @@ impl TextInputHandle {
 #[derive(Debug)]
 pub struct TextInputUserData {
     pub(super) handle: TextInputHandle,
-    pub(crate) input_method_handle: InputMethodHandle,
+    pub(crate) input_method_handle: input_method::InputMethodHandle,
+    pub(crate) input_method_v3_handle: input_method_v3::InputMethodHandle,
+    /// For version 2 and above, this assocates the text-input to a surface.
+    /// wl_surface.commit triggers the text-input state update.
+    /// This holds the post-commit hook id that does the state update.
+    /// This `HookId` makes it possible to unregister the hook
+    /// and stop updates when text-input is disabled.
+    pub(super) surface_commit_hook: Mutex<Option<HookId>>,
+    /// Store this function to break the compile-time check against Dispatch<ZwpTextInputV3> because .enter will get called from the keyboard module, and it's easier to reason about the code if that module doesn't get infected by the dependency.
+    /// By storing the function, the call is only known at runtime, so the constraint is not checked.
+    pub(super) on_enter: fn(&ZwpTextInputV3, &WlSurface),
 }
 
 impl<D> Dispatch<ZwpTextInputV3, TextInputUserData, D> for TextInputManagerState
 where
     D: Dispatch<ZwpTextInputV3, TextInputUserData>,
     D: SeatHandler,
+    D: input_method_v3::InputMethodHandler,
     D: 'static,
 {
     fn request(
@@ -209,9 +230,14 @@ where
         }
 
         // Discard requests without any active input method instance.
-        if !data.input_method_handle.has_instance() {
+        if !data.input_method_handle.has_instance() && !data.input_method_v3_handle.has_instance() {
             debug!("discarding text-input request without IME running");
             return;
+        }
+
+        if data.input_method_handle.has_instance() && data.input_method_v3_handle.has_instance() {
+            warn!("Two separate versions of input method registered for the seat. Expect conflicts.");
+            // We'll try to drive both IM instances because it makes the code simpler. The results are going to be unexpected no matter what strategy is chosen now.
         }
 
         let focus = match data.handle.focus() {
@@ -223,14 +249,14 @@ where
         };
 
         let mut guard = data.handle.inner.lock().unwrap();
-        let pending_state = match guard.instances.iter_mut().find_map(|instance| {
+        let (pending_state, stage2_cursor_state) = match guard.instances.iter_mut().find_map(|instance| {
             if instance.instance == *resource {
-                Some(&mut instance.pending_state)
+                Some((&mut instance.pending_state, &mut instance.stage2_cursor_rectangle))
             } else {
                 None
             }
         }) {
-            Some(pending_state) => pending_state,
+            Some(value) => value,
             None => {
                 debug!("got request for untracked text-input");
                 return;
@@ -262,66 +288,11 @@ where
                 pending_state.cursor_rectangle = Some(Rectangle::new((x, y).into(), (width, height).into()));
             }
             zwp_text_input_v3::Request::Commit => {
-                let mut new_state = mem::take(pending_state);
-                let _ = pending_state;
-                let active_text_input_id = &mut guard.active_text_input_id;
-
-                if active_text_input_id.is_some() && *active_text_input_id != Some(resource.id()) {
-                    debug!("discarding text_input request since we already have an active one");
-                    return;
-                }
-
-                match new_state.enable {
-                    Some(true) => {
-                        *active_text_input_id = Some(resource.id());
-                        // Drop the guard before calling to other subsystem.
-                        drop(guard);
-                        data.input_method_handle.activate_input_method(state, &focus);
-                    }
-                    Some(false) => {
-                        *active_text_input_id = None;
-                        // Drop the guard before calling to other subsystem.
-                        drop(guard);
-                        data.input_method_handle.deactivate_input_method(state);
-                        return;
-                    }
-                    None => {
-                        if *active_text_input_id != Some(resource.id()) {
-                            debug!("discarding text_input requests before enabling it");
-                            return;
-                        }
-
-                        // Drop the guard before calling to other subsystems later on.
-                        drop(guard);
-                    }
-                }
-
-                if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
-                    data.input_method_handle.with_instance(move |input_method| {
-                        input_method.object.surrounding_text(text, cursor, anchor)
-                    });
-                }
-
-                if let Some(cause) = new_state.text_change_cause.take() {
-                    data.input_method_handle.with_instance(move |input_method| {
-                        input_method.object.text_change_cause(cause);
-                    });
-                }
-
-                if let Some((hint, purpose)) = new_state.content_type.take() {
-                    data.input_method_handle.with_instance(move |input_method| {
-                        input_method.object.content_type(hint, purpose);
-                    });
-                }
-
-                if let Some(rect) = new_state.cursor_rectangle.take() {
-                    data.input_method_handle
-                        .set_text_input_rectangle::<D>(state, rect);
-                }
-
-                data.input_method_handle.with_instance(|input_method| {
-                    input_method.done();
-                });
+                *stage2_cursor_state = pending_state.cursor_rectangle.clone();
+                let new_state = mem::take(pending_state);
+                // Drop mutable reference to guard so it can be moved.
+                let _ = (pending_state, stage2_cursor_state);
+                commit(state, new_state, guard, data, resource, focus);
             }
             zwp_text_input_v3::Request::Destroy => {
                 // Nothing to do
@@ -352,7 +323,162 @@ where
 
         if deactivate_im {
             data.input_method_handle.deactivate_input_method(state);
+            data.input_method_v3_handle.deactivate_input_method(state);
         }
+    }
+}
+
+use std::sync::MutexGuard;
+
+fn commit<D>(
+    state: &mut D,
+    mut new_state: TextInputState,
+    mut guard: MutexGuard<'_, TextInput>,
+    data: &TextInputUserData,
+    resource: &ZwpTextInputV3,
+    focus: WlSurface,
+) where
+    D: Dispatch<ZwpTextInputV3, TextInputUserData>,
+    D: SeatHandler,
+    D: input_method_v3::InputMethodHandler,
+    D: 'static,
+{
+    let active_text_input_id = &mut guard.active_text_input_id;
+
+    if active_text_input_id.is_some() && *active_text_input_id != Some(resource.id()) {
+        debug!("discarding text_input request since we already have an active one");
+        return;
+    }
+
+    match new_state.enable {
+        Some(true) => {
+            *active_text_input_id = Some(resource.id());
+            // Drop the guard before calling to other subsystem.
+            drop(guard);
+            data.input_method_handle.activate_input_method(state, &focus);
+            data.input_method_v3_handle.activate_input_method(state, &focus);
+        }
+        Some(false) => {
+            *active_text_input_id = None;
+            // Drop the guard before calling to other subsystem.
+            drop(guard);
+            data.input_method_handle.deactivate_input_method(state);
+            data.input_method_v3_handle.deactivate_input_method(state);
+            return;
+        }
+        None => {
+            if *active_text_input_id != Some(resource.id()) {
+                debug!("discarding text_input requests before enabling it");
+                return;
+            }
+
+            // Drop the guard before calling to other subsystems later on.
+            drop(guard);
+        }
+    }
+    use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3;
+    if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
+        data.input_method_handle
+            .with_instance(|input_method| input_method.object.surrounding_text(text.clone(), cursor, anchor));
+        data.input_method_v3_handle
+            .with_instance(move |input_method| input_method.object.surrounding_text(text, cursor, anchor));
+    }
+
+    if let Some(cause) = new_state.text_change_cause.take() {
+        let cause = match cause {
+            ChangeCause::InputMethod => zwp_text_input_v3::ChangeCause::InputMethod,
+            ChangeCause::Other => zwp_text_input_v3::ChangeCause::Other,
+            _ => zwp_text_input_v3::ChangeCause::Other,
+        };
+        data.input_method_handle.with_instance(move |input_method| {
+            input_method.object.text_change_cause(cause);
+        });
+        data.input_method_v3_handle.with_instance(move |input_method| {
+            input_method.object.text_change_cause(cause);
+        });
+    }
+
+    if let Some((hint, purpose)) = new_state.content_type.take() {
+        let hint =/* match hint {
+                        ContentHint::None => zwp_text_input_v3::ContentHint::None,
+                        _ => zwp_text_input_v3::ContentHint::None,
+                    };*/
+                    zwp_text_input_v3::ContentHint::None;
+        let purpose = match purpose {
+            ContentPurpose::Normal => zwp_text_input_v3::ContentPurpose::Normal,
+            ContentPurpose::Terminal => zwp_text_input_v3::ContentPurpose::Terminal,
+            _ => zwp_text_input_v3::ContentPurpose::Normal,
+        };
+        data.input_method_handle.with_instance(move |input_method| {
+            input_method.object.content_type(hint, purpose);
+        });
+        data.input_method_v3_handle.with_instance(move |input_method| {
+            input_method.object.content_type(hint, purpose);
+        });
+    }
+
+    let cursor_state = if resource.version() <= 2 {
+        println!("text input 3.1 commit use new cursor");
+        new_state.cursor_rectangle.take()
+    } else {
+        None
+    };
+
+    if let Some(rect) = cursor_state {
+        data.input_method_handle
+            .set_text_input_rectangle::<D>(state, rect);
+        data.input_method_v3_handle.set_cursor_rectangle::<D>(state, rect);
+    }
+
+    data.input_method_handle.with_instance(|input_method| {
+        input_method.done();
+    });
+    data.input_method_v3_handle.done();
+}
+
+pub(super) fn on_enter<D>(text_input: &ZwpTextInputV3, focus: &WlSurface)
+where
+    D: Dispatch<ZwpTextInputV3, TextInputUserData>,
+    D: SeatHandler,
+    D: input_method_v3::InputMethodHandler,
+    D: 'static,
+{
+    if text_input.version() >= 2 {
+        let resource = text_input.clone();
+
+        let hook = compositor::add_post_commit_hook::<D, _>(&focus, move |state, _dh, wl_surface| {
+            println!("text input 3.2 surface commit {:?}", wl_surface);
+            let data = resource.data::<TextInputUserData>().unwrap();
+            let mut guard = data.handle.inner.lock().unwrap();
+            // TODO: this is a near-copy from request handler. maybe can be unified
+            let (pending_state, cursor_state) = match guard.instances.iter_mut().find_map(|instance| {
+                if instance.instance == resource {
+                    Some((&mut instance.pending_state, &mut instance.stage2_cursor_rectangle))
+                } else {
+                    None
+                }
+            }) {
+                Some(value) => value,
+                None => {
+                    debug!("got request for untracked text-input");
+                    return;
+                }
+            };
+
+            if let Some(rect) = cursor_state.take() {
+                println!("text input 3.2 surface commit new cursor {:?}", rect);
+                data.input_method_handle
+                    .set_text_input_rectangle::<D>(state, rect);
+                data.input_method_v3_handle.set_cursor_rectangle::<D>(state, rect);
+
+                data.input_method_handle.with_instance(|input_method| {
+                    input_method.done();
+                });
+                data.input_method_v3_handle.done();
+            }
+        });
+        let data = text_input.data::<TextInputUserData>().unwrap();
+        *data.surface_commit_hook.lock().unwrap() = Some(hook);
     }
 }
 
@@ -361,13 +487,17 @@ struct Instance {
     instance: ZwpTextInputV3,
     serial: u32,
     pending_state: TextInputState,
+    /// In protocol version 3.2, the cursor_rectangle does not get updated on text_input.commit. This gets updated and sent to the input method on wl_surface.commit.
+    stage2_cursor_rectangle: Option<Rectangle<i32, Logical>>,
 }
 
-#[derive(Debug, Default)]
+/// State of the text_input object set on text-input.commit
+#[derive(Debug, Default, Clone)]
 struct TextInputState {
     enable: Option<bool>,
     surrounding_text: Option<(String, u32, u32)>,
     content_type: Option<(ContentHint, ContentPurpose)>,
+    /// Does not immediately get applied, instead the value goes to stage2 on Instance.
     cursor_rectangle: Option<Rectangle<i32, Logical>>,
     text_change_cause: Option<ChangeCause>,
 }

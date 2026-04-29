@@ -51,7 +51,8 @@
 //! ```
 //!
 
-use wayland_protocols::wp::text_input::zv3::server::{
+use std::sync::Mutex;
+use wl_input_method::text_input::mr::server::{
     zwp_text_input_manager_v3::{self, ZwpTextInputManagerV3},
     zwp_text_input_v3::ZwpTextInputV3,
 };
@@ -62,9 +63,10 @@ use crate::input::{Seat, SeatHandler};
 pub use text_input_handle::TextInputHandle;
 pub use text_input_handle::TextInputUserData;
 
-use super::input_method::InputMethodHandle;
+use super::input_method;
+use super::input_method_v3;
 
-const MANAGER_VERSION: u32 = 1;
+const MANAGER_VERSION: u32 = 2;
 
 mod text_input_handle;
 
@@ -132,6 +134,7 @@ where
     D: Dispatch<ZwpTextInputManagerV3, ()>,
     D: Dispatch<ZwpTextInputV3, TextInputUserData>,
     D: SeatHandler,
+    D: input_method_v3::InputMethodHandler,
     D: 'static,
 {
     fn request(
@@ -149,18 +152,26 @@ where
 
                 let user_data = seat.user_data();
                 user_data.insert_if_missing(TextInputHandle::default);
-                user_data.insert_if_missing(InputMethodHandle::default);
+                user_data.insert_if_missing(input_method::InputMethodHandle::default);
+                user_data.insert_if_missing(input_method_v3::InputMethodHandle::default);
                 let handle = user_data.get::<TextInputHandle>().unwrap();
-                let input_method_handle = user_data.get::<InputMethodHandle>().unwrap();
+                let input_method_handle = user_data.get::<input_method::InputMethodHandle>().unwrap();
+                let input_method_v3_handle = user_data.get::<input_method_v3::InputMethodHandle>().unwrap();
                 let instance = data_init.init(
                     id,
                     TextInputUserData {
                         handle: handle.clone(),
                         input_method_handle: input_method_handle.clone(),
+                        input_method_v3_handle: input_method_v3_handle.clone(),
+                        surface_commit_hook: Mutex::new(None),
+                        on_enter: text_input_handle::on_enter::<D>,
                     },
                 );
                 handle.add_instance(&instance);
                 if input_method_handle.has_instance() {
+                    handle.enter();
+                }
+                if input_method_v3_handle.has_instance() {
                     handle.enter();
                 }
             }
