@@ -109,7 +109,8 @@ where
         focus: Option<<D as SeatHandler>::KeyboardFocus>,
         serial: crate::utils::Serial,
     ) {
-        unimplemented!();
+        // Focus changes pass through the grab normally.
+        // The filter only intercepts key events, not focus changes.
         handle.set_focus(data, focus, serial)
     }
 

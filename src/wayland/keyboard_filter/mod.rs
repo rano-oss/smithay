@@ -154,7 +154,6 @@ where
                 surface,
                 extensions,
             } => {
-                dbg!("Binding stub");
                 {
                     let bind = data.inner.lock().unwrap();
                     if bind.bound_keyboards.contains(&keyboard) {
@@ -174,17 +173,26 @@ where
                 }
 
                 let imdata = input_method.data::<InputMethodUserData<D>>().unwrap();
-
                 let keyboard_data = keyboard.data::<KeyboardUserData<D>>().unwrap();
+
+                let kb_handle = keyboard_data
+                    .handle
+                    .as_ref()
+                    .expect("Seat doesn't support keyboard");
+
+                // Validate that the keyboard belongs to the same seat as the input method.
+                if !Arc::ptr_eq(&kb_handle.arc, &imdata.keyboard_handle.arc) {
+                    resource.post_error(
+                        xx_keyboard_filter_manager_v1::Error::WrongSeat,
+                        "The keyboard is attached to a different seat than the input method",
+                    );
+                    return;
+                }
 
                 let keyboard_filter = data_init.init::<XxKeyboardFilterV1, _>(
                     extensions,
                     KeyboardFilterUserData {
-                        keyboard_handle: keyboard_data
-                            .handle
-                            .as_ref()
-                            .expect("Seat doesn't support keyboard")
-                            .clone(),
+                        keyboard_handle: kb_handle.clone(),
                         manager_data: data.inner.clone(),
                         queue_slot: Default::default(),
                         bound_keyboard: keyboard.clone(),
@@ -211,7 +219,8 @@ where
                 // FIXME: if IM already active, register the filter as keyboard interceptor
             }
             xx_keyboard_filter_manager_v1::Request::Destroy => {
-                panic!("what to do?")
+                // Per protocol: "The xx_keyboard_filter_v1 objects originating from it
+                // remain unaffected." Nothing else to clean up.
             }
             _ => {}
         }
