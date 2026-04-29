@@ -6,6 +6,7 @@ use tracing::{debug, warn};
 use wayland_server::backend::{ClientId, ObjectId};
 use wayland_server::{protocol::wl_surface::WlSurface, Dispatch, Resource};
 use wl_input_method::text_input::mr::server::zwp_text_input_v3;
+use wl_input_method::text_input::xx::server::xx_text_input_v3;
 use zwp_text_input_v3::{ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3};
 
 use crate::input::SeatHandler;
@@ -399,7 +400,12 @@ fn commit<D>(
             input_method.object.text_change_cause(cause);
         });
         data.input_method_v3_handle.with_instance(move |input_method| {
-            input_method.object.text_change_cause(cause);
+            // Convert zwp_text_input_v3::ChangeCause to xx_text_input_v3::ChangeCause
+            let xx_cause = match cause {
+                zwp_text_input_v3::ChangeCause::InputMethod => xx_text_input_v3::ChangeCause::InputMethod,
+                _ => xx_text_input_v3::ChangeCause::Other,
+            };
+            input_method.object.text_change_cause(xx_cause);
         });
     }
 
@@ -418,7 +424,14 @@ fn commit<D>(
             input_method.object.content_type(hint, purpose);
         });
         data.input_method_v3_handle.with_instance(move |input_method| {
-            input_method.object.content_type(hint, purpose);
+            // Convert zwp types to xx types (same underlying values)
+            let xx_hint = xx_text_input_v3::ContentHint::from_bits_truncate(hint.bits());
+            let xx_purpose = match purpose {
+                zwp_text_input_v3::ContentPurpose::Normal => xx_text_input_v3::ContentPurpose::Normal,
+                zwp_text_input_v3::ContentPurpose::Terminal => xx_text_input_v3::ContentPurpose::Terminal,
+                _ => xx_text_input_v3::ContentPurpose::Normal,
+            };
+            input_method.object.content_type(xx_hint, xx_purpose);
         });
     }
 
