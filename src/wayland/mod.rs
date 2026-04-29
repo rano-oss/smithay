@@ -69,6 +69,7 @@ pub mod image_capture_source;
 pub mod image_copy_capture;
 pub mod input_method;
 pub mod input_method_v3;
+pub mod keyboard_filter;
 pub mod keyboard_shortcuts_inhibit;
 pub mod output;
 pub mod pointer_constraints;

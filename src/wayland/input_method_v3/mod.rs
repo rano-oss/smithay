@@ -64,6 +64,7 @@
 //! // Add the seat state to your state and create manager globals
 //! InputMethodManagerState::new::<State, _>(&display_handle, |_client| true);
 
+
 //! // Add text input capabilities, needed for the input method to work
 //! delegate_text_input_manager!(State);
 //! TextInputManagerState::new::<State>(&display_handle);
@@ -101,6 +102,7 @@ mod configure_tracker;
 mod input_method_handle;
 mod input_method_popup_surface;
 mod positioner;
+
 
 
 
@@ -252,13 +254,16 @@ where
                 let instance = data_init.init(
                     input_method,
                     InputMethodUserData {
+                        seat: seat.clone(),
                         handle: handle.clone(),
                         text_input_handle: text_input_handle.clone(),
+                        keyboard_handle: seat.get_keyboard().unwrap(),
+                        keyboard_filter: Default::default(),
                         dismiss_popup: D::dismiss_popup,
 
                     },
                 );
-                handle.add_instance(&instance);
+                handle.add_instance::<D>(&instance);
             }
             xx_input_method_manager_v2::Request::GetPositioner { id } => {
                 data_init.init(id, PositionerUserData::default());

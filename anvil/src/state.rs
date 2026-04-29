@@ -17,11 +17,11 @@ use smithay::{
     },
     delegate_compositor, delegate_data_control, delegate_data_device, delegate_fixes,
     delegate_fractional_scale, delegate_input_method_manager, delegate_input_method_manager_v3,
-    delegate_keyboard_shortcuts_inhibit, delegate_layer_shell, delegate_output, delegate_pointer_constraints,
-    delegate_pointer_gestures, delegate_presentation, delegate_primary_selection, delegate_relative_pointer,
-    delegate_seat, delegate_security_context, delegate_shm, delegate_tablet_manager,
-    delegate_text_input_manager, delegate_viewporter, delegate_virtual_keyboard_manager,
-    delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell,
+    delegate_keyboard_filter_manager_v1, delegate_keyboard_shortcuts_inhibit, delegate_layer_shell,
+    delegate_output, delegate_pointer_constraints, delegate_pointer_gestures, delegate_presentation,
+    delegate_primary_selection, delegate_relative_pointer, delegate_seat, delegate_security_context,
+    delegate_shm, delegate_tablet_manager, delegate_text_input_manager, delegate_viewporter,
+    delegate_virtual_keyboard_manager, delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell,
     desktop::{
         space::SpaceElement,
         utils::{
@@ -68,6 +68,7 @@ use smithay::{
             self, InputMethodHandler as InputMethodHandlerV3,
             InputMethodManagerState as InputMethodManagerStateV3, PopupSurface as PopupSurfaceV3,
         },
+        keyboard_filter::KeyboardFilterManagerState,
         keyboard_shortcuts_inhibit::{
             KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
         },
@@ -434,6 +435,8 @@ impl<BackendData: Backend> InputMethodHandlerV3 for AnvilState<BackendData> {
 
 delegate_input_method_manager_v3!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
+delegate_keyboard_filter_manager_v1!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
+
 impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for AnvilState<BackendData> {
     fn keyboard_shortcuts_inhibit_state(&mut self) -> &mut KeyboardShortcutsInhibitState {
         &mut self.keyboard_shortcuts_inhibit_state
@@ -793,6 +796,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
         InputMethodManagerStateV3::new::<Self, _>(&dh, |_client| true);
         VirtualKeyboardManagerState::new::<Self, _>(&dh, |_client| true);
+        KeyboardFilterManagerState::new::<Self, _>(&dh, |_client| true);
         // Expose global only if backend supports relative motion events
         if BackendData::HAS_RELATIVE_MOTION {
             RelativePointerManagerState::new::<Self>(&dh);

@@ -12,7 +12,7 @@ use wayland_server::{
 
 use super::WaylandFocus;
 use crate::{
-    backend::input::{KeyState, Keycode},
+    backend::input::{KeyEvent, Keycode},
     input::{
         keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState},
         Seat, SeatHandler, SeatState, WeakSeat,
@@ -45,7 +45,7 @@ where
 
     /// Return all raw [`WlKeyboard`] instances for a particular [`Client`]
     pub fn client_keyboards<'a>(&'a self, client: &Client) -> impl Iterator<Item = WlKeyboard> + 'a {
-        let guard = self.arc.known_kbds.lock().unwrap();
+        let guard = self.arc.known_kbds.keyboards.lock().unwrap();
 
         new_locked_obj_iter_from_vec(guard, client.id())
     }
@@ -57,6 +57,9 @@ where
     /// This should be done first, before anything else is done with this keyboard.
     #[instrument(parent = &self.arc.span, skip(self))]
     pub(crate) fn new_kbd(&self, kbd: WlKeyboard) {
+        self.register_kbd(&kbd, None);
+    }
+    pub(crate) fn register_kbd(&self, kbd: &WlKeyboard, intercept_to: Option<&WlSurface>) {
         trace!("Sending keymap to client");
 
         // prepare a tempfile with the keymap, to send it to the client
@@ -72,14 +75,26 @@ where
         };
 
         let guard = self.arc.internal.lock().unwrap();
-        if kbd.version() >= 4 {
-            kbd.repeat_info(guard.repeat_rate, guard.repeat_delay);
+        if Resource::version(kbd) >= 4 {
+            let rate = if Resource::version(kbd) >= 10 {
+                0 // Enables compositor-side key repeat. See wl_keyboard key event
+            } else {
+                guard.repeat_rate
+            };
+            kbd.repeat_info(rate, guard.repeat_delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {
-            if focused.same_client_as(&kbd.id()) {
+            let surface = if let Some(intercept_surface) = intercept_to {
+                Some(Cow::Borrowed(intercept_surface))
+            } else if focused.same_client_as(&kbd.id()) {
+                focused.wl_surface()
+            } else {
+                None
+            };
+            if let Some(surface) = surface {
                 let serialized = guard.mods_state.serialized;
                 let keys = serialize_pressed_keys(guard.pressed_keys.iter().copied());
-                kbd.enter((*serial).into(), &focused.wl_surface().unwrap(), keys);
+                kbd.enter((*serial).into(), &surface, keys);
                 // Modifiers must be send after enter event.
                 kbd.modifiers(
                     (*serial).into(),
@@ -90,7 +105,12 @@ where
                 );
             }
         }
-        self.arc.known_kbds.lock().unwrap().push(kbd.downgrade());
+        self.arc
+            .known_kbds
+            .keyboards
+            .lock()
+            .unwrap()
+            .push(kbd.downgrade());
     }
 }
 
@@ -138,6 +158,7 @@ where
             handle
                 .arc
                 .known_kbds
+                .keyboards
                 .lock()
                 .unwrap()
                 .retain(|k| k.id() != keyboard.id())
@@ -148,19 +169,11 @@ where
 pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
     seat: &Seat<D>,
     surface: &WlSurface,
-    mut f: impl FnMut(WlKeyboard),
+    f: impl FnMut(&dyn WlKeyboardApi),
 ) {
     if let Some(keyboard) = seat.get_keyboard() {
-        let inner = keyboard.arc.known_kbds.lock().unwrap();
-        for kbd in &*inner {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
-
-            if kbd.id().same_client_as(&surface.id()) {
-                f(kbd.clone())
-            }
-        }
+        let inner = &keyboard.arc.known_kbds;
+        inner.for_each_focused(surface, f)
     }
 }
 
@@ -305,12 +318,18 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
         seat: &Seat<D>,
         _data: &mut D,
         key: KeysymHandle<'_>,
-        state: KeyState,
+        event: KeyEvent,
         serial: Serial,
         time: u32,
     ) {
         for_each_focused_kbds(seat, self, |kbd| {
-            kbd.key(serial.into(), time, key.raw_code().raw() - 8, state.into())
+            let compatible = match (event, kbd.version() < 10) {
+                (KeyEvent::Repeated, true) => false,
+                _ => true,
+            };
+            if compatible {
+                kbd.key(serial.into(), time, key.raw_code().raw() - 8, event.into())
+            }
         })
     }
 
@@ -328,12 +347,40 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
     }
 }
 
-impl From<KeyState> for WlKeyState {
+impl<D: SeatHandler + 'static> KeyboardTargetSimple<D> for WlSurface {
+    fn key(&self, seat: &Seat<D>, key: KeysymHandle<'_>, event: KeyEvent, serial: Serial, time: u32) {
+        for_each_focused_kbds(seat, self, |kbd| {
+            let compatible = match (event, kbd.version() < 10) {
+                (KeyEvent::Repeated, true) => false,
+                _ => true,
+            };
+            if compatible {
+                kbd.key(serial.into(), time, key.raw_code().raw() - 8, event.into())
+            }
+        })
+    }
+
+    fn modifiers(&self, seat: &Seat<D>, modifiers: ModifiersState, serial: Serial) {
+        for_each_focused_kbds(seat, self, |kbd| {
+            let modifiers = modifiers.serialized;
+            kbd.modifiers(
+                serial.into(),
+                modifiers.depressed,
+                modifiers.latched,
+                modifiers.locked,
+                modifiers.layout_effective,
+            );
+        })
+    }
+}
+
+impl From<KeyEvent> for WlKeyState {
     #[inline]
-    fn from(state: KeyState) -> WlKeyState {
+    fn from(state: KeyEvent) -> WlKeyState {
         match state {
-            KeyState::Pressed => WlKeyState::Pressed,
-            KeyState::Released => WlKeyState::Released,
+            KeyEvent::Pressed => WlKeyState::Pressed,
+            KeyEvent::Released => WlKeyState::Released,
+            KeyEvent::Repeated => WlKeyState::Repeated,
         }
     }
 }
@@ -342,13 +389,14 @@ impl From<KeyState> for WlKeyState {
 #[error("Unknown KeyState {0:?}")]
 pub struct UnknownKeyState(WlKeyState);
 
-impl TryFrom<WlKeyState> for KeyState {
+impl TryFrom<WlKeyState> for KeyEvent {
     type Error = UnknownKeyState;
     #[inline]
     fn try_from(state: WlKeyState) -> Result<Self, Self::Error> {
         match state {
-            WlKeyState::Pressed => Ok(KeyState::Pressed),
-            WlKeyState::Released => Ok(KeyState::Released),
+            WlKeyState::Pressed => Ok(KeyEvent::Pressed),
+            WlKeyState::Released => Ok(KeyEvent::Released),
+            WlKeyState::Repeated => Ok(KeyEvent::Repeated),
             x => Err(UnknownKeyState(x)),
         }
     }
