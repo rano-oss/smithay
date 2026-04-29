@@ -42,8 +42,6 @@ pub(crate) struct InputMethod {
     pub keyboard_filter_handle: Arc<Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>>,
     /// Relative to surface on which input method is enabled
     pub cursor_rectangle: Rectangle<i32, Logical>,
-    /// Pending cursor move from input method (cursor, anchor) to apply on next commit
-    pub pending_cursor_move: Option<(i32, i32)>,
 }
 
 impl fmt::Debug for InputMethod {
@@ -90,7 +88,6 @@ impl InputMethodHandle {
                 popup_handles: vec![],
                 cursor_rectangle: Rectangle::default(),
                 keyboard_filter_handle: data.keyboard_handle.arc.known_kbds.interceptor.clone(),
-                pending_cursor_move: None,
             });
         }
     }
@@ -255,27 +252,6 @@ where
                 data.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.delete_surrounding_text(before_length, after_length);
                 });
-            }
-            Request::PerformAction { action } => {
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
-                    if ti.version() >= 2 {
-                        use wl_input_method::text_input::mr::server::zwp_text_input_v3::Action;
-                        // Convert xx_text_input_v3::Action to zwp_text_input_v3::Action via raw value
-                        if let wayland_server::WEnum::Value(xx_action) = action {
-                            let zwp_action = Action::try_from(xx_action as u32).unwrap_or(Action::None);
-                            ti.action(zwp_action, 0);
-                        }
-                    }
-                });
-            }
-            Request::MoveCursor { cursor, anchor } => {
-                // Store the cursor movement to be applied on the next commit.
-                // zwp_text_input_v3 does not have a move_cursor event, so the
-                // compositor tracks this state and applies it internally.
-                let mut inner = data.handle.inner.lock().unwrap();
-                if let Some(instance) = inner.instance.as_mut() {
-                    instance.pending_cursor_move = Some((cursor, anchor));
-                }
             }
 
             Request::Commit { serial } => {
