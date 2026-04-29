@@ -403,7 +403,7 @@ impl<BackendData: Backend> InputMethodHandlerV3 for AnvilState<BackendData> {
         cursor: &Rectangle<i32, Logical>,
         positioner: &input_method_v3::PositionerState,
     ) -> Rectangle<i32, Logical> {
-        let Some(window) = self.window_for_surface(&parent) else {
+        let Some(window) = self.window_for_surface(parent) else {
             panic!("Input method popup without parent window");
         };
 

@@ -5,12 +5,12 @@
 //!
 //! ```
 //! use smithay::{
-//!     delegate_seat, delegate_input_method_manager, delegate_text_input_manager,
+//!     delegate_seat, delegate_input_method_manager_v3, delegate_text_input_manager,
 //! #   delegate_compositor,
 //! };
 //! use smithay::input::{Seat, SeatState, SeatHandler, pointer::CursorImageStatus};
 //! # use smithay::wayland::compositor::{CompositorHandler, CompositorState, CompositorClientState};
-//! use smithay::wayland::input_method::{InputMethodManagerState, InputMethodHandler, PopupSurface};
+//! use smithay::wayland::input_method_v3::{InputMethodManagerState, InputMethodHandler, PopupSurface, PositionerState};
 //! use smithay::wayland::text_input::TextInputManagerState;
 //! use smithay::reexports::wayland_server::{Display, protocol::wl_surface::WlSurface};
 //! # use smithay::reexports::wayland_server::Client;
@@ -25,13 +25,16 @@
 //!     fn new_popup(&mut self, surface: PopupSurface) {}
 //!     fn dismiss_popup(&mut self, surface: PopupSurface) {}
 //!     fn popup_repositioned(&mut self, surface: PopupSurface) {}
+//!     fn popup_geometry(&self, _: &WlSurface, _: &Rectangle<i32, Logical>, _: &PositionerState) -> smithay::utils::Rectangle<i32, smithay::utils::Logical> {
+//!         Rectangle::default()
+//!     }
 //!     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, Logical> {
 //!         Rectangle::default()
 //!     }
 //! }
 //!
 //! // Delegate input method handling for State to InputMethodManagerState.
-//! delegate_input_method_manager!(State);
+//! delegate_input_method_manager_v3!(State);
 //!
 //! delegate_text_input_manager!(State);
 //!
@@ -61,6 +64,7 @@
 //! // Add the seat state to your state and create manager globals
 //! InputMethodManagerState::new::<State, _>(&display_handle, |_client| true);
 //! // Add text input capabilities, needed for the input method to work
+//! delegate_text_input_manager!(State);
 //! TextInputManagerState::new::<State>(&display_handle);
 //!
 //! ```
@@ -70,7 +74,7 @@ use wayland_server::{
     GlobalDispatch, New,
 };
 
-use wl_input_method::input_method::xx::{
+use wl_input_method::input_method::xx::
     server::xx_input_popup_positioner_v1::XxInputPopupPositionerV1,
     server::{
         xx_input_method_manager_v2::{self, XxInputMethodManagerV2},
@@ -96,6 +100,7 @@ mod configure_tracker;
 mod input_method_handle;
 mod input_method_popup_surface;
 mod positioner;
+
 
 pub use input_method_popup_surface::{
     InputMethodPopupSurfaceUserData, PopupParent, PopupSurface, PopupSurfaceState,
@@ -127,7 +132,8 @@ pub trait InputMethodHandler {
     /// Sets the parent location so the popup surface can be placed correctly
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, Logical>;
 
-    // Copied from wl_layer_surface. What is this for? What arguments make sense?
+    /// Copied from wl_layer_surface.
+    /// What is this for? What arguments make sense?
     fn popup_ack_configure(
         &mut self,
         _surface: &WlSurface,

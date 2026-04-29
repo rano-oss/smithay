@@ -138,8 +138,10 @@ impl TextInputHandle {
 
     /// The `discard_state` is used when the input-method signaled that
     /// the state should be discarded and wrong serial sent.
-    pub fn done(&self, discard_state: bool) {
+    /// Returns `true` if event was sent
+    pub fn done(&self, discard_state: bool) -> bool {
         let mut inner = self.inner.lock().unwrap();
+        let mut sent = false;
         inner.with_active_text_input(|text_input, _, serial| {
             if discard_state {
                 debug!("discarding text-input state due to serial");
@@ -147,8 +149,10 @@ impl TextInputHandle {
                 text_input.done(0);
             } else {
                 text_input.done(serial);
-            }
+            };
+            sent = true;
         });
+        sent
     }
 
     /// Access the text-input instances for the currently focused surface.

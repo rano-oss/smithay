@@ -18,7 +18,7 @@ use crate::{
 
 use super::{
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
-    positioner::PositionerUserData,
+    positioner::{PositionerState, PositionerUserData},
     InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
@@ -212,6 +212,20 @@ where
                 data.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.delete_surrounding_text(before_length, after_length);
                 });
+            }
+            Request::MoveCursor { cursor, anchor } => {
+                data.text_input_handle.with_active_text_input(|ti, _surface| {
+                    ti.move_cursor(cursor, anchor);
+                });
+            }
+            Request::PerformAction { action } => {
+                data.text_input_handle
+                    .with_active_text_input(|ti, _surface| match action {
+                        wayland_server::WEnum::Value(action) => ti.perform_action(action),
+                        wayland_server::WEnum::Unknown(unk) => {
+                            tracing::warn!("Received unknown action {unk:?}, ignoring")
+                        }
+                    });
             }
             Request::Commit { serial } => {
                 let current_serial = data

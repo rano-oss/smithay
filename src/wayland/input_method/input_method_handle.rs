@@ -4,27 +4,30 @@ use std::{
 };
 
 use tracing::warn;
+use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::{
+    ChangeCause, ContentHint, ContentPurpose,
+};
 use wayland_protocols_misc::zwp_input_method_v2::server::{
     zwp_input_method_keyboard_grab_v2::ZwpInputMethodKeyboardGrabV2,
     zwp_input_method_v2::{self, ZwpInputMethodV2},
     zwp_input_popup_surface_v2::ZwpInputPopupSurfaceV2,
 };
-use wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, Resource, protocol::wl_keyboard::KeymapFormat,
-};
 use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
+use wayland_server::{
+    protocol::wl_keyboard::KeymapFormat, Client, DataInit, Dispatch, DisplayHandle, Resource,
+};
 
 use crate::{
-    input::{SeatHandler, keyboard::KeyboardHandle},
-    utils::{Logical, Rectangle, SERIAL_COUNTER, alive_tracker::AliveTracker},
+    input::{keyboard::KeyboardHandle, SeatHandler},
+    utils::{alive_tracker::AliveTracker, Logical, Rectangle, SERIAL_COUNTER},
     wayland::{compositor, seat::WaylandFocus, text_input::TextInputHandle},
 };
 
 use super::{
-    INPUT_POPUP_SURFACE_ROLE, InputMethodHandler, InputMethodKeyboardUserData, InputMethodManagerState,
-    InputMethodPopupSurfaceUserData,
     input_method_keyboard_grab::InputMethodKeyboardGrab,
     input_method_popup_surface::{PopupHandle, PopupParent, PopupSurface},
+    InputMethodHandler, InputMethodKeyboardUserData, InputMethodManagerState,
+    InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
 #[derive(Default, Debug)]
@@ -41,6 +44,19 @@ pub(crate) struct Instance {
 }
 
 impl Instance {
+    pub(crate) fn set_text_change_cause(&self, cause: impl ConvertInto<ChangeCause>) {
+        self.object.text_change_cause(cause.convert_into())
+    }
+
+    pub(crate) fn set_content_type(
+        &self,
+        hint: impl ConvertInto<ContentHint>,
+        purpose: impl ConvertInto<ContentPurpose>,
+    ) {
+        self.object
+            .content_type(hint.convert_into(), purpose.convert_into())
+    }
+
     /// Send the done incrementing the serial.
     pub(crate) fn done(&mut self) {
         self.object.done();
