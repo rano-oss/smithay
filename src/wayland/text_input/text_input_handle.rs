@@ -2,6 +2,7 @@ use std::mem;
 use std::sync::{Arc, Mutex};
 
 use tracing::{debug, warn};
+
 use wayland_server::backend::{ClientId, ObjectId};
 use wayland_server::{protocol::wl_surface::WlSurface, Dispatch, Resource};
 use wl_input_method::text_input::mr::server::zwp_text_input_v3;

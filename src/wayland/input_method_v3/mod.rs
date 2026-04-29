@@ -63,6 +63,7 @@
 //!
 //! // Add the seat state to your state and create manager globals
 //! InputMethodManagerState::new::<State, _>(&display_handle, |_client| true);
+
 //! // Add text input capabilities, needed for the input method to work
 //! delegate_text_input_manager!(State);
 //! TextInputManagerState::new::<State>(&display_handle);
@@ -100,6 +101,8 @@ mod configure_tracker;
 mod input_method_handle;
 mod input_method_popup_surface;
 mod positioner;
+
+
 
 
 pub use input_method_popup_surface::{
@@ -252,6 +255,7 @@ where
                         handle: handle.clone(),
                         text_input_handle: text_input_handle.clone(),
                         dismiss_popup: D::dismiss_popup,
+
                     },
                 );
                 handle.add_instance(&instance);
