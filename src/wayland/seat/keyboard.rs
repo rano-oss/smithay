@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt};
+use std::{borrow::Cow, cell::RefCell, fmt};
 
 use tracing::{instrument, trace, warn};
 use wayland_server::{
@@ -14,7 +14,9 @@ use super::WaylandFocus;
 use crate::{
     backend::input::{KeyEvent, Keycode},
     input::{
-        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState},
+        keyboard::{
+            KeyboardHandle, KeyboardTarget, KeyboardTargetSimple, KeysymHandle, ModifiersState, WlKeyboardApi,
+        },
         Seat, SeatHandler, SeatState, WeakSeat,
     },
     utils::{iter::new_locked_obj_iter_from_vec, HookId, Serial},
@@ -234,7 +236,7 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     let hook_id = add_destruction_hook::<D, _>(surface, move |_, surface| {
         if let Some(client) = surface.client() {
             let keyboard = seat_clone.get_keyboard().unwrap();
-            let inner = keyboard.arc.known_kbds.lock().unwrap();
+            let inner = keyboard.arc.known_kbds.keyboards.lock().unwrap();
             for kbd in &*inner {
                 let Ok(kbd) = kbd.upgrade() else {
                     continue;

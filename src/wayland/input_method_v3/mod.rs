@@ -64,7 +64,6 @@
 //! // Add the seat state to your state and create manager globals
 //! InputMethodManagerState::new::<State, _>(&display_handle, |_client| true);
 
-
 //! // Add text input capabilities, needed for the input method to work
 //! delegate_text_input_manager!(State);
 //! TextInputManagerState::new::<State>(&display_handle);
@@ -76,12 +75,10 @@ use wayland_server::{
     GlobalDispatch, New,
 };
 
-use wl_input_method::input_method::xx::
-    server::xx_input_popup_positioner_v1::XxInputPopupPositionerV1,
-    server::{
-        xx_input_method_manager_v2::{self, XxInputMethodManagerV2},
-        xx_input_method_v1::XxInputMethodV1,
-    },
+use wl_input_method::input_method::xx::server::{
+    xx_input_method_manager_v2::{self, XxInputMethodManagerV2},
+    xx_input_method_v1::XxInputMethodV1,
+    xx_input_popup_positioner_v1::XxInputPopupPositionerV1,
 };
 
 use crate::{
@@ -102,10 +99,6 @@ mod configure_tracker;
 mod input_method_handle;
 mod input_method_popup_surface;
 mod positioner;
-
-
-
-
 
 pub use input_method_popup_surface::{
     InputMethodPopupSurfaceUserData, PopupParent, PopupSurface, PopupSurfaceState,
@@ -260,7 +253,6 @@ where
                         keyboard_handle: seat.get_keyboard().unwrap(),
                         keyboard_filter: Default::default(),
                         dismiss_popup: D::dismiss_popup,
-
                     },
                 );
                 handle.add_instance::<D>(&instance);

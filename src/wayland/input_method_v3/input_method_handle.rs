@@ -114,7 +114,7 @@ impl InputMethodHandle {
         cursor: Rectangle<i32, Logical>,
     ) {
         let mut inner = self.inner.lock().unwrap();
-        if let Some(ref mut inner) = &mut inner.instance {
+        if let Some(inner) = &mut inner.instance {
             inner.cursor_rectangle = cursor;
             for popup_surface in &mut inner.popup_handles {
                 let popup_geometry = state.popup_geometry(
@@ -139,7 +139,7 @@ impl InputMethodHandle {
     pub(crate) fn done(&self) {
         let mut inner = self.inner.lock().unwrap();
 
-        if let Some(ref mut inner) = &mut inner.instance {
+        if let Some(inner) = &mut inner.instance {
             for popup_surface in &mut inner.popup_handles {
                 popup_surface.send_pending_configure();
             }
@@ -253,20 +253,7 @@ where
                     ti.delete_surrounding_text(before_length, after_length);
                 });
             }
-            Request::MoveCursor { cursor, anchor } => {
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
-                    ti.move_cursor(cursor, anchor);
-                });
-            }
-            Request::PerformAction { action } => {
-                data.text_input_handle
-                    .with_active_text_input(|ti, _surface| match action {
-                        wayland_server::WEnum::Value(action) => ti.perform_action(action),
-                        wayland_server::WEnum::Unknown(unk) => {
-                            tracing::warn!("Received unknown action {unk:?}, ignoring")
-                        }
-                    });
-            }
+
             Request::Commit { serial } => {
                 let current_serial = data
                     .handle

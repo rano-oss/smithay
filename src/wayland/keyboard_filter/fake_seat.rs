@@ -1,4 +1,7 @@
-use crate::input::{keyboard::{KeyboardHandle, KeymapFile, XkbConfig}, Seat, SeatHandler, SeatState};
+use crate::input::{
+    keyboard::{KeyboardHandle, KeymapFile, XkbConfig},
+    Seat, SeatHandler, SeatState,
+};
 
 use std::sync::{Arc, Mutex};
 
@@ -13,8 +16,14 @@ pub(crate) fn fake_seat<D: SeatHandler + 'static>(
     {
         let arc = &seat.arc;
         let mut inner = arc.inner.lock().unwrap();
-        
-        let mut kb = KeyboardHandle::new(xkb_config, repeat_delay, repeat_rate).unwrap();
+
+        let mut kb = KeyboardHandle::new(
+            xkb_config,
+            repeat_delay,
+            repeat_rate,
+            xkbcommon::xkb::CONTEXT_NO_FLAGS,
+        )
+        .unwrap();
         Arc::get_mut(&mut kb.arc).unwrap().keymap = keymap;
         inner.keyboard = Some(kb)
     }

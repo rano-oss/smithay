@@ -1,8 +1,10 @@
 //! Keyboard-related types for smithay's input abstraction
 
-use crate::backend::input::KeyState;
+use crate::backend::input::{Event, InputBackend, KeyEvent, KeyState, KeyboardKeyEvent as KeyboardKeyEventTrait};
 use crate::utils::{IsAlive, SERIAL_COUNTER, Serial};
+use calloop::{LoopHandle, RegistrationToken};
 use downcast_rs::{Downcast, impl_downcast};
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 #[cfg(feature = "wayland_frontend")]
@@ -14,7 +16,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use thiserror::Error;
-use tracing::{debug, info, info_span, instrument, trace};
+use tracing::{debug, error, info, info_span, instrument, trace};
 
 use xkbcommon::xkb::ffi::XKB_STATE_LAYOUT_EFFECTIVE;
 pub use xkbcommon::xkb::{self, ContextFlags, Keycode, Keysym, keysyms};

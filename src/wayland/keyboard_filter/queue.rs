@@ -1,9 +1,21 @@
-use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::{Arc, Mutex}};
+use std::{
+    cell::RefCell,
+    collections::VecDeque,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use wayland_server::protocol::{wl_keyboard, wl_surface::WlSurface};
 use xkbcommon::xkb::Keycode;
 
-use crate::{backend::input::KeyEvent, input::{keyboard::{KeyboardHandle, KeyboardInnerHandle, KeyboardTargetWithData, ModifiersState}, SeatHandler}, utils::Serial};
+use crate::{
+    backend::input::KeyEvent,
+    input::{
+        keyboard::{KeyboardHandle, KeyboardInnerHandle, KeyboardTargetWithData, ModifiersState},
+        SeatHandler,
+    },
+    utils::Serial,
+};
 
 #[derive(Clone, Copy)]
 pub enum Action {
@@ -43,13 +55,11 @@ pub(crate) struct DispatchQueue {
 
 impl DispatchQueue {
     /// Creates a new instance of key filter and initializes it.
-    pub(crate) fn new(
-        //filter: &super::Filter,
+    pub(crate) fn new(//filter: &super::Filter,
         /*client_keyboards: &Arc<Mutex<
             Vec<wayland_server::Weak<wl_keyboard::WlKeyboard>>
         >>,
-        surface: &WlSurface,*/
-    ) -> Self {
+        surface: &WlSurface,*/) -> Self {
         Self {
             //filter: filter.clone(),
             //client_keyboards: Arc::downgrade(client_keyboards),
@@ -57,7 +67,7 @@ impl DispatchQueue {
             //focused_surface: surface.clone(),
         }
     }
-    
+
     pub(crate) fn push_event(&self, event: KeyboardEvent) {
         // TODO: unnecessary (?) Sync requirement causes the need to lock
         let mut events = self.events_to_filter.lock().unwrap();
@@ -74,11 +84,10 @@ impl DispatchQueue {
     ) {
         let seat = &keyboard.get_seat(data);
         let focus = keyboard.current_focus();
-        let focus = focus.as_ref()
-            .map(|f| KeyboardTargetWithData {
-                target: f,
-                data: Rc::new(RefCell::new(data)),
-            });
+        let focus = focus.as_ref().map(|f| KeyboardTargetWithData {
+            target: f,
+            data: Rc::new(RefCell::new(data)),
+        });
         let inner = keyboard.arc.internal.lock().unwrap();
         KeyboardInnerHandle::<D>::input_generic(
             inner.xkb_related_state(),
@@ -95,7 +104,7 @@ impl DispatchQueue {
             },
         );
     }
-    
+
     pub(crate) fn events(&self) -> &Arc<Mutex<VecDeque<(EventState, KeyboardEvent)>>> {
         &self.events_to_filter
     }

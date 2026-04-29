@@ -1,7 +1,6 @@
 use crate::{
     backend::input::KeyEvent,
     input::{
-        Seat, SeatHandler,
         keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
@@ -9,16 +8,17 @@ use crate::{
             GestureSwipeUpdateEvent, MotionEvent, PointerTarget, RelativeMotionEvent,
         },
         touch::TouchTarget,
+        Seat, SeatHandler,
     },
-    utils::{Client, IsAlive, Logical, Rectangle, Serial, Size, user_data::UserDataMap},
+    utils::{user_data::UserDataMap, Client, IsAlive, Logical, Rectangle, Serial, Size},
     wayland::{
         compositor,
-        seat::{WaylandFocus, keyboard::enter_internal},
+        seat::{keyboard::enter_internal, WaylandFocus},
     },
 };
 #[cfg(feature = "desktop")]
 use crate::{
-    desktop::{WindowSurfaceType, utils::under_from_surface_tree},
+    desktop::{utils::under_from_surface_tree, WindowSurfaceType},
     utils::Point,
 };
 
@@ -28,8 +28,8 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     sync::{
-        Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
+        Arc, Mutex, Weak,
     },
 };
 use tracing::warn;
@@ -40,7 +40,7 @@ use x11rb::{
     connection::Connection as _,
     properties::{WmClass, WmHints, WmSizeHints},
     protocol::{
-        res::{ClientIdSpec, query_client_ids},
+        res::{query_client_ids, ClientIdSpec},
         xproto::{
             Atom, AtomEnum, ClientMessageEvent, ConfigureWindowAux, ConnectionExt as _, EventMask,
             InputFocus, PropMode, Window as X11Window,
@@ -50,7 +50,7 @@ use x11rb::{
     wrapper::ConnectionExt,
 };
 
-use super::{X11Wm, XwmId, send_configure_notify};
+use super::{send_configure_notify, X11Wm, XwmId};
 
 /// X11 window managed by an [`X11Wm`](super::X11Wm)
 #[derive(Debug, Clone)]
@@ -1308,7 +1308,7 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for X11Surface {
             KeyboardTarget::key(surface, seat, data, key, state, serial, time)
         } else if let Some((_, keys, _, pending_serial)) = xstate.pending_enter.as_mut() {
             let raw = key.raw_code();
-            if state == KeyState::Released {
+            if state == KeyEvent::Released {
                 keys.retain(|c| *c != raw);
             } else {
                 keys.push(raw);

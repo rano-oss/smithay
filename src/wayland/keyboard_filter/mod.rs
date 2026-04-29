@@ -4,15 +4,36 @@
 //!
 //! The current implementation supports filtering for input method purposes.
 
-use std::{collections::HashSet, sync::{Arc, Mutex}};
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+};
 
-use tracing::{warn, error};
+use tracing::{error, warn};
 
-use wayland_client::WEnum;
-use wayland_server::{backend::GlobalId, protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface}, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, Weak};
-use wl_input_method::{input_method::v1::server::xx_input_method_v1::XxInputMethodV1, keyboard_filter::v1::server::{xx_keyboard_filter_manager_v1::{self, XxKeyboardFilterManagerV1}, xx_keyboard_filter_v1::{self, FilterAction, XxKeyboardFilterV1}}};
+use wayland_server::WEnum;
+use wayland_server::{
+    backend::GlobalId,
+    protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface},
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, Weak,
+};
+use wl_input_method::{
+    input_method::v1::server::xx_input_method_v1::XxInputMethodV1,
+    keyboard_filter::v1::server::{
+        xx_keyboard_filter_manager_v1::{self, XxKeyboardFilterManagerV1},
+        xx_keyboard_filter_v1::{self, FilterAction, XxKeyboardFilterV1},
+    },
+};
 
-use crate::{input::{keyboard::KeyboardHandle, Seat, SeatHandler}, utils::{Serial, SERIAL_COUNTER}, wayland::{input_method_v3::InputMethodUserData, keyboard_filter::queue::Action, seat::{KeyboardUserData, WaylandFocus}}};
+use crate::{
+    input::{keyboard::KeyboardHandle, Seat, SeatHandler},
+    utils::{Serial, SERIAL_COUNTER},
+    wayland::{
+        input_method_v3::InputMethodUserData,
+        keyboard_filter::queue::Action,
+        seat::{KeyboardUserData, WaylandFocus},
+    },
+};
 
 mod fake_seat;
 mod grab;
@@ -70,8 +91,8 @@ impl KeyboardFilterManagerState {
     }
 }
 
-
-impl<D> GlobalDispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData, D> for KeyboardFilterManagerState
+impl<D> GlobalDispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData, D>
+    for KeyboardFilterManagerState
 where
     D: GlobalDispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData>,
     D: Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
@@ -89,7 +110,7 @@ where
             resource,
             KeyboardFilterManagerUserData {
                 inner: Arc::new(Mutex::new(Default::default())),
-            }
+            },
         );
     }
 
@@ -102,8 +123,8 @@ fn register_kbd<D>(
     keyboard_handle: &KeyboardHandle<D>,
     new_keyboard: &WlKeyboard,
     surface_target: Option<&WlSurface>,
-)
-    where D: SeatHandler + 'static,
+) where
+    D: SeatHandler + 'static,
     <D as SeatHandler>::KeyboardFocus: WaylandFocus,
 {
     keyboard_handle.register_kbd(new_keyboard, surface_target)
@@ -127,7 +148,12 @@ where
         data_init: &mut DataInit<'_, D>,
     ) {
         match request {
-            xx_keyboard_filter_manager_v1::Request::BindToInputMethod { keyboard, input_method, surface, extensions } => {
+            xx_keyboard_filter_manager_v1::Request::BindToInputMethod {
+                keyboard,
+                input_method,
+                surface,
+                extensions,
+            } => {
                 dbg!("Binding stub");
                 {
                     let bind = data.inner.lock().unwrap();
@@ -136,7 +162,7 @@ where
                             xx_keyboard_filter_manager_v1::Error::AlreadyBound,
                             format!("WlKeyboard {keyboard:?} already bound"),
                         );
-                        return
+                        return;
                     };
                     if bind.bound_ims.contains(&input_method) {
                         resource.post_error(
@@ -150,18 +176,22 @@ where
                 let imdata = input_method.data::<InputMethodUserData<D>>().unwrap();
 
                 let keyboard_data = keyboard.data::<KeyboardUserData<D>>().unwrap();
-                
+
                 let keyboard_filter = data_init.init::<XxKeyboardFilterV1, _>(
                     extensions,
                     KeyboardFilterUserData {
-                        keyboard_handle: keyboard_data.handle.as_ref().expect("Seat doesn't support keyboard").clone(),
+                        keyboard_handle: keyboard_data
+                            .handle
+                            .as_ref()
+                            .expect("Seat doesn't support keyboard")
+                            .clone(),
                         manager_data: data.inner.clone(),
                         queue_slot: Default::default(),
                         bound_keyboard: keyboard.clone(),
                         bound_input_method: input_method.clone(),
                     },
                 );
-                
+
                 {
                     let mut im_filter = imdata.keyboard_filter.lock().unwrap();
                     *im_filter = Some(Filter {
@@ -171,15 +201,15 @@ where
                         register_kbd,
                     });
                 }
-                
+
                 {
                     let mut bind = data.inner.lock().unwrap();
                     bind.bound_keyboards.insert(keyboard);
                     bind.bound_ims.insert(input_method);
                 }
-                
+
                 // FIXME: if IM already active, register the filter as keyboard interceptor
-            },
+            }
             xx_keyboard_filter_manager_v1::Request::Destroy => {
                 panic!("what to do?")
             }
@@ -187,7 +217,6 @@ where
         }
     }
 }
-
 
 #[allow(missing_docs)] // TODO
 #[macro_export]
@@ -209,21 +238,18 @@ macro_rules! delegate_keyboard_filter_manager_v1 {
 /// Handle for the input method to use
 #[derive(Debug, Clone)]
 pub(crate) struct Filter<D>
-    where D: SeatHandler
+where
+    D: SeatHandler,
 {
     intercept_keyboard: WlKeyboard,
     intercept_surface: WlSurface,
     /// Needed to access queue slot. KeyboardGrab doesn't have access to this struct directly, and it shouldn't. This is exclusively to help input method register a new grab and is kept simple and Arc-free.
     keyboard_filter: XxKeyboardFilterV1,
-    register_kbd: fn(
-        &KeyboardHandle<D>,
-        &WlKeyboard,
-        Option<&WlSurface>,
-    ),
+    register_kbd: fn(&KeyboardHandle<D>, &WlKeyboard, Option<&WlSurface>),
 }
 
 impl<D> Filter<D>
-    where
+where
     D: SeatHandler + 'static,
 {
     pub fn activate_grab(
@@ -233,16 +259,16 @@ impl<D> Filter<D>
         //keyboards: &Arc<Mutex<Vec<Weak<WlKeyboard>>>>,
         //surface: &WlSurface,
     ) {
-        let queue = DispatchQueue::new();//keyboards, surface);
+        let queue = DispatchQueue::new(); //keyboards, surface);
         {
             let keyboard_handle = seat.get_keyboard().unwrap().clone();
             let keymap_file = keyboard_handle.arc.keymap.clone();
-            
+
             keyboard_handle.set_grab(
                 state,
                 grab::KeyboardFilterGrab::new(
                     self.register_kbd,
-                    self.intercept_keyboard.clone(), 
+                    self.intercept_keyboard.clone(),
                     self.intercept_surface.clone(),
                     keymap_file,
                     queue.clone(),
@@ -297,12 +323,7 @@ where
             Request::Unbind => {
                 if let Some(queue) = queue.as_ref() {
                     for e in queue.events().lock().unwrap().drain(..) {
-                        queue.apply(
-                            e,
-                            Action::Passthrough,
-                            &data.keyboard_handle,
-                            state,
-                        );
+                        queue.apply(e, Action::Passthrough, &data.keyboard_handle, state);
                     }
                 }
                 let mut mgr = data.manager_data.lock().unwrap();
@@ -324,24 +345,27 @@ where
                     WEnum::Value(unk) => {
                         error!("Unsupported action {unk:?}");
                         return;
-                    },
+                    }
                     WEnum::Unknown(unk) => {
                         error!("Unsupported action {unk}");
                         return;
-                    },
+                    }
                 };
-            
+
                 let mut events = queue.events().lock().unwrap();
                 while let Some(e) = events.pop_back() {
                     let (action, stop) = {
                         if Serial(serial) > e.1.serial {
-                            resource.post_error(xx_keyboard_filter_v1::Error::InvalidSerial, "Filter serial newer than awaited");
+                            resource.post_error(
+                                xx_keyboard_filter_v1::Error::InvalidSerial,
+                                "Filter serial newer than awaited",
+                            );
                             return;
                         };
                         (action, true)
                     };
                     //if e.1.is_filterable() {
-                        queue.apply(e, action, &data.keyboard_handle, state);
+                    queue.apply(e, action, &data.keyboard_handle, state);
                     if stop {
                         return;
                     }
@@ -353,7 +377,7 @@ where
     }
     fn destroyed(
         state: &mut D,
-        _client: wayland_backend::server::ClientId,
+        _client: wayland_server::backend::ClientId,
         _resource: &XxKeyboardFilterV1,
         data: &KeyboardFilterUserData<D>,
     ) {
@@ -389,12 +413,9 @@ mod test {
         fn seat_state(&mut self) -> &mut crate::input::SeatState<Self> {
             unreachable!("Test code not meant to be executed");
         }
-        fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&Self::KeyboardFocus>) {
-        }
-        fn cursor_image(&mut self, _seat: &Seat<Self>, _image: crate::input::pointer::CursorImageStatus) {
-        }
-        fn led_state_changed(&mut self, _seat: &Seat<Self>, _led_state: crate::input::keyboard::LedState) {
-        }
+        fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&Self::KeyboardFocus>) {}
+        fn cursor_image(&mut self, _seat: &Seat<Self>, _image: crate::input::pointer::CursorImageStatus) {}
+        fn led_state_changed(&mut self, _seat: &Seat<Self>, _led_state: crate::input::keyboard::LedState) {}
     }
 
     delegate_keyboard_filter_manager_v1!(Handler);
@@ -411,10 +432,12 @@ mod test {
     fn assert_is_delegate<T>()
     where
         T: SeatHandler,
-        T: wayland_server::Dispatch<protocol::xx_keyboard_filter_v1::XxKeyboardFilterV1, KeyboardFilterUserData<T>>,
+        T: wayland_server::Dispatch<
+            protocol::xx_keyboard_filter_v1::XxKeyboardFilterV1,
+            KeyboardFilterUserData<T>,
+        >,
     {
     }
-
 
     #[test]
     fn test_valid_assignment() {

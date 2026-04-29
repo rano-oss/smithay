@@ -44,17 +44,12 @@ pub(crate) struct Instance {
 }
 
 impl Instance {
-    pub(crate) fn set_text_change_cause(&self, cause: impl ConvertInto<ChangeCause>) {
-        self.object.text_change_cause(cause.convert_into())
+    pub(crate) fn set_text_change_cause(&self, cause: impl Into<ChangeCause>) {
+        self.object.text_change_cause(cause.into())
     }
 
-    pub(crate) fn set_content_type(
-        &self,
-        hint: impl ConvertInto<ContentHint>,
-        purpose: impl ConvertInto<ContentPurpose>,
-    ) {
-        self.object
-            .content_type(hint.convert_into(), purpose.convert_into())
+    pub(crate) fn set_content_type(&self, hint: impl Into<ContentHint>, purpose: impl Into<ContentPurpose>) {
+        self.object.content_type(hint.into(), purpose.into())
     }
 
     /// Send the done incrementing the serial.

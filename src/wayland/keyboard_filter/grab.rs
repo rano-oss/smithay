@@ -3,8 +3,18 @@ use std::sync::{Arc, Mutex};
 use wayland_server::protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface};
 use xkbcommon::xkb::Keycode;
 
-use crate::{backend::input::KeyEvent, input::{keyboard::{GrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle, KeymapFile, ModifiersState, XkbConfig}, SeatHandler}, utils::Serial, wayland::keyboard_filter::{queue::KeyboardEvent, DispatchQueue}};
-
+use crate::{
+    backend::input::KeyEvent,
+    input::{
+        keyboard::{
+            GrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle, KeymapFile, ModifiersState,
+            XkbConfig,
+        },
+        SeatHandler,
+    },
+    utils::Serial,
+    wayland::keyboard_filter::{queue::KeyboardEvent, DispatchQueue},
+};
 
 /// Keyboard filtering grab
 pub struct KeyboardFilterGrab<D: SeatHandler> {
@@ -24,17 +34,19 @@ pub struct KeyboardFilterGrab<D: SeatHandler> {
 
 impl<D: SeatHandler> KeyboardFilterGrab<D> {
     pub fn new(
-        register_kbd: fn(
-            &KeyboardHandle<D>,
-            &WlKeyboard,
-            Option<&WlSurface>,
-        ),
+        register_kbd: fn(&KeyboardHandle<D>, &WlKeyboard, Option<&WlSurface>),
         keyboard: WlKeyboard,
         target_surface: WlSurface,
         keymap: Arc<Mutex<KeymapFile>>,
         inner: DispatchQueue,
     ) -> Self {
-        Self { keyboard, inner, target_surface, keymap, register_kbd: register_kbd }
+        Self {
+            keyboard,
+            inner,
+            target_surface,
+            keymap,
+            register_kbd: register_kbd,
+        }
     }
 }
 
@@ -52,11 +64,14 @@ where
         serial: Serial,
         time: u32,
     ) {
-        
         let (repeat_delay, repeat_rate) = handle.repeat_info();
         let q = &self.inner;
         q.push_event(KeyboardEvent {
-            keycode, key_event, modifiers, serial, time,
+            keycode,
+            key_event,
+            modifiers,
+            serial,
+            time,
         });
         // The keyboard is recreated every time to keep code simple, even if it prints on the console and calls xkb code. Recreating means the demo doesn't have to worry about stale values.
         let fake_seat = super::fake_seat::fake_seat(
@@ -70,7 +85,7 @@ where
         // It *can't* carry the correct (redirected) focus anyway because focus is of a generic type defined by the compositor.
         // Alternatively, we could modify KeyboardTarget to have a From<WlSurface>...
         (self.register_kbd)(&kb, &self.keyboard, Some(&self.target_surface));
-        
+
         let inner = kb.arc.internal.lock().unwrap();
         let inner = inner.xkb_related_state();
 
@@ -78,7 +93,11 @@ where
             inner,
             Some(&self.target_surface),
             &fake_seat,
-            keycode, key_event, modifiers, serial, time,
+            keycode,
+            key_event,
+            modifiers,
+            serial,
+            time,
             true,
         )
     }
@@ -93,7 +112,7 @@ where
         unimplemented!();
         handle.set_focus(data, focus, serial)
     }
-    
+
     fn start_data(&self) -> &GrabStartData<D> {
         &GrabStartData { focus: None }
     }

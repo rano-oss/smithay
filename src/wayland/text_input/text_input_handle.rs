@@ -118,7 +118,7 @@ impl TextInputHandle {
                 let data = text_input.data::<TextInputUserData>().unwrap();
                 let mut hook = data.surface_commit_hook.lock().unwrap();
                 let hook = hook.take().unwrap();
-                compositor::remove_post_commit_hook(&focus, hook);
+                compositor::remove_post_commit_hook(&focus, &hook);
             }
             text_input.leave(focus);
         });
