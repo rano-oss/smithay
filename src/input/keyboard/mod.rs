@@ -583,7 +583,6 @@ impl KnownKbds {
         surface: &wl_surface::WlSurface,
         mut f: impl FnMut(&dyn WlKeyboardApi),
     ) {
-        dbg!(keyboards);
         keyboards
             .iter()
             .filter_map(|k| k.upgrade().ok())

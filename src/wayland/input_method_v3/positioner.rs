@@ -2,10 +2,10 @@ use super::InputMethodManagerState;
 use crate::utils::{Logical, Point, Rectangle, Size};
 use std::cmp::min;
 use std::sync::Mutex;
-use wayland_server::{Dispatch, Resource, WEnum};
-use wl_input_method::input_method::xx::server::xx_input_popup_positioner_v1::{
+use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_positioner_v1::{
     self, Anchor, ConstraintAdjustment, Gravity, XxInputPopupPositionerV1,
 };
+use wayland_server::{Dispatch, Resource, WEnum};
 
 /// Not sure what to write here. I just copied the pattern of UserData without analyzing it.
 #[derive(Default, Debug)]

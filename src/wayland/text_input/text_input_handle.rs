@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use tracing::{debug, warn};
 
+use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3;
 use wayland_server::backend::{ClientId, ObjectId};
-use wayland_server::{protocol::wl_surface::WlSurface, Dispatch, Resource};
-use wl_input_method::text_input::mr::server::zwp_text_input_v3;
+use wayland_server::{Dispatch, Resource, protocol::wl_surface::WlSurface};
 use zwp_text_input_v3::{ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3};
 
 use crate::input::SeatHandler;
@@ -299,6 +299,20 @@ where
                 let _ = (pending_state, stage2_cursor_state);
                 commit(state, new_state, guard, data, resource, focus);
             }
+            zwp_text_input_v3::Request::SetAvailableActions { available_actions } => {
+                // Each action is a u32 (little-endian) in the array.
+                let actions: Vec<u32> = available_actions
+                    .chunks_exact(4)
+                    .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect();
+                pending_state.available_actions = Some(actions);
+            }
+            zwp_text_input_v3::Request::ShowInputPanel => {
+                pending_state.show_input_panel = true;
+            }
+            zwp_text_input_v3::Request::HideInputPanel => {
+                pending_state.hide_input_panel = true;
+            }
             zwp_text_input_v3::Request::Destroy => {
                 // Nothing to do
             }
@@ -404,21 +418,18 @@ fn commit<D>(
     }
 
     if let Some((hint, purpose)) = new_state.content_type.take() {
-        let hint =/* match hint {
-                        ContentHint::None => zwp_text_input_v3::ContentHint::None,
-                        _ => zwp_text_input_v3::ContentHint::None,
-                    };*/
-                    zwp_text_input_v3::ContentHint::None;
-        let purpose = match purpose {
-            ContentPurpose::Normal => zwp_text_input_v3::ContentPurpose::Normal,
-            ContentPurpose::Terminal => zwp_text_input_v3::ContentPurpose::Terminal,
-            _ => zwp_text_input_v3::ContentPurpose::Normal,
-        };
         data.input_method_handle.with_instance(move |input_method| {
             input_method.object.content_type(hint, purpose);
         });
         data.input_method_v3_handle.with_instance(move |input_method| {
             input_method.object.content_type(hint, purpose);
+        });
+    }
+
+    if let Some(actions) = new_state.available_actions.take() {
+        let action_bytes: Vec<u8> = actions.iter().flat_map(|a| a.to_ne_bytes()).collect();
+        data.input_method_v3_handle.with_instance(move |input_method| {
+            input_method.object.set_available_actions(action_bytes);
         });
     }
 
@@ -505,4 +516,10 @@ struct TextInputState {
     /// Does not immediately get applied, instead the value goes to stage2 on Instance.
     cursor_rectangle: Option<Rectangle<i32, Logical>>,
     text_change_cause: Option<ChangeCause>,
+    /// Available actions (since v3.2). Each u32 is an action enum value.
+    available_actions: Option<Vec<u32>>,
+    /// Show input panel requested (since v3.2).
+    show_input_panel: bool,
+    /// Hide input panel requested (since v3.2).
+    hide_input_panel: bool,
 }

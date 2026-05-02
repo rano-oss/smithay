@@ -64,8 +64,7 @@ wayland-server = { version = "0.31.13", optional = true }
 wayland-sys = { version = "0.31.11", optional = true }
 wayland-backend = { version = "0.3.15", optional = true }
 winit = { version = "0.30.0", default-features = false, features = ["wayland", "wayland-dlopen", "x11", "rwh_06"], optional = true }
-#wl-input-method = { version = "0.0.2", git = "https://gitlab.freedesktop.org/dcz/wl-input-method.git", branch = "popup" }
-wl-input-method = { version = "0.0.3", path="../wl-input-method" }
+wayland-protocols-experimental = { version = "20251230.0.3", path = "../wayland-rs/wayland-protocols-experimental", features = ["server"], optional = true }
 x11rb = { version = "0.13.0", optional = true, features = ["res"]}
 xkbcommon = { version = "0.9.0", features = ["wayland"]}
 encoding_rs = { version = "0.8.33", optional = true }
@@ -111,7 +110,7 @@ renderer_test = []
 tracy_gpu_profiling = ["renderer_gl", "tracy-client"]
 use_system_lib = ["wayland_frontend", "wayland-backend/server_system", "wayland-sys", "gbm?/import-wayland"]
 use_bindgen = ["drm-ffi/use_bindgen", "gbm/use_bindgen", "input/use_bindgen"]
-wayland_frontend = ["wayland-server", "wayland-protocols", "wayland-protocols-wlr", "wayland-protocols-misc", "tempfile"]
+wayland_frontend = ["wayland-server", "wayland-protocols", "wayland-protocols-wlr", "wayland-protocols-misc", "wayland-protocols-experimental", "tempfile"]
 x11rb_event_source = ["x11rb"]
 xwayland = ["encoding_rs", "wayland_frontend", "x11rb/composite", "x11rb/xfixes", "x11rb/randr", "x11rb_event_source", "scopeguard"]
 test_all_features = ["default", "use_system_lib", "renderer_glow", "renderer_test"]
@@ -144,6 +143,19 @@ harness = false
 name = "geometry"
 harness = false
 
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release-with-debug]
 inherits = "release"
 debug = true
+
+[patch.crates-io]
+wayland-server = { path = "../wayland-rs/wayland-server" }
+wayland-backend = { path = "../wayland-rs/wayland-backend" }
+wayland-scanner = { path = "../wayland-rs/wayland-scanner" }
+wayland-client = { path = "../wayland-rs/wayland-client" }
+wayland-protocols = { path = "../wayland-rs/wayland-protocols" }
+wayland-protocols-wlr = { path = "../wayland-rs/wayland-protocols-wlr" }
+wayland-protocols-misc = { path = "../wayland-rs/wayland-protocols-misc" }
+wayland-sys = { path = "../wayland-rs/wayland-sys" }

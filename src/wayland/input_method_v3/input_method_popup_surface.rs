@@ -1,9 +1,11 @@
 use std::cmp::PartialEq;
 use std::sync::{Arc, Mutex};
 
+use wayland_protocols_experimental::input_method::v1::server::xx_input_method_v1::XxInputMethodV1;
+use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_surface_v2::{
+    self, XxInputPopupSurfaceV2,
+};
 use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface, Dispatch, Resource};
-use wl_input_method::input_method::xx::server::xx_input_method_v1::XxInputMethodV1;
-use wl_input_method::input_method::xx::server::xx_input_popup_surface_v2::{self, XxInputPopupSurfaceV2};
 
 use crate::input::SeatHandler;
 use crate::utils::{

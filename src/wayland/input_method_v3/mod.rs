@@ -75,7 +75,7 @@ use wayland_server::{
     GlobalDispatch, New,
 };
 
-use wl_input_method::input_method::xx::server::{
+use wayland_protocols_experimental::input_method::v1::server::{
     xx_input_method_manager_v2::{self, XxInputMethodManagerV2},
     xx_input_method_v1::XxInputMethodV1,
     xx_input_popup_positioner_v1::XxInputPopupPositionerV1,
@@ -90,7 +90,7 @@ pub use input_method_handle::{InputMethodHandle, InputMethodUserData};
 
 use super::text_input::TextInputHandle;
 
-const MANAGER_VERSION: u32 = 2;
+const MANAGER_VERSION: u32 = 4;
 
 /// The role of the input method popup.
 pub const INPUT_POPUP_SURFACE_ROLE: &str = "zwp_input_popup_surface_v3";
@@ -273,22 +273,22 @@ where
 macro_rules! delegate_input_method_manager_v3 {
     ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
         $crate::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wl_input_method::input_method::xx::server::xx_input_method_manager_v2::XxInputMethodManagerV2:
+            $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_method_manager_v2::XxInputMethodManagerV2:
             $crate::wayland::input_method_v3::InputMethodManagerGlobalData
         ] => $crate::wayland::input_method_v3::InputMethodManagerState);
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wl_input_method::input_method::xx::server::xx_input_method_manager_v2::XxInputMethodManagerV2: ()
+            $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_method_manager_v2::XxInputMethodManagerV2: ()
         ] => $crate::wayland::input_method_v3::InputMethodManagerState);
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wl_input_method::input_method::xx::server::xx_input_method_v1::XxInputMethodV1:
+            $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_method_v1::XxInputMethodV1:
             $crate::wayland::input_method_v3::InputMethodUserData<Self>
         ] => $crate::wayland::input_method_v3::InputMethodManagerState);
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wl_input_method::input_method::xx::server::xx_input_popup_surface_v2::XxInputPopupSurfaceV2:
+            $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_popup_surface_v2::XxInputPopupSurfaceV2:
             $crate::wayland::input_method_v3::InputMethodPopupSurfaceUserData
         ] => $crate::wayland::input_method_v3::InputMethodManagerState);
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wl_input_method::input_method::xx::server::xx_input_popup_positioner_v1::XxInputPopupPositionerV1:
+            $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_popup_positioner_v1::XxInputPopupPositionerV1:
             $crate::wayland::input_method_v3::PositionerUserData
         ] => $crate::wayland::input_method_v3::InputMethodManagerState);
     };

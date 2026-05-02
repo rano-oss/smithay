@@ -3,26 +3,24 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
-use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
-use wl_input_method::input_method::xx::server::{
-    xx_input_method_v1::{self, XxInputMethodV1},
+use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::Action;
+use wayland_protocols_experimental::input_method::v1::server::{
+    xx_input_method_v1::{self, ProtocolCompat, XxInputMethodV1},
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
+use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
+use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
 
 use crate::{
-    input::{
-        keyboard::{KeyboardHandle, WlKeyboardApi},
-        Seat, SeatHandler,
-    },
+    input::{Seat, SeatHandler, keyboard::KeyboardHandle},
     utils::{Logical, Rectangle},
     wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle},
 };
 
 use super::{
+    INPUT_POPUP_SURFACE_ROLE, InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData,
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
-    positioner::{PositionerState, PositionerUserData},
-    InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
+    positioner::PositionerUserData,
 };
 
 /// Slot for an optional input method
@@ -38,8 +36,6 @@ pub(crate) struct InputMethod {
     pub serial: u32,
     pub active: bool,
     pub popup_handles: Vec<PopupSurface>,
-    /// TODO: unused, previous experiment
-    pub keyboard_filter_handle: Arc<Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>>,
     /// Relative to surface on which input method is enabled
     pub cursor_rectangle: Rectangle<i32, Logical>,
 }
@@ -51,7 +47,6 @@ impl fmt::Debug for InputMethod {
             .field("serial", &self.serial)
             .field("active", &self.active)
             .field("popup_handles", &self.popup_handles)
-            .field("filter", &"TODO")
             .field("cursor_rectangle", &self.cursor_rectangle)
             .finish()
     }
@@ -80,14 +75,12 @@ impl InputMethodHandle {
             instance.serial = 0;
             instance.object.unavailable();
         } else {
-            let data = instance.data::<InputMethodUserData<D>>().unwrap();
             inner.instance = Some(InputMethod {
                 object: instance.clone(),
                 serial: 0,
                 active: false,
                 popup_handles: vec![],
                 cursor_rectangle: Rectangle::default(),
-                keyboard_filter_handle: data.keyboard_handle.arc.known_kbds.interceptor.clone(),
             });
         }
     }
@@ -150,15 +143,16 @@ impl InputMethodHandle {
     /// Activate input method on the given surface.
     pub(crate) fn activate_input_method<D: SeatHandler + 'static>(
         &self,
-        state: &mut D,
-        _surface: &WlSurface,
+        _state: &mut D,
+        surface: &WlSurface,
     ) {
         self.with_instance(|im| {
             im.object.activate();
+            im.object.announce_protocol_compat(ProtocolCompat::TextInputV3);
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
             let filter = data.keyboard_filter.lock().unwrap();
             if let Some(keyboard_filter) = filter.as_ref() {
-                keyboard_filter.activate_grab(state, &data.seat);
+                keyboard_filter.activate_interceptor(&data.seat, surface);
             }
             im.active = true;
         });
@@ -176,12 +170,10 @@ impl InputMethodHandle {
             for popup in im.popup_handles.drain(..) {
                 (data.dismiss_popup)(state, popup.clone());
             }
-            let known_kbds = &data.keyboard_handle.arc.known_kbds;
-            {
-                let mut interceptor = known_kbds.interceptor.lock().unwrap();
-                *interceptor = None;
+            let filter = data.keyboard_filter.lock().unwrap();
+            if let Some(keyboard_filter) = filter.as_ref() {
+                keyboard_filter.deactivate_interceptor(&data.seat);
             }
-            im.keyboard_filter_handle = Arc::new(Mutex::new(None));
         });
     }
 }
@@ -194,9 +186,8 @@ pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) text_input_handle: TextInputHandle,
     /// Handle to main keyboard for registering sub-keyboards
     pub(crate) keyboard_handle: KeyboardHandle<D>,
-    /// Currently bound filter. This is this IM instance's "master copy" to be cloned into KeyFilter instances.
-    /// KeyFilter shall not outlive its input method, so that's fine.
-    pub(crate) keyboard_filter: Arc<Mutex<Option<keyboard_filter::Filter<D>>>>,
+    /// Currently bound keyboard filter, set by the keyboard_filter protocol.
+    pub(crate) keyboard_filter: Arc<Mutex<Option<keyboard_filter::Filter>>>,
     /// This is just a copy from Input MethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup. That means other modules don't have to explicitly put D: InputMethodHandler when they call something that ends up calling this.
     /// (Not sure what the purpose of that is, but it seems consistent...)
     pub(crate) dismiss_popup: fn(&mut D, PopupSurface),
@@ -266,6 +257,29 @@ where
                     .unwrap_or(0);
 
                 data.text_input_handle.done(serial != current_serial);
+            }
+            Request::PerformAction { action } => {
+                let serial = data
+                    .handle
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .instance
+                    .as_ref()
+                    .map(|i| i.serial)
+                    .unwrap_or(0);
+                let action = action.into_result().unwrap_or(Action::None);
+                data.text_input_handle.with_active_text_input(|ti, _surface| {
+                    if ti.version() >= 2 {
+                        ti.action(action, serial);
+                    }
+                });
+            }
+            Request::MoveCursor { cursor: _, anchor: _ } => {
+                // move_cursor is an xx_text_input_v3 feature, not available on zwp_text_input_v3.
+                // This would need to be forwarded if we also implement xx_text_input_v3 on the client side.
+                // For now, log and skip.
+                tracing::debug!("move_cursor request received but zwp_text_input_v3 doesn't support it");
             }
             Request::GetInputPopupSurface {
                 id,
