@@ -130,6 +130,12 @@ pub trait InputMethodHandler {
     /// Sets the parent location so the popup surface can be placed correctly
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, Logical>;
 
+    /// Returns the app_id for an input method client.
+    ///
+    /// Typically resolved from the client's security context.
+    /// If `None` is returned, the input method instance will not be registered.
+    fn input_method_app_id(&self, client: &Client, dh: &DisplayHandle) -> Option<String>;
+
     /// Copied from wl_layer_surface.
     /// What is this for? What arguments make sense?
     fn popup_ack_configure(
@@ -226,12 +232,12 @@ where
     D: 'static,
 {
     fn request(
-        _state: &mut D,
-        _client: &Client,
+        state: &mut D,
+        client: &Client,
         _: &XxInputMethodManagerV2,
         request: xx_input_method_manager_v2::Request,
         _: &(),
-        _dh: &DisplayHandle,
+        dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
         match request {
@@ -243,6 +249,28 @@ where
                 user_data.insert_if_missing(InputMethodHandle::default);
                 let handle = user_data.get::<InputMethodHandle>().unwrap();
                 let text_input_handle = user_data.get::<TextInputHandle>().unwrap();
+
+                let app_id = match state.input_method_app_id(client, dh) {
+                    Some(id) => id,
+                    None => {
+                        tracing::warn!("Input method client has no app_id (no security context?), rejecting registration");
+                        // Must still init the resource to avoid panic, then send unavailable
+                        let instance = data_init.init(
+                            input_method,
+                            InputMethodUserData {
+                                seat: seat.clone(),
+                                handle: handle.clone(),
+                                text_input_handle: text_input_handle.clone(),
+                                keyboard_handle: seat.get_keyboard().unwrap(),
+                                keyboard_filter: Default::default(),
+                                dismiss_popup: D::dismiss_popup,
+                            },
+                        );
+                        instance.unavailable();
+                        return;
+                    }
+                };
+
                 text_input_handle.enter();
                 let instance = data_init.init(
                     input_method,
@@ -255,7 +283,7 @@ where
                         dismiss_popup: D::dismiss_popup,
                     },
                 );
-                handle.add_instance::<D>(&instance);
+                handle.add_instance(&instance, app_id.clone());
             }
             xx_input_method_manager_v2::Request::GetPositioner { id } => {
                 data_init.init(id, PositionerUserData::default());

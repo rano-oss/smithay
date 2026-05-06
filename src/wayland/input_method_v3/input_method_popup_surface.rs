@@ -311,7 +311,12 @@ where
                     let positioner = *positioner.inner.lock().unwrap();
                     let mut inner = im.handle.inner.lock().unwrap();
                     // This request comes to an input_method object, so an empty instance is a bug.
-                    let instance = inner.instance.as_mut().unwrap();
+                    let active_id = inner.active_input_method_id.clone().unwrap();
+                    let instance = inner
+                        .instances
+                        .iter_mut()
+                        .find(|i| i.object.id() == active_id)
+                        .unwrap();
                     let cursor = instance.cursor_rectangle;
                     let popup = instance
                         .popup_handles

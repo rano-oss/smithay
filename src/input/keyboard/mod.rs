@@ -1674,7 +1674,6 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         time: u32,
         send_key: bool,
     ) {
-        dbg!(key_state);
         let focus = match focus.as_ref() {
             Some(focus) => *focus,
             None => return,

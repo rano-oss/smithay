@@ -144,7 +144,6 @@ impl Filter {
         let keyboard_handle = seat.get_keyboard().unwrap();
         let filter_data = self.keyboard_filter.data::<KeyboardFilterUserData<D>>().unwrap();
 
-        tracing::debug!("activate_interceptor: focused_surface={:?}", focused_surface.id());
         *self.focused_surface.lock().unwrap() = Some(focused_surface.clone());
 
         let interceptor = FilterInterceptor {
@@ -221,7 +220,6 @@ where
                 mgr.bound_ims.remove(&data.bound_input_method);
             }
             Request::Filter { serial, action } => {
-                tracing::debug!("Filter request: serial={serial}, action={action:?}");
                 let action = match action {
                     WEnum::Value(FilterAction::Passthrough) => true,
                     WEnum::Value(FilterAction::Consume) => false,
@@ -236,37 +234,15 @@ where
                 };
 
                 let mut pending = data.pending_events.lock().unwrap();
-                tracing::debug!(
-                    "Pending serials: {:?}",
-                    pending.iter().map(|e| e.serial).collect::<Vec<_>>()
-                );
                 // Find the event matching this serial (events are in reverse order, newest first)
                 if let Some(pos) = pending.iter().position(|e| e.serial == serial) {
                     let event = pending.remove(pos).unwrap();
                     if action {
                         // Passthrough: forward to real client
                         let focused = data.focused_surface.lock().unwrap();
-                        tracing::debug!(
-                            "Passthrough: focused_surface={:?}",
-                            focused.as_ref().map(|s| s.id())
-                        );
                         if let Some(ref surface) = *focused {
                             let keyboards = data.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
-                            let matching = keyboards
-                                .iter()
-                                .filter_map(|k| k.upgrade().ok())
-                                .filter(|k| k.id().same_client_as(&surface.id()))
-                                .count();
-                            tracing::debug!(
-                                "Known keyboards: {}, matching surface client: {matching}",
-                                keyboards.len()
-                            );
                             KnownKbds::for_each_focused_kbd(&keyboards, surface, |kbd| {
-                                tracing::debug!(
-                                    "Forwarding key serial={} key={} to kbd",
-                                    event.serial,
-                                    event.key
-                                );
                                 kbd.key(event.serial, event.time, event.key, event.state);
                             });
                         } else {

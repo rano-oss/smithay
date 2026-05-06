@@ -8,26 +8,31 @@ use wayland_protocols_experimental::input_method::v1::server::{
     xx_input_method_v1::{self, ProtocolCompat, XxInputMethodV1},
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
+use wayland_server::{
+    backend::{ClientId, ObjectId},
+    protocol::wl_surface::WlSurface,
+};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
-use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface};
 
 use crate::{
-    input::{Seat, SeatHandler, keyboard::KeyboardHandle},
+    input::{keyboard::KeyboardHandle, Seat, SeatHandler},
     utils::{Logical, Rectangle},
     wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle},
 };
 
 use super::{
-    INPUT_POPUP_SURFACE_ROLE, InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData,
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
     positioner::PositionerUserData,
+    InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
-/// Slot for an optional input method
+/// Contains all input method instances and tracks which one is active.
 #[derive(Default, Debug)]
-pub(crate) struct MaybeInstance {
-    /// Optional input method
-    pub instance: Option<InputMethod>,
+pub(crate) struct InputMethodState {
+    /// All registered input method instances.
+    pub instances: Vec<InputMethod>,
+    /// The object ID of the currently active input method instance.
+    pub active_input_method_id: Option<ObjectId>,
 }
 
 /// Contains input method state
@@ -35,6 +40,7 @@ pub(crate) struct InputMethod {
     pub object: XxInputMethodV1,
     pub serial: u32,
     pub active: bool,
+    pub app_id: String,
     pub popup_handles: Vec<PopupSurface>,
     /// Relative to surface on which input method is enabled
     pub cursor_rectangle: Rectangle<i32, Logical>,
@@ -46,6 +52,7 @@ impl fmt::Debug for InputMethod {
             .field("object", &self.object)
             .field("serial", &self.serial)
             .field("active", &self.active)
+            .field("app_id", &self.app_id)
             .field("popup_handles", &self.popup_handles)
             .field("cursor_rectangle", &self.cursor_rectangle)
             .finish()
@@ -63,42 +70,86 @@ impl InputMethod {
 /// Handle to a possible input method instance.
 #[derive(Default, Debug, Clone)]
 pub struct InputMethodHandle {
-    // TODO: why does this need to be shared?
-    pub(crate) inner: Arc<Mutex<MaybeInstance>>,
+    pub(crate) inner: Arc<Mutex<InputMethodState>>,
 }
 
 impl InputMethodHandle {
-    /// Assigns a new instance
-    pub(super) fn add_instance<D: SeatHandler + 'static>(&self, instance: &XxInputMethodV1) {
+    /// Assigns a new instance with the given app_id.
+    pub(super) fn add_instance(&self, instance: &XxInputMethodV1, app_id: String) {
         let mut inner = self.inner.lock().unwrap();
-        if let Some(instance) = inner.instance.as_mut() {
-            instance.serial = 0;
-            instance.object.unavailable();
-        } else {
-            inner.instance = Some(InputMethod {
-                object: instance.clone(),
-                serial: 0,
-                active: false,
-                popup_handles: vec![],
-                cursor_rectangle: Rectangle::default(),
-            });
-        }
+        inner.instances.push(InputMethod {
+            object: instance.clone(),
+            serial: 0,
+            active: false,
+            app_id,
+            popup_handles: vec![],
+            cursor_rectangle: Rectangle::default(),
+        });
     }
 
-    /// Whether there's an active instance of input-method.
+    /// Whether there's any registered input method instance available.
     pub(crate) fn has_instance(&self) -> bool {
-        self.inner.lock().unwrap().instance.is_some()
+        !self.inner.lock().unwrap().instances.is_empty()
     }
 
-    /// Callback function to access the input method object
+    /// List all registered input method app_ids.
+    pub fn list_instances(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .unwrap()
+            .instances
+            .iter()
+            .map(|i| i.app_id.clone())
+            .collect()
+    }
+
+    /// Callback function to access the active input method instance.
     pub(crate) fn with_instance<F>(&self, f: F)
     where
         F: FnOnce(&mut InputMethod),
     {
         let mut inner = self.inner.lock().unwrap();
-        if let Some(instance) = inner.instance.as_mut() {
+        let active_id = match &inner.active_input_method_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        if let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) {
             f(instance);
         }
+    }
+
+    /// Set which input method instance should be active by app_id.
+    /// Returns true if an instance with the given app_id was found and set as active.
+    pub fn set_active_instance(&self, app_id: &str) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+
+        if let Some(instance) = inner.instances.iter().find(|i| i.app_id == app_id) {
+            let object_id = instance.object.id();
+            let old_active = inner.active_input_method_id.clone();
+
+            // If switching to a different instance, deactivate old
+            if old_active.as_ref() != Some(&object_id) {
+                if let Some(old_id) = old_active {
+                    if let Some(old_inst) = inner.instances.iter_mut().find(|i| i.object.id() == old_id) {
+                        old_inst.object.deactivate();
+                        old_inst.done();
+                        old_inst.active = false;
+                    }
+                }
+            }
+
+            inner.active_input_method_id = Some(object_id);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Clear the active input method instance.
+    pub fn clear_active_instance<D: SeatHandler + 'static>(&self, state: &mut D) {
+        self.deactivate_input_method(state);
+        let mut inner = self.inner.lock().unwrap();
+        inner.active_input_method_id = None;
     }
 
     pub(crate) fn set_cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
@@ -107,9 +158,13 @@ impl InputMethodHandle {
         cursor: Rectangle<i32, Logical>,
     ) {
         let mut inner = self.inner.lock().unwrap();
-        if let Some(inner) = &mut inner.instance {
-            inner.cursor_rectangle = cursor;
-            for popup_surface in &mut inner.popup_handles {
+        let active_id = match &inner.active_input_method_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        if let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) {
+            instance.cursor_rectangle = cursor;
+            for popup_surface in &mut instance.popup_handles {
                 let popup_geometry = state.popup_geometry(
                     &popup_surface.get_parent().surface,
                     &cursor,
@@ -123,29 +178,29 @@ impl InputMethodHandle {
                     geometry: popup_geometry,
                 });
 
-                // TODO: send now or on .done?
                 state.popup_repositioned(popup_surface.clone());
             }
         }
     }
 
-    pub(crate) fn done(&self) {
+    /// Send `done` to the active input method instance, incrementing its serial.
+    pub fn done(&self) {
         let mut inner = self.inner.lock().unwrap();
+        let active_id = match &inner.active_input_method_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
 
-        if let Some(inner) = &mut inner.instance {
-            for popup_surface in &mut inner.popup_handles {
+        if let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) {
+            for popup_surface in &mut instance.popup_handles {
                 popup_surface.send_pending_configure();
             }
-            inner.done();
+            instance.done();
         }
     }
 
     /// Activate input method on the given surface.
-    pub(crate) fn activate_input_method<D: SeatHandler + 'static>(
-        &self,
-        _state: &mut D,
-        surface: &WlSurface,
-    ) {
+    pub fn activate_input_method<D: SeatHandler + 'static>(&self, _state: &mut D, surface: &WlSurface) {
         self.with_instance(|im| {
             im.object.activate();
             im.object.announce_protocol_compat(ProtocolCompat::TextInputV3);
@@ -161,7 +216,7 @@ impl InputMethodHandle {
     /// Deactivate the active input method.
     ///
     /// This includes a complete sequence including .done.
-    pub(crate) fn deactivate_input_method<D: SeatHandler + 'static>(&self, state: &mut D) {
+    pub fn deactivate_input_method<D: SeatHandler + 'static>(&self, state: &mut D) {
         self.with_instance(|im| {
             im.object.deactivate();
             im.done();
@@ -188,8 +243,7 @@ pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     /// Currently bound keyboard filter, set by the keyboard_filter protocol.
     pub(crate) keyboard_filter: Arc<Mutex<Option<keyboard_filter::Filter>>>,
-    /// This is just a copy from Input MethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup. That means other modules don't have to explicitly put D: InputMethodHandler when they call something that ends up calling this.
-    /// (Not sure what the purpose of that is, but it seems consistent...)
+    /// This is just a copy from InputMethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup.
     pub(crate) dismiss_popup: fn(&mut D, PopupSurface),
 }
 
@@ -246,28 +300,26 @@ where
             }
 
             Request::Commit { serial } => {
-                let current_serial = data
-                    .handle
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .instance
-                    .as_ref()
-                    .map(|i| i.serial)
-                    .unwrap_or(0);
+                let current_serial = {
+                    let inner = data.handle.inner.lock().unwrap();
+                    let active_id = inner.active_input_method_id.clone();
+                    active_id
+                        .and_then(|id| inner.instances.iter().find(|i| i.object.id() == id))
+                        .map(|i| i.serial)
+                        .unwrap_or(0)
+                };
 
                 data.text_input_handle.done(serial != current_serial);
             }
             Request::PerformAction { action } => {
-                let serial = data
-                    .handle
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .instance
-                    .as_ref()
-                    .map(|i| i.serial)
-                    .unwrap_or(0);
+                let serial = {
+                    let inner = data.handle.inner.lock().unwrap();
+                    let active_id = inner.active_input_method_id.clone();
+                    active_id
+                        .and_then(|id| inner.instances.iter().find(|i| i.object.id() == id))
+                        .map(|i| i.serial)
+                        .unwrap_or(0)
+                };
                 let action = action.into_result().unwrap_or(Action::None);
                 data.text_input_handle.with_active_text_input(|ti, _surface| {
                     if ti.version() >= 2 {
@@ -276,9 +328,6 @@ where
                 });
             }
             Request::MoveCursor { cursor: _, anchor: _ } => {
-                // move_cursor is an xx_text_input_v3 feature, not available on zwp_text_input_v3.
-                // This would need to be forwarded if we also implement xx_text_input_v3 on the client side.
-                // For now, log and skip.
                 tracing::debug!("move_cursor request received but zwp_text_input_v3 doesn't support it");
             }
             Request::GetInputPopupSurface {
@@ -287,66 +336,82 @@ where
                 positioner,
             } => {
                 let mut input_method = data.handle.inner.lock().unwrap();
-                if let Some(instance) = &mut input_method.instance {
-                    if instance.active {
-                        if compositor::give_role(&surface, INPUT_POPUP_SURFACE_ROLE).is_err()
-                            && compositor::get_role(&surface) != Some(INPUT_POPUP_SURFACE_ROLE)
-                        {
+                let active_id = match &input_method.active_input_method_id {
+                    Some(id) => id.clone(),
+                    None => return,
+                };
+                let instance = match input_method
+                    .instances
+                    .iter_mut()
+                    .find(|i| i.object.id() == active_id)
+                {
+                    Some(inst) => inst,
+                    None => return,
+                };
+
+                // Only allow popup creation from the active instance
+                if im.id() != active_id {
+                    im.post_error(
+                        xx_input_method_v1::Error::Inactive,
+                        "Popup may only be created on the active input method.",
+                    );
+                    return;
+                }
+
+                if instance.active {
+                    if compositor::give_role(&surface, INPUT_POPUP_SURFACE_ROLE).is_err()
+                        && compositor::get_role(&surface) != Some(INPUT_POPUP_SURFACE_ROLE)
+                    {
+                        im.post_error(
+                            xx_input_method_v1::Error::SurfaceHasRole,
+                            "Surface already has a role.",
+                        );
+                        return;
+                    }
+
+                    let parent_surface = match data.text_input_handle.focus().clone() {
+                        Some(parent) => parent,
+                        None => {
                             im.post_error(
-                                xx_input_method_v1::Error::SurfaceHasRole,
-                                "Surface already has a role.",
+                                xx_input_method_v1::Error::Inactive,
+                                "Popup may only be created on an active input method (no surface in text input focus).",
                             );
                             return;
                         }
+                    };
 
-                        let parent_surface = match data.text_input_handle.focus().clone() {
-                            Some(parent) => parent,
-                            None => {
-                                im.post_error(
-                                    xx_input_method_v1::Error::Inactive,
-                                    "Popup may only be created on an active input method (no surface in text input focus).",
-                                );
-                                return;
-                            }
-                        };
+                    let location = state.parent_geometry(&parent_surface);
+                    let parent = PopupParent {
+                        surface: parent_surface,
+                        location,
+                    };
 
-                        let location = state.parent_geometry(&parent_surface);
-                        let parent = PopupParent {
-                            surface: parent_surface,
-                            location,
-                        };
+                    let positioner_data = *positioner
+                        .data::<PositionerUserData>()
+                        .unwrap()
+                        .inner
+                        .lock()
+                        .unwrap();
 
-                        let positioner_data = *positioner
-                            .data::<PositionerUserData>()
-                            .unwrap()
-                            .inner
-                            .lock()
-                            .unwrap();
+                    let geometry =
+                        state.popup_geometry(&parent.surface, &instance.cursor_rectangle, &positioner_data);
 
-                        let geometry = state.popup_geometry(
-                            &parent.surface,
-                            &instance.cursor_rectangle,
-                            &positioner_data,
-                        );
-
-                        // TODO: feed the popup with the anchor chosen by the positioner
-                        let popup = PopupSurface::new(
-                            |data| data_init.init(id, data),
-                            im.clone(),
-                            parent,
-                            surface,
-                            instance.cursor_rectangle,
-                            geometry,
-                            positioner_data,
-                        );
-                        instance.popup_handles.push(popup.clone());
-                        state.new_popup(popup);
-                    } else {
-                        im.post_error(
-                            xx_input_method_v1::Error::Inactive,
-                            "Popup may only be created on an active input method.",
-                        );
-                    }
+                    let popup = PopupSurface::new(
+                        |data| data_init.init(id, data),
+                        im.clone(),
+                        parent,
+                        surface,
+                        instance.cursor_rectangle,
+                        geometry,
+                        positioner_data,
+                    );
+                    instance.popup_handles.push(popup.clone());
+                    state.new_popup(popup);
+                } else {
+                    im.post_error(
+                        xx_input_method_v1::Error::Inactive,
+                        "Popup may only be created on an active input method.",
+                    );
                 }
             }
             Request::Destroy => {
@@ -359,10 +424,20 @@ where
     fn destroyed(
         _state: &mut D,
         _client: ClientId,
-        _input_method: &XxInputMethodV1,
+        input_method: &XxInputMethodV1,
         data: &InputMethodUserData<D>,
     ) {
-        data.handle.inner.lock().unwrap().instance = None;
+        let destroyed_id = input_method.id();
+        let mut inner = data.handle.inner.lock().unwrap();
+
+        // Clear active ID if this was the active instance
+        if inner.active_input_method_id.as_ref() == Some(&destroyed_id) {
+            inner.active_input_method_id = None;
+        }
+
+        inner.instances.retain(|inst| inst.object.id() != destroyed_id);
+        drop(inner);
+
         let keyboards = &data.keyboard_handle.arc.known_kbds;
         keyboards.clear_interceptor();
         data.text_input_handle.leave();

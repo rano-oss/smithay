@@ -431,6 +431,15 @@ impl<BackendData: Backend> InputMethodHandlerV3 for AnvilState<BackendData> {
 
         positioner.get_geometry_from_anchor(*cursor, target)
     }
+
+    fn input_method_app_id(
+        &self,
+        _client: &wayland_server::Client,
+        _dh: &wayland_server::DisplayHandle,
+    ) -> Option<String> {
+        // Anvil does not support multi-IM; accept any client with a placeholder ID
+        Some("anvil-ime".to_string())
+    }
 }
 
 delegate_input_method_manager_v3!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
