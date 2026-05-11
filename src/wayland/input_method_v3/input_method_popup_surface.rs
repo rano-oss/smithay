@@ -87,6 +87,13 @@ impl PopupSurface {
         *role_data.positioner.lock().unwrap()
     }
 
+    /// Returns whether the popup position is frozen.
+    /// When frozen, cursor_rectangle changes do not reposition the popup.
+    pub fn frozen(&self) -> bool {
+        let role_data: &InputMethodPopupSurfaceUserData = self.surface_role.data().unwrap();
+        *role_data.frozen.lock().unwrap()
+    }
+
     /// Is the input method popup surface referred by this handle still alive?
     #[inline]
     pub fn alive(&self) -> bool {
@@ -249,6 +256,8 @@ pub struct InputMethodPopupSurfaceUserData {
     // State supplied by client.
     /// Computes the position of the popup according to provided rules
     pub(super) positioner: Mutex<PositionerState>,
+    /// Whether the popup position is frozen (not updated on cursor_rectangle changes)
+    pub(super) frozen: Mutex<bool>,
 }
 
 impl InputMethodPopupSurfaceUserData {
@@ -266,6 +275,7 @@ impl InputMethodPopupSurfaceUserData {
             configure_tracker,
             state: popup_state,
             positioner,
+            frozen: Mutex::new(false),
         }
     }
 }
@@ -324,7 +334,6 @@ where
                         .find(|h| h.surface_role == *popup)
                         .expect("This popup not tracked by its input method");
                     let parent_surface = popup.get_parent().surface.clone();
-                    // This locks input method instance. The geometry callback is going to be limited here. The lock can be released and reacquired for .set_position, but it's less readable, so better do it when the need comes.
                     let popup_geometry = state.popup_geometry(&parent_surface, &cursor, &positioner);
                     *data.positioner.lock().unwrap() = positioner;
 
@@ -339,6 +348,10 @@ where
                 state.popup_repositioned(popup);
 
                 im.handle.done();
+            }
+            Request::SetFrozen { frozen } => {
+                tracing::info!("SetFrozen: {}", frozen != 0);
+                *data.frozen.lock().unwrap() = frozen != 0;
             }
             Request::Destroy => {
                 // Nothing to do

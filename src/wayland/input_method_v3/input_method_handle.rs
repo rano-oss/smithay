@@ -164,21 +164,26 @@ impl InputMethodHandle {
         };
         if let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) {
             instance.cursor_rectangle = cursor;
-            for popup_surface in &mut instance.popup_handles {
-                let popup_geometry = state.popup_geometry(
-                    &popup_surface.get_parent().surface,
-                    &cursor,
-                    &popup_surface.positioner(),
-                );
 
-                let anchor = cursor; // FIXME: choose the anchor which the positioner wants
+            // Reposition popup(s) unless frozen
+            let popups_to_reposition: Vec<_> = instance
+                .popup_handles
+                .iter_mut()
+                .filter(|popup| !popup.frozen())
+                .map(|popup| {
+                    let positioner = popup.positioner();
+                    let parent_surface = popup.get_parent().surface.clone();
+                    let popup_geometry = state.popup_geometry(&parent_surface, &cursor, &positioner);
+                    popup.set_position(ImPopupLocation {
+                        anchor: cursor,
+                        geometry: popup_geometry,
+                    });
+                    popup.clone()
+                })
+                .collect();
 
-                popup_surface.set_position(ImPopupLocation {
-                    anchor,
-                    geometry: popup_geometry,
-                });
-
-                state.popup_repositioned(popup_surface.clone());
+            for popup in popups_to_reposition {
+                state.popup_repositioned(popup);
             }
         }
     }
@@ -422,13 +427,20 @@ where
     }
 
     fn destroyed(
-        _state: &mut D,
+        state: &mut D,
         _client: ClientId,
         input_method: &XxInputMethodV1,
         data: &InputMethodUserData<D>,
     ) {
         let destroyed_id = input_method.id();
         let mut inner = data.handle.inner.lock().unwrap();
+
+        // Find app_id before removing
+        let app_id = inner
+            .instances
+            .iter()
+            .find(|i| i.object.id() == destroyed_id)
+            .map(|i| i.app_id.clone());
 
         // Clear active ID if this was the active instance
         if inner.active_input_method_id.as_ref() == Some(&destroyed_id) {
@@ -441,5 +453,10 @@ where
         let keyboards = &data.keyboard_handle.arc.known_kbds;
         keyboards.clear_interceptor();
         data.text_input_handle.leave();
+
+        // Notify compositor
+        if let Some(app_id) = app_id {
+            state.input_method_instance_destroyed(&app_id);
+        }
     }
 }

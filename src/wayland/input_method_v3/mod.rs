@@ -90,7 +90,7 @@ pub use input_method_handle::{InputMethodHandle, InputMethodUserData};
 
 use super::text_input::TextInputHandle;
 
-const MANAGER_VERSION: u32 = 4;
+const MANAGER_VERSION: u32 = 3;
 
 /// The role of the input method popup.
 pub const INPUT_POPUP_SURFACE_ROLE: &str = "zwp_input_popup_surface_v3";
@@ -135,6 +135,16 @@ pub trait InputMethodHandler {
     /// Typically resolved from the client's security context.
     /// If `None` is returned, the input method instance will not be registered.
     fn input_method_app_id(&self, client: &Client, dh: &DisplayHandle) -> Option<String>;
+
+    /// Called when an input method instance is destroyed (client disconnected).
+    ///
+    /// This allows the compositor to perform cleanup (e.g. clearing IME status text).
+    fn input_method_instance_destroyed(&mut self, _app_id: &str) {}
+
+    /// Called when a new input method instance registers with the compositor.
+    ///
+    /// This allows the compositor to sync state (e.g. activate the correct IME for the current layout).
+    fn input_method_instance_registered(&mut self, _app_id: &str) {}
 
     /// Copied from wl_layer_surface.
     /// What is this for? What arguments make sense?
@@ -284,6 +294,7 @@ where
                     },
                 );
                 handle.add_instance(&instance, app_id.clone());
+                state.input_method_instance_registered(&app_id);
             }
             xx_input_method_manager_v2::Request::GetPositioner { id } => {
                 data_init.init(id, PositionerUserData::default());
