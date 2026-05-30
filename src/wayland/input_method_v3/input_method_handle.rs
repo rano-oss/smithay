@@ -207,6 +207,11 @@ impl InputMethodHandle {
     /// Activate input method on the given surface.
     pub fn activate_input_method<D: SeatHandler + 'static>(&self, _state: &mut D, surface: &WlSurface) {
         self.with_instance(|im| {
+            tracing::debug!(
+                app_id = %im.app_id,
+                serial = im.serial,
+                "activate_input_method: activating IM and installing keyboard filter interceptor"
+            );
             im.object.activate();
             im.object.announce_protocol_compat(ProtocolCompat::TextInputV3);
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
@@ -221,12 +226,21 @@ impl InputMethodHandle {
     /// Deactivate the active input method.
     ///
     /// This includes a complete sequence including .done.
+    /// Also clears any active preedit on the text-input client so the app
+    /// doesn't keep showing stale preedit text after the IM is gone.
     pub fn deactivate_input_method<D: SeatHandler + 'static>(&self, state: &mut D) {
         self.with_instance(|im| {
             im.object.deactivate();
             im.done();
             im.active = false;
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
+            // Clear preedit on the text-input client so the app stops showing it.
+            data.text_input_handle.with_active_text_input(|ti, _surface| {
+                ti.preedit_string(None, -1, -1);
+            });
+            // Send done so the client applies the cleared preedit.
+            data.text_input_handle.done(false);
+
             for popup in im.popup_handles.drain(..) {
                 (data.dismiss_popup)(state, popup.clone());
             }
@@ -313,8 +327,8 @@ where
                         .map(|i| i.serial)
                         .unwrap_or(0)
                 };
-
-                data.text_input_handle.done(serial != current_serial);
+                let discard = serial != current_serial;
+                data.text_input_handle.done(discard);
             }
             Request::PerformAction { action } => {
                 let serial = {
@@ -377,9 +391,9 @@ where
                     let parent_surface = match data.text_input_handle.focus().clone() {
                         Some(parent) => parent,
                         None => {
-                            im.post_error(
-                                xx_input_method_v1::Error::Inactive,
-                                "Popup may only be created on an active input method (no surface in text input focus).",
+                            // Race condition: focus may have been lost after client decided to create popup.
+                            tracing::warn!(
+                                "Ignoring popup creation: no surface in text input focus (likely race)"
                             );
                             return;
                         }
@@ -413,9 +427,10 @@ where
                     instance.popup_handles.push(popup.clone());
                     state.new_popup(popup);
                 } else {
-                    im.post_error(
-                        xx_input_method_v1::Error::Inactive,
-                        "Popup may only be created on an active input method.",
+                    // Race condition: client may have sent this before receiving our deactivate.
+                    // Silently ignore rather than killing the client with a fatal protocol error.
+                    tracing::warn!(
+                        "Ignoring popup creation on inactive input method (likely race with deactivate)"
                     );
                 }
             }
@@ -427,36 +442,20 @@ where
     }
 
     fn destroyed(
-        state: &mut D,
+        _state: &mut D,
         _client: ClientId,
         input_method: &XxInputMethodV1,
         data: &InputMethodUserData<D>,
     ) {
         let destroyed_id = input_method.id();
         let mut inner = data.handle.inner.lock().unwrap();
-
-        // Find app_id before removing
-        let app_id = inner
-            .instances
-            .iter()
-            .find(|i| i.object.id() == destroyed_id)
-            .map(|i| i.app_id.clone());
-
         // Clear active ID if this was the active instance
         if inner.active_input_method_id.as_ref() == Some(&destroyed_id) {
             inner.active_input_method_id = None;
         }
-
         inner.instances.retain(|inst| inst.object.id() != destroyed_id);
-        drop(inner);
-
         let keyboards = &data.keyboard_handle.arc.known_kbds;
         keyboards.clear_interceptor();
         data.text_input_handle.leave();
-
-        // Notify compositor
-        if let Some(app_id) = app_id {
-            state.input_method_instance_destroyed(&app_id);
-        }
     }
 }

@@ -77,7 +77,6 @@ impl TextInputHandle {
             instance: instance.clone(),
             serial: 0,
             pending_state: Default::default(),
-            stage2_cursor_rectangle: None,
         });
     }
 
@@ -122,8 +121,9 @@ impl TextInputHandle {
             if text_input.version() >= 2 {
                 let data = text_input.data::<TextInputUserData>().unwrap();
                 let mut hook = data.surface_commit_hook.lock().unwrap();
-                let hook = hook.take().unwrap();
-                compositor::remove_post_commit_hook(&focus, &hook);
+                if let Some(hook) = hook.take() {
+                    compositor::remove_post_commit_hook(&focus, &hook);
+                }
             }
             text_input.leave(focus);
         });
@@ -137,8 +137,6 @@ impl TextInputHandle {
         // be send for each of them.
         inner.with_focused_client_all_text_inputs(|text_input, focus, _| {
             text_input.enter(focus);
-            let data = text_input.data::<TextInputUserData>().unwrap();
-            (data.on_enter)(text_input, focus);
         });
     }
 
@@ -213,9 +211,6 @@ pub struct TextInputUserData {
     /// This `HookId` makes it possible to unregister the hook
     /// and stop updates when text-input is disabled.
     pub(super) surface_commit_hook: Mutex<Option<HookId>>,
-    /// Store this function to break the compile-time check against Dispatch<ZwpTextInputV3> because .enter will get called from the keyboard module, and it's easier to reason about the code if that module doesn't get infected by the dependency.
-    /// By storing the function, the call is only known at runtime, so the constraint is not checked.
-    pub(super) on_enter: fn(&ZwpTextInputV3, &WlSurface),
 }
 
 impl<D> Dispatch<ZwpTextInputV3, TextInputUserData, D> for TextInputManagerState
@@ -267,9 +262,9 @@ where
         };
 
         let mut guard = data.handle.inner.lock().unwrap();
-        let (pending_state, stage2_cursor_state) = match guard.instances.iter_mut().find_map(|instance| {
+        let pending_state = match guard.instances.iter_mut().find_map(|instance| {
             if instance.instance == *resource {
-                Some((&mut instance.pending_state, &mut instance.stage2_cursor_rectangle))
+                Some(&mut instance.pending_state)
             } else {
                 None
             }
@@ -306,14 +301,10 @@ where
                 pending_state.cursor_rectangle = Some(Rectangle::new((x, y).into(), (width, height).into()));
             }
             zwp_text_input_v3::Request::Commit => {
-                *stage2_cursor_state = pending_state.cursor_rectangle.clone();
                 let new_state = mem::take(pending_state);
-                // Drop mutable reference to guard so it can be moved.
-                let _ = (pending_state, stage2_cursor_state);
                 commit(state, new_state, guard, data, resource, focus);
             }
             zwp_text_input_v3::Request::SetAvailableActions { available_actions } => {
-                // Each action is a u32 (little-endian) in the array.
                 let actions: Vec<u32> = available_actions
                     .chunks_exact(4)
                     .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
@@ -385,15 +376,11 @@ fn commit<D>(
     match new_state.enable {
         Some(true) => {
             *active_text_input_id = Some(resource.id());
-            // Drop the guard before calling to other subsystem.
-            drop(guard);
             data.input_method_handle.activate_input_method(state, &focus);
             data.input_method_v3_handle.activate_input_method(state, &focus);
         }
         Some(false) => {
             *active_text_input_id = None;
-            // Drop the guard before calling to other subsystem.
-            drop(guard);
             data.input_method_handle.deactivate_input_method(state);
             data.input_method_v3_handle.deactivate_input_method(state);
             return;
@@ -403,11 +390,10 @@ fn commit<D>(
                 debug!("discarding text_input requests before enabling it");
                 return;
             }
-
-            // Drop the guard before calling to other subsystems later on.
-            drop(guard);
         }
     }
+    // Drop the guard before calling to other subsystems later on.
+    drop(guard);
     use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3;
     if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
         data.input_method_handle
@@ -446,12 +432,7 @@ fn commit<D>(
         });
     }
 
-    let cursor_state = if resource.version() <= 2 {
-        new_state.cursor_rectangle.take()
-    } else {
-        None
-    };
-
+    let cursor_state = new_state.cursor_rectangle.take();
     if let Some(rect) = cursor_state {
         data.input_method_handle
             .set_text_input_rectangle::<D>(state, rect);
@@ -464,57 +445,11 @@ fn commit<D>(
     data.input_method_v3_handle.done();
 }
 
-pub(super) fn on_enter<D>(text_input: &ZwpTextInputV3, focus: &WlSurface)
-where
-    D: Dispatch<ZwpTextInputV3, TextInputUserData>,
-    D: SeatHandler,
-    D: input_method_v3::InputMethodHandler,
-    D: 'static,
-{
-    if text_input.version() >= 2 {
-        let resource = text_input.clone();
-
-        let hook = compositor::add_post_commit_hook::<D, _>(&focus, move |state, _dh, wl_surface| {
-            let data = resource.data::<TextInputUserData>().unwrap();
-            let mut guard = data.handle.inner.lock().unwrap();
-            // TODO: this is a near-copy from request handler. maybe can be unified
-            let (pending_state, cursor_state) = match guard.instances.iter_mut().find_map(|instance| {
-                if instance.instance == resource {
-                    Some((&mut instance.pending_state, &mut instance.stage2_cursor_rectangle))
-                } else {
-                    None
-                }
-            }) {
-                Some(value) => value,
-                None => {
-                    debug!("got request for untracked text-input");
-                    return;
-                }
-            };
-
-            if let Some(rect) = cursor_state.take() {
-                data.input_method_handle
-                    .set_text_input_rectangle::<D>(state, rect);
-                data.input_method_v3_handle.set_cursor_rectangle::<D>(state, rect);
-
-                data.input_method_handle.with_instance(|input_method| {
-                    input_method.done();
-                });
-                data.input_method_v3_handle.done();
-            }
-        });
-        let data = text_input.data::<TextInputUserData>().unwrap();
-        *data.surface_commit_hook.lock().unwrap() = Some(hook);
-    }
-}
-
 #[derive(Debug)]
 struct Instance {
     instance: ZwpTextInputV3,
     serial: u32,
     pending_state: TextInputState,
-    /// In protocol version 3.2, the cursor_rectangle does not get updated on text_input.commit. This gets updated and sent to the input method on wl_surface.commit.
-    stage2_cursor_rectangle: Option<Rectangle<i32, Logical>>,
 }
 
 /// State of the text_input object set on text-input.commit
@@ -523,7 +458,6 @@ struct TextInputState {
     enable: Option<bool>,
     surrounding_text: Option<(String, u32, u32)>,
     content_type: Option<(ContentHint, ContentPurpose)>,
-    /// Does not immediately get applied, instead the value goes to stage2 on Instance.
     cursor_rectangle: Option<Rectangle<i32, Logical>>,
     text_change_cause: Option<ChangeCause>,
     /// Available actions (since v3.2). Each u32 is an action enum value.

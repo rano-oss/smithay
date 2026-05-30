@@ -258,6 +258,8 @@ pub struct InputMethodPopupSurfaceUserData {
     pub(super) positioner: Mutex<PositionerState>,
     /// Whether the popup position is frozen (not updated on cursor_rectangle changes)
     pub(super) frozen: Mutex<bool>,
+    /// Snapshot of cursor_rectangle at the time freeze was set
+    pub(super) frozen_cursor_rectangle: Mutex<Option<Rectangle<i32, Logical>>>,
 }
 
 impl InputMethodPopupSurfaceUserData {
@@ -276,6 +278,7 @@ impl InputMethodPopupSurfaceUserData {
             state: popup_state,
             positioner,
             frozen: Mutex::new(false),
+            frozen_cursor_rectangle: Mutex::new(None),
         }
     }
 }
@@ -327,7 +330,11 @@ where
                         .iter_mut()
                         .find(|i| i.object.id() == active_id)
                         .unwrap();
-                    let cursor = instance.cursor_rectangle;
+                    let cursor = data
+                        .frozen_cursor_rectangle
+                        .lock()
+                        .unwrap()
+                        .unwrap_or(instance.cursor_rectangle);
                     let popup = instance
                         .popup_handles
                         .iter_mut()
@@ -350,8 +357,21 @@ where
                 im.handle.done();
             }
             Request::SetFrozen { frozen } => {
-                tracing::info!("SetFrozen: {}", frozen != 0);
-                *data.frozen.lock().unwrap() = frozen != 0;
+                let is_frozen = frozen != 0;
+                *data.frozen.lock().unwrap() = is_frozen;
+                if is_frozen {
+                    // Snapshot the current cursor_rectangle so reposition while frozen
+                    // uses the anchored position instead of the live (moving) cursor.
+                    let im: &InputMethodUserData<D> = data.input_method.data().unwrap();
+                    let inner = im.handle.inner.lock().unwrap();
+                    if let Some(active_id) = &inner.active_input_method_id {
+                        if let Some(instance) = inner.instances.iter().find(|i| i.object.id() == *active_id) {
+                            *data.frozen_cursor_rectangle.lock().unwrap() = Some(instance.cursor_rectangle);
+                        }
+                    }
+                } else {
+                    *data.frozen_cursor_rectangle.lock().unwrap() = None;
+                }
             }
             Request::Destroy => {
                 // Nothing to do

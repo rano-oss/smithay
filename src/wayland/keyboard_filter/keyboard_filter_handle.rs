@@ -161,7 +161,8 @@ impl Filter {
     /// Deactivate keyboard interception. Flush all pending events as passthrough.
     pub fn deactivate_interceptor<D: SeatHandler + 'static>(&self, seat: &Seat<D>) {
         let keyboard_handle = seat.get_keyboard().unwrap();
-        self.pending_events.lock().unwrap().clear();
+        let mut pending = self.pending_events.lock().unwrap();
+        pending.clear();
         keyboard_handle.arc.known_kbds.clear_interceptor();
     }
 }
@@ -280,10 +281,7 @@ where
         } else {
             pending.clear();
         }
-        drop(pending);
-
         data.keyboard_handle.arc.known_kbds.clear_interceptor();
-
         let mut mgr = data.manager_data.lock().unwrap();
         mgr.bound_keyboards.remove(&data.bound_keyboard);
         mgr.bound_ims.remove(&data.bound_input_method);

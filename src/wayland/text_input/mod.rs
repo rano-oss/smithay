@@ -163,8 +163,7 @@ where
                         handle: handle.clone(),
                         input_method_handle: input_method_handle.clone(),
                         input_method_v3_handle: input_method_v3_handle.clone(),
-                        surface_commit_hook: Mutex::new(None),
-                        on_enter: text_input_handle::on_enter::<D>,
+                        surface_commit_hook: Mutex::new(None)
                     },
                 );
                 handle.add_instance(&instance);
