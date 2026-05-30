@@ -3,12 +3,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use wayland_server::{Resource, protocol::wl_surface::WlSurface};
+use wayland_server::{protocol::wl_surface::WlSurface, Resource};
 
 use crate::{
-    backend::input::{ButtonState, KeyState, Keycode},
+    backend::input::{ButtonState, KeyEvent, Keycode},
     input::{
-        SeatHandler,
         keyboard::{
             GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle,
             ModifiersState,
@@ -19,8 +18,9 @@ use crate::{
             GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab,
             PointerInnerHandle, RelativeMotionEvent,
         },
+        SeatHandler,
     },
-    utils::{DeadResource, IsAlive, Logical, Point, SERIAL_COUNTER, Serial},
+    utils::{DeadResource, IsAlive, Logical, Point, Serial, SERIAL_COUNTER},
     wayland::seat::WaylandFocus,
 };
 
@@ -443,7 +443,7 @@ where
         data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
         keycode: Keycode,
-        state: KeyState,
+        state: KeyEvent,
         modifiers: Option<ModifiersState>,
         serial: Serial,
         time: u32,

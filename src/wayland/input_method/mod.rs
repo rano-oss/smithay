@@ -200,9 +200,7 @@ where
                 user_data.insert_if_missing(InputMethodHandle::default);
                 let handle = user_data.get::<InputMethodHandle>().unwrap();
                 let text_input_handle = user_data.get::<TextInputHandle>().unwrap();
-                text_input_handle.with_focused_text_input(|ti, surface| {
-                    ti.enter(surface);
-                });
+                text_input_handle.enter();
                 let keyboard_handle = seat.get_keyboard().unwrap();
                 let instance = data_init.init(
                     input_method,

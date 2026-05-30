@@ -1,18 +1,22 @@
 //! Keyboard-related types for smithay's input abstraction
 
-use crate::backend::input::KeyState;
+use crate::backend::input::{Event, InputBackend, KeyEvent, KeyState, KeyboardKeyEvent as KeyboardKeyEventTrait};
 use crate::utils::{IsAlive, SERIAL_COUNTER, Serial};
+use calloop::{LoopHandle, RegistrationToken};
 use downcast_rs::{Downcast, impl_downcast};
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
 #[cfg(feature = "wayland_frontend")]
 use std::sync::RwLock;
+use std::time::Duration;
 use std::{
     default::Default,
     fmt, io,
     sync::{Arc, Mutex},
 };
 use thiserror::Error;
-use tracing::{debug, info, info_span, instrument, trace};
+use tracing::{debug, error, info, info_span, instrument, trace};
 
 use xkbcommon::xkb::ffi::XKB_STATE_LAYOUT_EFFECTIVE;
 pub use xkbcommon::xkb::{self, ContextFlags, Keycode, Keysym, keysyms};
@@ -32,6 +36,64 @@ pub use modifiers_state::{ModifiersState, SerializedMods};
 mod xkb_config;
 pub use xkb_config::XkbConfig;
 
+
+/// Trait representing object that can receive keyboard interactions
+pub trait KeyboardTargetSimple<D> : std::fmt::Debug
+where
+    D: SeatHandler,
+{
+    /// A key was pressed on a keyboard from a given seat
+    fn key(
+        &self,
+        seat: &Seat<D>,
+        key: KeysymHandle<'_>,
+        state: KeyEvent,
+        serial: Serial,
+        time: u32,
+    );
+    /// Hold modifiers were changed on a keyboard from a given seat
+    fn modifiers(&self, seat: &Seat<D>, modifiers: ModifiersState, serial: Serial);
+}
+
+pub(crate) struct KeyboardTargetWithData<'a, D>
+where
+    D: SeatHandler,
+{
+    pub target: &'a <D as SeatHandler>::KeyboardFocus,
+    pub data: Rc<RefCell<&'a mut D>>,
+}
+
+impl<'a, D> std::fmt::Debug for KeyboardTargetWithData<'a, D>
+where
+    D: SeatHandler,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ok(())
+}
+}
+
+impl<'a, D> KeyboardTargetSimple<D> for KeyboardTargetWithData<'a, D>
+where
+    D: SeatHandler,
+{
+    fn key(
+        &self,
+        seat: &Seat<D>,
+        key: KeysymHandle<'_>,
+        state: KeyEvent,
+        serial: Serial,
+        time: u32,
+    ) {
+        let mut data = self.data.borrow_mut();
+        self.target.key(seat, &mut data, key, state, serial, time)
+    }
+    fn modifiers(&self, seat: &Seat<D>, modifiers: ModifiersState, serial: Serial) {
+        let mut data = self.data.borrow_mut();
+        self.target.modifiers(seat, &mut data, modifiers, serial)
+    }
+}
+    
+
 /// Trait representing object that can receive keyboard interactions
 pub trait KeyboardTarget<D>: IsAlive + fmt::Debug + Send
 where
@@ -47,7 +109,7 @@ where
         seat: &Seat<D>,
         data: &mut D,
         key: KeysymHandle<'_>,
-        state: KeyState,
+        state: KeyEvent,
         serial: Serial,
         time: u32,
     );
@@ -203,6 +265,12 @@ impl fmt::Debug for Xkb {
 // same thread
 unsafe impl Send for Xkb {}
 
+pub(crate) struct XkbRelatedState<'a> {
+    pub(crate) mods_state: ModifiersState,
+    xkb: &'a Arc<Mutex<Xkb>>,
+    pub(crate) led_state: &'a LedState,
+}
+
 pub(crate) struct KbdInternal<D: SeatHandler> {
     pub(crate) focus: Option<(<D as SeatHandler>::KeyboardFocus, Serial)>,
     pending_focus: Option<<D as SeatHandler>::KeyboardFocus>,
@@ -215,6 +283,19 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     led_mapping: LedMapping,
     pub(crate) led_state: LedState,
     grab: GrabStatus<dyn KeyboardGrab<D>>,
+    /// Holds the token to cancel key repeat.
+    /// The token gets cleared when the keyboard is dropped, to neutralize the repeat callback.
+    pub(crate) key_repeat_timer: Arc<Mutex<Option<RegistrationToken>>>,
+}
+
+#[cfg(feature = "wayland_frontend")]
+impl<D: SeatHandler> Drop for KbdInternal<D> {
+    fn drop(&mut self) {
+        let timer = self.key_repeat_timer.lock().unwrap().take();
+        if timer.is_some() {
+            error!("A keyboard was dropped without unregistering a repeat handler. This is a bug in smithay or in the compositor.");
+        }
+    }
 }
 
 // focus_hook does not implement debug, so we have to impl Debug manually
@@ -229,6 +310,7 @@ impl<D: SeatHandler> fmt::Debug for KbdInternal<D> {
             .field("xkb", &self.xkb)
             .field("repeat_rate", &self.repeat_rate)
             .field("repeat_delay", &self.repeat_delay)
+            .field("key_repeat_timer", &self.key_repeat_timer)
             .finish()
     }
 }
@@ -271,20 +353,32 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
             led_mapping,
             led_state,
             grab: GrabStatus::None,
+            key_repeat_timer: Arc::new(Mutex::new(None)),
         })
     }
 
+    pub(crate) fn xkb_related_state<'a>(&'a self) -> XkbRelatedState<'a> {
+        XkbRelatedState {
+            mods_state: self.mods_state,
+            xkb: &self.xkb,
+            led_state: &self.led_state,
+        }
+    }
+
     // returns whether the modifiers or led state has changed
-    fn key_input(&mut self, keycode: Keycode, state: KeyState) -> (bool, bool) {
+    fn key_input(&mut self, keycode: Keycode, state: KeyEvent) -> (bool, bool) {
         // track pressed keys as xkbcommon does not seem to expose it :(
         let direction = match state {
-            KeyState::Pressed => {
+            KeyEvent::Pressed => {
                 self.pressed_keys.insert(keycode);
                 xkb::KeyDirection::Down
             }
-            KeyState::Released => {
+            KeyEvent::Released => {
                 self.pressed_keys.remove(&keycode);
                 xkb::KeyDirection::Up
+            }
+            KeyEvent::Repeated => {
+                return (false, false);
             }
         };
 
@@ -355,12 +449,154 @@ pub enum Error {
     IoError(io::Error),
 }
 
+use wayland_server::protocol::{wl_keyboard, wl_surface};
+
+pub(crate) trait WlKeyboardApi {
+    fn keymap(
+        &self,
+        format: wl_keyboard::KeymapFormat,
+        fd: ::std::os::unix::io::BorrowedFd<'_>,
+        size: u32,
+    );
+    fn enter(
+        &self,
+        serial: u32,
+        surface: &wl_surface::WlSurface,
+        keys: Vec<u8>,
+    );
+    fn leave(&self, serial: u32, surface: &wl_surface::WlSurface);
+    fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState);
+    fn modifiers(
+        &self,
+        serial: u32,
+        mods_depressed: u32,
+        mods_latched: u32,
+        mods_locked: u32,
+        group: u32,
+    );
+    /// Repeat info cannot be derived from input events, but must be forwarded from the intercepted to the intercepting keyboard instance.
+    /// This means intercepting only at the input events entry doesn't work. There must be full low-level interception instead.
+    fn repeat_info(&self, rate: i32, delay: i32);
+    fn version(&self) -> u32;
+}
+
+impl WlKeyboardApi for wl_keyboard::WlKeyboard {
+    fn keymap(
+        &self,
+        format: wl_keyboard::KeymapFormat,
+        fd: ::std::os::unix::io::BorrowedFd<'_>,
+        size: u32,
+    ) {
+        Self::keymap(self, format, fd, size)
+    }
+
+    fn enter(
+        &self,
+        serial: u32,
+        surface: &wl_surface::WlSurface,
+        keys: Vec<u8>,
+    ) {
+        Self::enter(self, serial, surface, keys.clone())
+    }
+
+    fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
+        Self::leave(self, serial, surface)
+    }
+    
+    fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
+        Self::key(self, serial, time, key, state)
+    }
+    fn modifiers(
+        &self,
+        serial: u32,
+        mods_depressed: u32,
+        mods_latched: u32,
+        mods_locked: u32,
+        group: u32,
+    ) {
+        Self::modifiers(self, serial, mods_depressed, mods_latched, mods_locked, group)
+    }
+    fn repeat_info(&self, rate: i32, delay: i32) {
+        Self::repeat_info(self, rate, delay)
+    }
+    fn version(&self) -> u32 {
+        <Self as Resource>::version(self)
+    }
+}
+
+pub(crate) struct KnownKbds {
+    /// The list of client keyboards
+    /// Contains Arc so that interceptor can forward events to them
+    pub(crate) keyboards: Arc<Mutex<Vec<Weak<wl_keyboard::WlKeyboard>>>>,
+    /// If present, all events are directed to it rather than the keyboards.
+    /// While this is used only by the input method, the implementation is hidden behind a trait to limit the knowledge of the input method by the keyboard.
+    pub(crate) interceptor: Arc<Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>>,
+}
+
+impl fmt::Debug for KnownKbds {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KnownKbds")
+            .field("keyboards", &self.keyboards)
+            //.field("interceptor", &self.interceptor)//.as_ref().map(|_| "dyn WlKeyboardApi"))
+            .finish()
+    }
+}
+
+impl KnownKbds {
+    pub(crate) fn clear_interceptor(&self) {
+        *self.interceptor.lock().unwrap() = None;
+    }
+
+    pub(crate) fn for_each_active(&self, f: impl Fn(&dyn WlKeyboardApi)) {
+        if let Some(kbd) = self.interceptor.lock().unwrap().as_ref() {
+            f(kbd.as_ref())
+        } else {
+            Self::for_each_active_kbd(&self.keyboards.lock().unwrap(), f);
+        }
+    }
+
+    pub(crate) fn for_each_focused(
+        &self,
+        surface: &wl_surface::WlSurface,
+        mut f: impl FnMut(&dyn WlKeyboardApi),
+    ) {
+        if let Some(kbd) = self.interceptor.lock().unwrap().as_ref() {
+            f(kbd.as_ref())
+        } else {
+            Self::for_each_focused_kbd(&self.keyboards.lock().unwrap(), surface, f);
+        }
+    }
+
+    /// Direct access to the keyboards. For use by the interceptor
+    pub(crate) fn for_each_active_kbd(
+        keyboards: &Vec<Weak<wl_keyboard::WlKeyboard>>,
+        mut f: impl FnMut(&dyn WlKeyboardApi),
+    ) {
+        keyboards
+            .iter()
+            .filter_map(|k| k.upgrade().ok())
+            .for_each(|k| f(&k))
+    }
+
+    pub(crate) fn for_each_focused_kbd(
+        keyboards: &Vec<Weak<wl_keyboard::WlKeyboard>>,
+        surface: &wl_surface::WlSurface,
+        mut f: impl FnMut(&dyn WlKeyboardApi),
+    ) {
+        keyboards
+            .iter()
+            .filter_map(|k| k.upgrade().ok())
+            .filter(|k| k.id().same_client_as(&surface.id()))
+            .for_each(|k| f(&k))
+    }
+}
+
 pub(crate) struct KbdRc<D: SeatHandler> {
     pub(crate) internal: Mutex<KbdInternal<D>>,
     #[cfg(feature = "wayland_frontend")]
-    pub(crate) keymap: Mutex<KeymapFile>,
+    pub(crate) keymap: Arc<Mutex<KeymapFile>>,
     #[cfg(feature = "wayland_frontend")]
-    pub(crate) known_kbds: Mutex<Vec<Weak<wayland_server::protocol::wl_keyboard::WlKeyboard>>>,
+    pub(crate) known_kbds: KnownKbds,
     #[cfg(feature = "wayland_frontend")]
     pub(crate) last_enter: Mutex<Option<Serial>>,
     pub(crate) span: tracing::Span,
@@ -607,10 +843,10 @@ pub trait KeyboardGrab<D: SeatHandler>: Downcast {
         data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
         keycode: Keycode,
-        state: KeyState,
+        event: KeyEvent,
         modifiers: Option<ModifiersState>,
         serial: Serial,
-        time: u32,
+        time_ms: u32,
     );
 
     /// A focus change was requested.
@@ -700,10 +936,13 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         Ok(Self {
             arc: Arc::new(KbdRc {
                 #[cfg(feature = "wayland_frontend")]
-                keymap: Mutex::new(keymap_file),
+                keymap: Arc::new(Mutex::new(keymap_file)),
                 internal: Mutex::new(internal),
                 #[cfg(feature = "wayland_frontend")]
-                known_kbds: Mutex::new(Vec::new()),
+                known_kbds: KnownKbds {
+                    keyboards: Arc::new(Mutex::new(Vec::new())),
+                    interceptor: Arc::new(Mutex::new(None)),
+                },
                 #[cfg(feature = "wayland_frontend")]
                 last_enter: Mutex::new(None),
                 #[cfg(feature = "wayland_frontend")]
@@ -740,6 +979,27 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         keymap_file: &KeymapFile,
         mods: ModifiersState,
     ) -> bool {
+        let seat = self.get_seat(data);
+        let target = focus.as_ref().map(|focus: &&mut <D as SeatHandler>::KeyboardFocus| KeyboardTargetWithData {
+            target: *focus,
+            data: Rc::new(RefCell::new(data)),
+        });
+        self.send_keymap_decoupled(
+            &seat,
+            &target.as_ref(),
+            keymap_file,
+            mods,
+        )
+    }
+    
+    #[cfg(feature = "wayland_frontend")]
+    pub(crate) fn send_keymap_decoupled(
+        &self,
+        seat: &Seat<D>,
+        focus: &Option<&impl KeyboardTargetSimple<D>>,
+        keymap_file: &KeymapFile,
+        mods: ModifiersState,
+    ) -> bool {
         use std::os::unix::io::AsFd;
         use tracing::warn;
         use wayland_server::{Resource, protocol::wl_keyboard::KeymapFormat};
@@ -753,11 +1013,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
 
         // Update keymap for every wl_keyboard.
         let known_kbds = &self.arc.known_kbds;
-        for kbd in &*known_kbds.lock().unwrap() {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
-
+        known_kbds.for_each_active(|kbd| {
             let res = keymap_file.with_fd(kbd.version() >= 7, |fd, size| {
                 kbd.keymap(KeymapFormat::XkbV1, fd.as_fd(), size as u32)
             });
@@ -767,12 +1023,11 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                     "Failed to send keymap to client"
                 );
             }
-        }
+        });
 
         // Send updated modifiers.
-        let seat = self.get_seat(data);
         if let Some(focus) = focus {
-            focus.modifiers(&seat, data, mods, SERIAL_COUNTER.next_serial());
+            focus.modifiers(&seat, mods, SERIAL_COUNTER.next_serial());
         }
 
         true
@@ -942,6 +1197,106 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         }
     }
 
+    /// Processes the keyboard event, starting or stopping key repeat.
+    /// If this method is used, it must receive all keyboard events.
+    /// The `on_event` argument will be called with all events: the ones received directly and the generated repeats.
+    pub fn key_register_repeat<B: InputBackend>(
+        &self,
+        data: &mut D,
+        get_handle: impl Fn(&D) -> &LoopHandle<'static, D> + 'static,
+        event: B::KeyboardKeyEvent,
+        // event, timeout, code.
+        // This is Clone because there are two closures in here...
+        on_event: impl Fn(&mut D, KeyEvent, u32, Keycode) + Clone + 'static,
+    ) {
+        let time_ms = event.time_msec();
+        let keycode = event.key_code();
+        let state = event.state();
+
+        // Forward initial hardware event as logical event
+        on_event(data, state.into(), time_ms, keycode);
+
+        // Unregister preexisting repeating
+        // Releasing a key press obviously stops the repeat.
+        // But also, pressing another key stops the repeat of the previous key and starts it for the newly pressed key.
+        // TODO: this may had odd consequences when a modifier is pressed as the second key. But is that worth worrying about?
+        self.key_stop_repeat(data, &get_handle);
+
+        // Register repeating
+        match event.state() {
+            KeyState::Pressed => {
+                let mut guard = self.arc.internal.lock().unwrap();
+                let delay = guard.repeat_delay;
+                let rate = guard.repeat_rate;
+                let mut time_ms = time_ms;
+
+                // This closure-in-closure business is somewhat ugly.
+                // The reason is that there are two timers needed: first, the delay timer, and after the delay, the repeat timer. Both of them receive different tokens for cancelling, so we have to swap the token after the delay.
+                // The only comparable alternative I can think of is to wrap the key_repeat_timer in an Mutex<Arc<>> and change the token when delay turns into repeat. But locks are worse than nesting.
+                let kbd = self.arc.clone();
+                let duration = Duration::from_millis(delay as _);
+                let handle = get_handle(data);
+                let token = handle.insert_source(
+                    calloop::timer::Timer::from_duration(duration),
+                    move |_, _, data| {
+                        time_ms += delay as u32;
+                        on_event(data, KeyEvent::Repeated, time_ms, keycode);
+                        let mut guard = kbd.internal.lock().unwrap();
+
+                        let handle = get_handle(data);
+                        {
+                            let timer = guard.key_repeat_timer.lock().unwrap();
+                            match *timer {
+                                Some(token) => handle.remove(token),
+                                None => debug!("Key starts repeating but there is no delay timer. Was repeat already cancelled?"),
+                            };
+                        }
+
+                        // This implementation doesn't take into account changes to the repeat rate after repeating begins.
+                        let kbd = kbd.clone();
+                        let on_event = on_event.clone();
+                        let duration = Duration::from_millis(rate as _);
+                        let token = handle.insert_source(
+                            calloop::timer::Timer::from_duration(duration),
+                            move |_, _, data| {
+                                time_ms += rate as u32;
+                                let guard = kbd.internal.lock().unwrap();
+                                let timer = guard.key_repeat_timer.lock().unwrap();
+
+                                // If the timer has been orphaned by dropping the keyboard, don't actually send the event, don't register a repeat.
+                                if timer.is_some() {
+                                    drop(timer);
+                                    drop(guard);
+                                    on_event(data, KeyEvent::Repeated, time_ms, keycode);
+                                    calloop::timer::TimeoutAction::ToDuration(duration)
+                                } else {
+                                    debug!("Cancelling an orphaned keyboard repeat.");
+                                    calloop::timer::TimeoutAction::Drop
+                                }
+                            },
+                        ).unwrap();
+                        guard.key_repeat_timer = Arc::new(Mutex::new(Some(token)));
+                        calloop::timer::TimeoutAction::Drop
+                    }
+                ).unwrap();
+                guard.key_repeat_timer = Arc::new(Mutex::new(Some(token)));
+            }
+            KeyState::Released => {
+                // Nothing to do; timer is released for both in the common path.
+            }
+        }
+    }
+
+    /// Cancels any ongoing key repeat
+    pub fn key_stop_repeat(&self, data: &mut D, get_handle: impl Fn(&D) -> &LoopHandle<'static, D>) {
+        let guard = self.arc.internal.lock().unwrap();
+        let mut timer = guard.key_repeat_timer.lock().unwrap();
+        if let Some(token) = timer.take() {
+            let handle = get_handle(data);
+            handle.remove(token);
+        };
+    }
+
     /// Handle a keystroke
     ///
     /// All keystrokes from the input backend should be fed _in order_ to this method of the
@@ -960,7 +1315,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         &self,
         data: &mut D,
         keycode: Keycode,
-        state: KeyState,
+        state: KeyEvent,
         serial: Serial,
         time: u32,
         filter: F,
@@ -990,13 +1345,13 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         &self,
         data: &mut D,
         keycode: Keycode,
-        state: KeyState,
+        state: KeyEvent,
         filter: F,
     ) -> (T, bool)
     where
         F: FnOnce(&mut D, &ModifiersState, KeysymHandle<'_>) -> T,
     {
-        trace!("Handling keystroke");
+        trace!("Handling key event");
 
         let mut guard = self.arc.internal.lock().unwrap();
         let (mods_changed, leds_changed) = guard.key_input(keycode, state);
@@ -1025,26 +1380,18 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         &self,
         data: &mut D,
         keycode: Keycode,
-        state: KeyState,
+        event: KeyEvent,
         serial: Serial,
-        time: u32,
+        time_ms: u32,
         mods_changed: bool,
     ) {
         let mut guard = self.arc.internal.lock().unwrap();
-        match state {
-            KeyState::Pressed => {
-                guard.forwarded_pressed_keys.insert(keycode);
-            }
-            KeyState::Released => {
-                guard.forwarded_pressed_keys.remove(&keycode);
-            }
-        };
 
         // forward to client if no keybinding is triggered
         let seat = self.get_seat(data);
         let modifiers = mods_changed.then_some(guard.mods_state);
         guard.with_grab(data, &seat, |data, handle, grab| {
-            grab.input(data, handle, keycode, state, modifiers, serial, time);
+            grab.input(data, handle, keycode, event, modifiers, serial, time_ms);
         });
         if guard.focus.is_some() {
             trace!("Input forwarded to client");
@@ -1172,14 +1519,16 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         guard.repeat_delay = delay;
         guard.repeat_rate = rate;
         #[cfg(feature = "wayland_frontend")]
-        for kbd in &*self.arc.known_kbds.lock().unwrap() {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
+        self.arc.known_kbds.for_each_active(|kbd| {
             if kbd.version() >= 4 {
+                let rate = if kbd.version() >= 10 {
+                    0 // Enables compositor-side key repeat. See wl_keyboard key event
+                } else {
+                    rate
+                };
                 kbd.repeat_info(rate, delay);
             }
-        }
+        })
     }
 
     /// Access the [`Serial`] of the last `keyboard_enter` event, if that focus is still active.
@@ -1190,7 +1539,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         *self.arc.last_enter.lock().unwrap()
     }
 
-    fn get_seat(&self, data: &mut D) -> Seat<D> {
+    pub(crate) fn get_seat(&self, data: &mut D) -> Seat<D> {
         let seat_state = data.seat_state();
         seat_state
             .seats
@@ -1235,6 +1584,9 @@ impl<D: SeatHandler> fmt::Debug for KeyboardInnerHandle<'_, D> {
 }
 
 impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
+    pub(crate) fn repeat_info(&self) -> (i32, i32) {
+        (self.inner.repeat_delay, self.inner.repeat_rate)
+    }
     /// Change the current grab on this keyboard to the provided grab
     ///
     /// Overwrites any current grab.
@@ -1292,34 +1644,61 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         &mut self,
         data: &mut D,
         keycode: Keycode,
-        key_state: KeyState,
+        key_state: KeyEvent,
         modifiers: Option<ModifiersState>,
         serial: Serial,
         time: u32,
     ) {
-        let (focus, _) = match self.inner.focus.as_mut() {
-            Some(focus) => focus,
+        let focus = self.inner.focus.as_ref()
+            .map(|(f, _)| KeyboardTargetWithData {
+                target: f,
+                data: Rc::new(RefCell::new(data)),
+            });
+        Self::input_generic(
+            self.inner.xkb_related_state(),
+            focus.as_ref(),
+            self.seat,
+            keycode, key_state, modifiers, serial, time,
+            true,
+        )
+    }
+
+    pub(crate) fn input_generic(
+        inner: XkbRelatedState<'_>,
+        focus: Option<&impl KeyboardTargetSimple<D>>,
+        seat: &Seat<D>,
+        keycode: Keycode,
+        key_state: KeyEvent,
+        modifiers: Option<ModifiersState>,
+        serial: Serial,
+        time: u32,
+        send_key: bool,
+    ) {
+        let focus = match focus.as_ref() {
+            Some(focus) => *focus,
             None => return,
         };
 
         // Ensure keymap is up to date.
         #[cfg(feature = "wayland_frontend")]
-        if let Some(keyboard_handle) = self.seat.get_keyboard() {
+        if let Some(keyboard_handle) = seat.get_keyboard() {
             let keymap_file = keyboard_handle.arc.keymap.lock().unwrap();
-            let mods = self.inner.mods_state;
-            keyboard_handle.send_keymap(data, &Some(focus), &keymap_file, mods);
+            let mods = inner.mods_state;
+            keyboard_handle.send_keymap_decoupled(seat, &Some(focus), &keymap_file, mods);
         }
 
-        // key event must be sent before modifiers event for libxkbcommon
-        // to process them correctly
-        let key = KeysymHandle {
-            xkb: &self.inner.xkb,
-            keycode,
-        };
+        if send_key {
+            // key event must be sent before modifiers event for libxkbcommon
+            // to process them correctly
+            let key = KeysymHandle {
+                xkb: &inner.xkb,
+                keycode,
+            };
 
-        focus.key(self.seat, data, key, key_state, serial, time);
+            focus.key(seat, key, key_state, serial, time);
+        }
         if let Some(mods) = modifiers {
-            focus.modifiers(self.seat, data, mods, serial);
+            focus.modifiers(seat, mods, serial);
         }
     }
 
@@ -1403,7 +1782,7 @@ impl<D: SeatHandler + 'static> KeyboardGrab<D> for DefaultGrab {
         data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
         keycode: Keycode,
-        state: KeyState,
+        state: KeyEvent,
         modifiers: Option<ModifiersState>,
         serial: Serial,
         time: u32,
