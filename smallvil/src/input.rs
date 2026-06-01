@@ -23,7 +23,7 @@ impl Smallvil {
                 self.seat.get_keyboard().unwrap().input::<(), _>(
                     self,
                     event.key_code(),
-                    event.state().into(),
+                    event.state(),
                     serial,
                     time,
                     |_, _, _| FilterResult::Forward,

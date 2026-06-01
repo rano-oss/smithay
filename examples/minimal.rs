@@ -176,7 +176,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                     keyboard.input::<(), _>(
                         &mut state,
                         event.key_code(),
-                        event.state().into(),
+                        event.state(),
                         0.into(),
                         0,
                         |_, _, _| {
