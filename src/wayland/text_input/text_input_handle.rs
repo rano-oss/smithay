@@ -301,8 +301,84 @@ where
                 pending_state.cursor_rectangle = Some(Rectangle::new((x, y).into(), (width, height).into()));
             }
             zwp_text_input_v3::Request::Commit => {
-                let new_state = mem::take(pending_state);
-                commit(state, new_state, guard, data, resource, focus);
+                let mut new_state = mem::take(pending_state);
+                let active_text_input_id = &mut guard.active_text_input_id;
+
+                if active_text_input_id.is_some() && *active_text_input_id != Some(resource.id()) {
+                    debug!("discarding text_input request since we already have an active one");
+                    return;
+                }
+
+                match new_state.enable {
+                    Some(true) => {
+                        *active_text_input_id = Some(resource.id());
+                        data.input_method_handle.activate_input_method(state, &focus);
+                        data.input_method_v3_handle.activate_input_method(state, &focus);
+                    }
+                    Some(false) => {
+                        *active_text_input_id = None;
+                        data.input_method_handle.deactivate_input_method(state);
+                        data.input_method_v3_handle.deactivate_input_method(state);
+                        return;
+                    }
+                    None => {
+                        if *active_text_input_id != Some(resource.id()) {
+                            debug!("discarding text_input requests before enabling it");
+                            return;
+                        }
+                    }
+                }
+                drop(guard);
+                if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
+                    data.input_method_handle.with_instance(|input_method| {
+                        input_method.object.surrounding_text(text.clone(), cursor, anchor)
+                    });
+                    data.input_method_v3_handle.with_instance(move |input_method| {
+                        input_method.object.surrounding_text(text, cursor, anchor)
+                    });
+                }
+
+                if let Some(cause) = new_state.text_change_cause.take() {
+                    let cause = match cause {
+                        ChangeCause::InputMethod => zwp_text_input_v3::ChangeCause::InputMethod,
+                        ChangeCause::Other => zwp_text_input_v3::ChangeCause::Other,
+                        _ => zwp_text_input_v3::ChangeCause::Other,
+                    };
+                    data.input_method_handle.with_instance(move |input_method| {
+                        input_method.object.text_change_cause(cause);
+                    });
+                    data.input_method_v3_handle.with_instance(move |input_method| {
+                        input_method.object.text_change_cause(cause);
+                    });
+                }
+
+                if let Some((hint, purpose)) = new_state.content_type.take() {
+                    data.input_method_handle.with_instance(move |input_method| {
+                        input_method.object.content_type(hint, purpose);
+                    });
+                    data.input_method_v3_handle.with_instance(move |input_method| {
+                        input_method.object.content_type(hint, purpose);
+                    });
+                }
+
+                if let Some(actions) = new_state.available_actions.take() {
+                    let action_bytes: Vec<u8> = actions.iter().flat_map(|a| a.to_ne_bytes()).collect();
+                    data.input_method_v3_handle.with_instance(move |input_method| {
+                        input_method.object.set_available_actions(action_bytes);
+                    });
+                }
+
+                let cursor_state = new_state.cursor_rectangle.take();
+                if let Some(rect) = cursor_state {
+                    data.input_method_handle
+                        .set_text_input_rectangle::<D>(state, rect);
+                    data.input_method_v3_handle.set_cursor_rectangle::<D>(state, rect);
+                }
+
+                data.input_method_handle.with_instance(|input_method| {
+                    input_method.done();
+                });
+                data.input_method_v3_handle.done();
             }
             zwp_text_input_v3::Request::SetAvailableActions { available_actions } => {
                 let actions: Vec<u32> = available_actions
@@ -349,100 +425,6 @@ where
             data.input_method_v3_handle.deactivate_input_method(state);
         }
     }
-}
-
-use std::sync::MutexGuard;
-
-fn commit<D>(
-    state: &mut D,
-    mut new_state: TextInputState,
-    mut guard: MutexGuard<'_, TextInput>,
-    data: &TextInputUserData,
-    resource: &ZwpTextInputV3,
-    focus: WlSurface,
-) where
-    D: Dispatch<ZwpTextInputV3, TextInputUserData>,
-    D: SeatHandler,
-    D: input_method_v3::InputMethodHandler,
-    D: 'static,
-{
-    let active_text_input_id = &mut guard.active_text_input_id;
-
-    if active_text_input_id.is_some() && *active_text_input_id != Some(resource.id()) {
-        debug!("discarding text_input request since we already have an active one");
-        return;
-    }
-
-    match new_state.enable {
-        Some(true) => {
-            *active_text_input_id = Some(resource.id());
-            data.input_method_handle.activate_input_method(state, &focus);
-            data.input_method_v3_handle.activate_input_method(state, &focus);
-        }
-        Some(false) => {
-            *active_text_input_id = None;
-            data.input_method_handle.deactivate_input_method(state);
-            data.input_method_v3_handle.deactivate_input_method(state);
-            return;
-        }
-        None => {
-            if *active_text_input_id != Some(resource.id()) {
-                debug!("discarding text_input requests before enabling it");
-                return;
-            }
-        }
-    }
-    // Drop the guard before calling to other subsystems later on.
-    drop(guard);
-    use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3;
-    if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
-        data.input_method_handle
-            .with_instance(|input_method| input_method.object.surrounding_text(text.clone(), cursor, anchor));
-        data.input_method_v3_handle
-            .with_instance(move |input_method| input_method.object.surrounding_text(text, cursor, anchor));
-    }
-
-    if let Some(cause) = new_state.text_change_cause.take() {
-        let cause = match cause {
-            ChangeCause::InputMethod => zwp_text_input_v3::ChangeCause::InputMethod,
-            ChangeCause::Other => zwp_text_input_v3::ChangeCause::Other,
-            _ => zwp_text_input_v3::ChangeCause::Other,
-        };
-        data.input_method_handle.with_instance(move |input_method| {
-            input_method.object.text_change_cause(cause);
-        });
-        data.input_method_v3_handle.with_instance(move |input_method| {
-            input_method.object.text_change_cause(cause);
-        });
-    }
-
-    if let Some((hint, purpose)) = new_state.content_type.take() {
-        data.input_method_handle.with_instance(move |input_method| {
-            input_method.object.content_type(hint, purpose);
-        });
-        data.input_method_v3_handle.with_instance(move |input_method| {
-            input_method.object.content_type(hint, purpose);
-        });
-    }
-
-    if let Some(actions) = new_state.available_actions.take() {
-        let action_bytes: Vec<u8> = actions.iter().flat_map(|a| a.to_ne_bytes()).collect();
-        data.input_method_v3_handle.with_instance(move |input_method| {
-            input_method.object.set_available_actions(action_bytes);
-        });
-    }
-
-    let cursor_state = new_state.cursor_rectangle.take();
-    if let Some(rect) = cursor_state {
-        data.input_method_handle
-            .set_text_input_rectangle::<D>(state, rect);
-        data.input_method_v3_handle.set_cursor_rectangle::<D>(state, rect);
-    }
-
-    data.input_method_handle.with_instance(|input_method| {
-        input_method.done();
-    });
-    data.input_method_v3_handle.done();
 }
 
 #[derive(Debug)]

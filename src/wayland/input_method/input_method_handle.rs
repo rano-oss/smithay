@@ -4,9 +4,6 @@ use std::{
 };
 
 use tracing::warn;
-use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::{
-    ChangeCause, ContentHint, ContentPurpose,
-};
 use wayland_protocols_misc::zwp_input_method_v2::server::{
     zwp_input_method_keyboard_grab_v2::ZwpInputMethodKeyboardGrabV2,
     zwp_input_method_v2::{self, ZwpInputMethodV2},
