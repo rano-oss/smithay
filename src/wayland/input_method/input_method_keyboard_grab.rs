@@ -9,15 +9,15 @@ use wayland_protocols_misc::zwp_input_method_v2::server::zwp_input_method_keyboa
 use wayland_server::backend::ClientId;
 
 use crate::input::{
-    SeatHandler,
     keyboard::{
         GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle,
         ModifiersState,
     },
+    SeatHandler,
 };
 use crate::wayland::text_input::TextInputHandle;
 use crate::{
-    backend::input::{KeyEvent, Keycode},
+    backend::input::{KeyState, Keycode},
     utils::Serial,
     wayland::Dispatch2,
 };
@@ -43,7 +43,7 @@ where
         _data: &mut D,
         _handle: &mut KeyboardInnerHandle<'_, D>,
         keycode: Keycode,
-        key_event: KeyEvent,
+        key_event: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,
         time: u32,

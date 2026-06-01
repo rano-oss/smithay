@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use smithay::input::{Seat, SeatHandler, SeatState, keyboard::FilterResult};
+use smithay::input::{keyboard::FilterResult, Seat, SeatHandler, SeatState};
 use smithay::reexports::wayland_server::{
-    Display, ListeningSocket,
     backend::{ClientData, ClientId, DisconnectReason},
     protocol::wl_surface::WlSurface,
+    Display, ListeningSocket,
 };
 use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
 
@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         keyboard.input(
             &mut state,
             smithay::backend::input::Keycode::from(9u32),
-            smithay::backend::input::KeyEvent::Pressed,
+            smithay::backend::input::KeyState::Pressed,
             0.into(),
             0,
             |_, _, _| {

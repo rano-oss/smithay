@@ -11,7 +11,7 @@
 //!
 //! use smithay::wayland::cursor_shape::CursorShapeManagerState;
 //!
-//! # use smithay::backend::input::KeyEvent;
+//! # use smithay::backend::input::KeyState;
 //! # use smithay::input::{
 //! #   pointer::{PointerTarget, AxisFrame, MotionEvent, ButtonEvent, RelativeMotionEvent,
 //! #             GestureSwipeBeginEvent, GestureSwipeUpdateEvent, GestureSwipeEndEvent,
@@ -62,7 +62,7 @@
 //! #       seat: &Seat<State>,
 //! #       data: &mut State,
 //! #       key: KeysymHandle<'_>,
-//! #       state: KeyEvent,
+//! #       state: KeyState,
 //! #       serial: Serial,
 //! #       time: u32,
 //! #   ) {}
@@ -107,13 +107,13 @@ use wayland_server::GlobalDispatch;
 use wayland_server::Resource;
 use wayland_server::WEnum;
 use wayland_server::Weak;
-use wayland_server::{Dispatch, DisplayHandle, backend::GlobalId};
+use wayland_server::{backend::GlobalId, Dispatch, DisplayHandle};
 
+use crate::input::pointer::{CursorIcon, CursorImageStatus};
 use crate::input::SeatHandler;
 use crate::input::WeakSeat;
-use crate::input::pointer::{CursorIcon, CursorImageStatus};
 use crate::utils::Serial;
-use crate::wayland::seat::{WaylandFocus, pointer::allow_setting_cursor};
+use crate::wayland::seat::{pointer::allow_setting_cursor, WaylandFocus};
 use crate::wayland::{Dispatch2, GlobalData, GlobalDispatch2};
 
 use super::seat::PointerUserData;

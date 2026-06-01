@@ -1,18 +1,18 @@
 use std::{borrow::Cow, sync::Arc};
 
 #[cfg(feature = "xwayland")]
-use smithay::xwayland::X11Surface;
-#[cfg(feature = "xwayland")]
 use smithay::xwayland::xwm::XwmOfferData;
+#[cfg(feature = "xwayland")]
+use smithay::xwayland::X11Surface;
 pub use smithay::{
-    backend::input::KeyEvent,
+    backend::input::KeyState,
     desktop::{LayerSurface, PopupKind},
     input::{
-        Seat,
         keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, MotionEvent, PointerTarget, RelativeMotionEvent},
+        Seat,
     },
-    reexports::wayland_server::{Resource, backend::ObjectId, protocol::wl_surface::WlSurface},
+    reexports::wayland_server::{backend::ObjectId, protocol::wl_surface::WlSurface, Resource},
     utils::{IsAlive, Serial},
     wayland::seat::WaylandFocus,
 };
@@ -32,7 +32,7 @@ use smithay::{
 };
 
 use crate::{
-    shell::{SSD, WindowElement},
+    shell::{WindowElement, SSD},
     state::{AnvilState, Backend},
 };
 
@@ -261,7 +261,7 @@ impl<BackendData: Backend> KeyboardTarget<AnvilState<BackendData>> for KeyboardF
         seat: &Seat<AnvilState<BackendData>>,
         data: &mut AnvilState<BackendData>,
         key: KeysymHandle<'_>,
-        state: KeyEvent,
+        state: KeyState,
         serial: Serial,
         time: u32,
     ) {

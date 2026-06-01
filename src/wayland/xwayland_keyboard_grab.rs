@@ -41,17 +41,17 @@ use wayland_protocols::xwayland::keyboard_grab::zv1::server::{
     zwp_xwayland_keyboard_grab_v1::{self, ZwpXwaylandKeyboardGrabV1},
 };
 use wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, backend::GlobalId,
-    protocol::wl_surface,
+    backend::GlobalId, protocol::wl_surface, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
+    Resource,
 };
 
 use crate::{
-    backend::input::{KeyEvent, Keycode},
+    backend::input::{KeyState, Keycode},
     input::{
-        Seat, SeatHandler,
         keyboard::{self, KeyboardGrab, KeyboardInnerHandle},
+        Seat, SeatHandler,
     },
-    utils::{SERIAL_COUNTER, Serial},
+    utils::{Serial, SERIAL_COUNTER},
     wayland::{Dispatch2, GlobalData, GlobalDispatch2},
     xwayland::XWaylandClientData,
 };
@@ -109,7 +109,7 @@ impl<D: XWaylandKeyboardGrabHandler + 'static> KeyboardGrab<D> for XWaylandKeybo
         data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
         keycode: Keycode,
-        state: KeyEvent,
+        state: KeyState,
         modifiers: Option<keyboard::ModifiersState>,
         serial: Serial,
         time: u32,

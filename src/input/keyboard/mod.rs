@@ -1,6 +1,6 @@
 //! Keyboard-related types for smithay's input abstraction
 
-use crate::backend::input::{Event, InputBackend, KeyEvent, KeyState, KeyboardKeyEvent as KeyboardKeyEventTrait};
+use crate::backend::input::{Event, InputBackend, KeyState, KeyboardKeyEvent as KeyboardKeyEventTrait};
 use crate::utils::{IsAlive, SERIAL_COUNTER, Serial};
 use calloop::{LoopHandle, RegistrationToken};
 use downcast_rs::{Downcast, impl_downcast};
@@ -47,7 +47,7 @@ where
         &self,
         seat: &Seat<D>,
         key: KeysymHandle<'_>,
-        state: KeyEvent,
+        state: KeyState,
         serial: Serial,
         time: u32,
     );
@@ -80,7 +80,7 @@ where
         &self,
         seat: &Seat<D>,
         key: KeysymHandle<'_>,
-        state: KeyEvent,
+        state: KeyState,
         serial: Serial,
         time: u32,
     ) {
@@ -109,7 +109,7 @@ where
         seat: &Seat<D>,
         data: &mut D,
         key: KeysymHandle<'_>,
-        state: KeyEvent,
+        state: KeyState,
         serial: Serial,
         time: u32,
     );
@@ -366,18 +366,18 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
     }
 
     // returns whether the modifiers or led state has changed
-    fn key_input(&mut self, keycode: Keycode, state: KeyEvent) -> (bool, bool) {
+    fn key_input(&mut self, keycode: Keycode, state: KeyState) -> (bool, bool) {
         // track pressed keys as xkbcommon does not seem to expose it :(
         let direction = match state {
-            KeyEvent::Pressed => {
+            KeyState::Pressed => {
                 self.pressed_keys.insert(keycode);
                 xkb::KeyDirection::Down
             }
-            KeyEvent::Released => {
+            KeyState::Released => {
                 self.pressed_keys.remove(&keycode);
                 xkb::KeyDirection::Up
             }
-            KeyEvent::Repeated => {
+            KeyState::Repeated => {
                 return (false, false);
             }
         };
@@ -843,7 +843,7 @@ pub trait KeyboardGrab<D: SeatHandler>: Downcast {
         data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
         keycode: Keycode,
-        event: KeyEvent,
+        event: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,
         time_ms: u32,
@@ -1207,14 +1207,14 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         event: B::KeyboardKeyEvent,
         // event, timeout, code.
         // This is Clone because there are two closures in here...
-        on_event: impl Fn(&mut D, KeyEvent, u32, Keycode) + Clone + 'static,
+        on_event: impl Fn(&mut D, KeyState, u32, Keycode) + Clone + 'static,
     ) {
         let time_ms = event.time_msec();
         let keycode = event.key_code();
         let state = event.state();
 
         // Forward initial hardware event as logical event
-        on_event(data, state.into(), time_ms, keycode);
+        on_event(data, state, time_ms, keycode);
 
         // Unregister preexisting repeating
         // Releasing a key press obviously stops the repeat.
@@ -1240,7 +1240,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                     calloop::timer::Timer::from_duration(duration),
                     move |_, _, data| {
                         time_ms += delay as u32;
-                        on_event(data, KeyEvent::Repeated, time_ms, keycode);
+                        on_event(data, KeyState::Repeated, time_ms, keycode);
                         let mut guard = kbd.internal.lock().unwrap();
 
                         let handle = get_handle(data);
@@ -1267,7 +1267,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                                 if timer.is_some() {
                                     drop(timer);
                                     drop(guard);
-                                    on_event(data, KeyEvent::Repeated, time_ms, keycode);
+                                    on_event(data, KeyState::Repeated, time_ms, keycode);
                                     calloop::timer::TimeoutAction::ToDuration(duration)
                                 } else {
                                     debug!("Cancelling an orphaned keyboard repeat.");
@@ -1283,6 +1283,10 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             }
             KeyState::Released => {
                 // Nothing to do; timer is released for both in the common path.
+            }
+            KeyState::Repeated => {
+                // Repeated is only generated internally by the repeat timer,
+                // never received from a backend, so nothing to register.
             }
         }
     }
@@ -1315,7 +1319,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         &self,
         data: &mut D,
         keycode: Keycode,
-        state: KeyEvent,
+        state: KeyState,
         serial: Serial,
         time: u32,
         filter: F,
@@ -1345,7 +1349,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         &self,
         data: &mut D,
         keycode: Keycode,
-        state: KeyEvent,
+        state: KeyState,
         filter: F,
     ) -> (T, bool)
     where
@@ -1380,7 +1384,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         &self,
         data: &mut D,
         keycode: Keycode,
-        event: KeyEvent,
+        event: KeyState,
         serial: Serial,
         time_ms: u32,
         mods_changed: bool,
@@ -1644,7 +1648,7 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         &mut self,
         data: &mut D,
         keycode: Keycode,
-        key_state: KeyEvent,
+        key_state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,
         time: u32,
@@ -1668,7 +1672,7 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         focus: Option<&impl KeyboardTargetSimple<D>>,
         seat: &Seat<D>,
         keycode: Keycode,
-        key_state: KeyEvent,
+        key_state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,
         time: u32,
@@ -1782,7 +1786,7 @@ impl<D: SeatHandler + 'static> KeyboardGrab<D> for DefaultGrab {
         data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
         keycode: Keycode,
-        state: KeyEvent,
+        state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,
         time: u32,

@@ -87,33 +87,15 @@ impl<B: InputBackend> Event<B> for UnusedEvent {
     }
 }
 
-/// State of key on a keyboard. Either pressed or released
+/// State of key on a keyboard. Either pressed, released, or repeated.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum KeyState {
     /// Key is released
     Released,
     /// Key is pressed
     Pressed,
-}
-
-/// Keyboard key event. Modelled on the wl_keyboard KeyState.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum KeyEvent {
-    /// Key was released
-    Released,
-    /// Key was pressed
-    Pressed,
     /// Key is being held and repetition was triggered.
     Repeated,
-}
-
-impl From<KeyState> for KeyEvent {
-    fn from(k: KeyState) -> Self {
-        match k {
-            KeyState::Released => Self::Released,
-            KeyState::Pressed => Self::Pressed,
-        }
-    }
 }
 
 /// Trait for keyboard event

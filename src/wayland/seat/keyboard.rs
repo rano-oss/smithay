@@ -12,7 +12,7 @@ use wayland_server::{
 
 use super::WaylandFocus;
 use crate::{
-    backend::input::{KeyEvent, Keycode},
+    backend::input::{KeyState, Keycode},
     input::{
         keyboard::{
             KeyboardHandle, KeyboardTarget, KeyboardTargetSimple, KeysymHandle, ModifiersState, WlKeyboardApi,
@@ -320,13 +320,13 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
         seat: &Seat<D>,
         _data: &mut D,
         key: KeysymHandle<'_>,
-        event: KeyEvent,
+        event: KeyState,
         serial: Serial,
         time: u32,
     ) {
         for_each_focused_kbds(seat, self, |kbd| {
             let compatible = match (event, kbd.version() < 10) {
-                (KeyEvent::Repeated, true) => false,
+                (KeyState::Repeated, true) => false,
                 _ => true,
             };
             if compatible {
@@ -350,10 +350,10 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
 }
 
 impl<D: SeatHandler + 'static> KeyboardTargetSimple<D> for WlSurface {
-    fn key(&self, seat: &Seat<D>, key: KeysymHandle<'_>, event: KeyEvent, serial: Serial, time: u32) {
+    fn key(&self, seat: &Seat<D>, key: KeysymHandle<'_>, event: KeyState, serial: Serial, time: u32) {
         for_each_focused_kbds(seat, self, |kbd| {
             let compatible = match (event, kbd.version() < 10) {
-                (KeyEvent::Repeated, true) => false,
+                (KeyState::Repeated, true) => false,
                 _ => true,
             };
             if compatible {
@@ -376,13 +376,13 @@ impl<D: SeatHandler + 'static> KeyboardTargetSimple<D> for WlSurface {
     }
 }
 
-impl From<KeyEvent> for WlKeyState {
+impl From<KeyState> for WlKeyState {
     #[inline]
-    fn from(state: KeyEvent) -> WlKeyState {
+    fn from(state: KeyState) -> WlKeyState {
         match state {
-            KeyEvent::Pressed => WlKeyState::Pressed,
-            KeyEvent::Released => WlKeyState::Released,
-            KeyEvent::Repeated => WlKeyState::Repeated,
+            KeyState::Pressed => WlKeyState::Pressed,
+            KeyState::Released => WlKeyState::Released,
+            KeyState::Repeated => WlKeyState::Repeated,
         }
     }
 }
@@ -391,14 +391,14 @@ impl From<KeyEvent> for WlKeyState {
 #[error("Unknown KeyState {0:?}")]
 pub struct UnknownKeyState(WlKeyState);
 
-impl TryFrom<WlKeyState> for KeyEvent {
+impl TryFrom<WlKeyState> for KeyState {
     type Error = UnknownKeyState;
     #[inline]
     fn try_from(state: WlKeyState) -> Result<Self, Self::Error> {
         match state {
-            WlKeyState::Pressed => Ok(KeyEvent::Pressed),
-            WlKeyState::Released => Ok(KeyEvent::Released),
-            WlKeyState::Repeated => Ok(KeyEvent::Repeated),
+            WlKeyState::Pressed => Ok(KeyState::Pressed),
+            WlKeyState::Released => Ok(KeyState::Released),
+            WlKeyState::Repeated => Ok(KeyState::Repeated),
             x => Err(UnknownKeyState(x)),
         }
     }

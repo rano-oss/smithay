@@ -9,7 +9,7 @@ use smithay::backend::renderer::DebugFlags;
 
 use smithay::{
     backend::input::{
-        self, Axis, AxisSource, Event, InputBackend, InputEvent, KeyEvent, Keycode, PointerAxisEvent,
+        self, Axis, AxisSource, Event, InputBackend, InputEvent, KeyState, Keycode, PointerAxisEvent,
         PointerButtonEvent,
     },
     desktop::{layer_map_for_output, WindowSurfaceType},
@@ -66,7 +66,7 @@ use smithay::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct KeyboardEvent {
-    kind: KeyEvent,
+    kind: KeyState,
     code: Keycode,
     time_msec: u32,
 }
@@ -198,7 +198,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 // so that we can decide on a release if the key
                 // should be forwarded to the client or not.
                 let action = match state {
-                    KeyEvent::Pressed | KeyEvent::Repeated => {
+                    KeyState::Pressed | KeyState::Repeated => {
                         let filter = if !inhibited {
                             let action = process_keyboard_shortcut(*modifiers, keysym);
 
@@ -214,12 +214,12 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                         };
 
                         // If the user keeps holding the key long enough to trigger a repeat that gets forwarded to the client, then the client needs to receive the release event too.
-                        if let (&FilterResult::Forward, KeyEvent::Repeated) = (&filter, state) {
+                        if let (&FilterResult::Forward, KeyState::Repeated) = (&filter, state) {
                             suppressed_keys.retain(|k| *k != keysym);
                         }
                         filter
                     }
-                    KeyEvent::Released => {
+                    KeyState::Released => {
                         let suppressed = suppressed_keys.contains(&keysym);
                         if suppressed {
                             suppressed_keys.retain(|k| *k != keysym);
@@ -240,7 +240,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     fn on_keyboard_event<B: InputBackend>(
         &mut self,
         evt: B::KeyboardKeyEvent,
-        on_event: impl Fn(&mut Self, KeyEvent, u32, Keycode) + Clone + 'static,
+        on_event: impl Fn(&mut Self, KeyState, u32, Keycode) + Clone + 'static,
     ) {
         self.seat.get_keyboard().unwrap().key_register_repeat::<B>(
             self,
@@ -496,7 +496,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
     fn process_key_event_windowed(
         &mut self,
-        event: KeyEvent,
+        event: KeyState,
         time_ms: u32,
         keycode: Keycode,
         output_name: &str,
@@ -611,7 +611,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             keyboard.input(
                 self,
                 keycode,
-                KeyEvent::Released,
+                KeyState::Released,
                 SCOUNTER.next_serial(),
                 0,
                 |_, _, _| FilterResult::Forward::<bool>,
@@ -680,7 +680,7 @@ impl AnvilState<UdevData> {
         }
     }
 
-    fn process_key_event(&mut self, event: KeyEvent, time_ms: u32, keycode: Keycode) {
+    fn process_key_event(&mut self, event: KeyState, time_ms: u32, keycode: Keycode) {
         let event = KeyboardEvent {
             kind: event,
             code: keycode,
