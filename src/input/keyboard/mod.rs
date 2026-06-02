@@ -218,7 +218,7 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     pub(crate) led_state: LedState,
     grab: GrabStatus<dyn KeyboardGrab<D>>,
     /// Holds the token to cancel key repeat.
-    pub(crate) key_repeat_timer: Arc<Mutex<Option<RegistrationToken>>>,
+    pub(crate) key_repeat_timer: Option<RegistrationToken>,
 }
 
 
@@ -278,7 +278,7 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
             led_mapping,
             led_state,
             grab: GrabStatus::None,
-            key_repeat_timer: Arc::new(Mutex::new(None)),
+            key_repeat_timer: None,
         })
     }
 
@@ -1035,8 +1035,6 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
 
         let kbd = self.clone();
         let rate_duration = Duration::from_millis(rate as _);
-        let timer_token: Arc<Mutex<Option<RegistrationToken>>> = Arc::new(Mutex::new(None));
-        let timer_token_clone = timer_token.clone();
         let mut first_fire = true;
 
         let handle = get_handle(data);
@@ -1044,11 +1042,6 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             .insert_source(
                 calloop::timer::Timer::from_duration(Duration::from_millis(delay as _)),
                 move |_, _, data| {
-                    // Check if repeat was cancelled
-                    if timer_token_clone.lock().unwrap().is_none() {
-                        return calloop::timer::TimeoutAction::Drop;
-                    }
-
                     if first_fire {
                         time_ms += delay as u32;
                         first_fire = false;
@@ -1062,15 +1055,13 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 },
             )
             .unwrap();
-        *timer_token.lock().unwrap() = Some(token);
-        guard.key_repeat_timer = timer_token;
+        guard.key_repeat_timer = Some(token);
     }
 
     /// Cancels any ongoing key repeat
     pub fn key_stop_repeat(&self, data: &mut D, get_handle: impl Fn(&D) -> &LoopHandle<'static, D>) {
-        let guard = self.arc.internal.lock().unwrap();
-        let mut timer = guard.key_repeat_timer.lock().unwrap();
-        if let Some(token) = timer.take() {
+        let mut guard = self.arc.internal.lock().unwrap();
+        if let Some(token) = guard.key_repeat_timer.take() {
             let handle = get_handle(data);
             handle.remove(token);
         };
