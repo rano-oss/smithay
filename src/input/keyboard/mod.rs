@@ -998,16 +998,19 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Processes the keyboard event, starting or stopping key repeat.
     /// If this method is used, it must receive all keyboard events.
     ///
-    /// `on_key` is called for the initial press/release event.
-    /// `on_repeat` is called when the repeat timer fires (only for repeatable pressed keys).
+    /// `on_key` is called for the initial press/release event (for compositor shortcut handling).
+    /// Key repeat is handled internally: v10+ clients receive `wl_keyboard::key` with state
+    /// `repeated`, older clients receive simulated press+release pairs.
+    #[cfg(feature = "wayland_frontend")]
     pub fn key_register_repeat<B: InputBackend>(
         &self,
         data: &mut D,
         get_handle: impl Fn(&D) -> &LoopHandle<'static, D> + 'static,
         event: B::KeyboardKeyEvent,
         on_key: impl Fn(&mut D, KeyState, u32, Keycode) + Clone + 'static,
-        on_repeat: impl Fn(&mut D, u32, Keycode) + Clone + 'static,
-    ) {
+    ) where
+        <D as SeatHandler>::KeyboardFocus: crate::wayland::seat::WaylandFocus,
+    {
         let time_ms = event.time_msec();
         let keycode = event.key_code();
         let state = event.state();
@@ -1038,39 +1041,43 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             return;
         }
 
-        let kbd = self.arc.clone();
+        let kbd = self.clone();
         let duration = Duration::from_millis(delay as _);
         let handle = get_handle(data);
         let token = handle.insert_source(
             calloop::timer::Timer::from_duration(duration),
             move |_, _, data| {
                 time_ms += delay as u32;
-                on_repeat(data, time_ms, keycode);
-                let mut guard = kbd.internal.lock().unwrap();
+                let seat = kbd.get_seat(data);
+                kbd.send_repeat(&seat, time_ms, keycode);
 
+                let mut guard = kbd.arc.internal.lock().unwrap();
                 let handle = get_handle(data);
                 {
                     let timer = guard.key_repeat_timer.lock().unwrap();
                     match *timer {
                         Some(token) => handle.remove(token),
-                        None => debug!("Key starts repeating but there is no delay timer. Was repeat already cancelled?"),
+                        None => {
+                            debug!("Key starts repeating but there is no delay timer. Was repeat already cancelled?");
+                            return calloop::timer::TimeoutAction::Drop;
+                        }
                     };
                 }
 
                 let kbd = kbd.clone();
-                let on_repeat = on_repeat.clone();
                 let duration = Duration::from_millis(rate as _);
                 let token = handle.insert_source(
                     calloop::timer::Timer::from_duration(duration),
                     move |_, _, data| {
                         time_ms += rate as u32;
-                        let guard = kbd.internal.lock().unwrap();
+                        let guard = kbd.arc.internal.lock().unwrap();
                         let timer = guard.key_repeat_timer.lock().unwrap();
 
                         if timer.is_some() {
                             drop(timer);
                             drop(guard);
-                            on_repeat(data, time_ms, keycode);
+                            let seat = kbd.get_seat(data);
+                            kbd.send_repeat(&seat, time_ms, keycode);
                             calloop::timer::TimeoutAction::ToDuration(duration)
                         } else {
                             debug!("Cancelling an orphaned keyboard repeat.");

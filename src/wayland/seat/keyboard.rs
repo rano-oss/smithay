@@ -17,7 +17,7 @@ use crate::{
         keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState},
         Seat, SeatHandler, WeakSeat,
     },
-    utils::{iter::new_locked_obj_iter_from_vec, HookId, Serial},
+    utils::{iter::new_locked_obj_iter_from_vec, HookId, Serial, SERIAL_COUNTER},
     wayland::{
         compositor::{add_destruction_hook, remove_destruction_hook, with_states},
         input_method::InputMethodSeat,
@@ -327,6 +327,44 @@ impl From<KeyState> for WlKeyState {
             KeyState::Pressed => WlKeyState::Pressed,
             KeyState::Released => WlKeyState::Released,
         }
+    }
+}
+
+impl<D> KeyboardHandle<D>
+where
+    D: SeatHandler + 'static,
+    <D as SeatHandler>::KeyboardFocus: WaylandFocus,
+{
+    /// Send a key repeat event directly to focused client keyboards.
+    ///
+    /// For v10+ clients: sends `wl_keyboard::key` with state `repeated`.
+    /// For older clients: sends a simulated press followed by release.
+    pub(crate) fn send_repeat(&self, seat: &Seat<D>, time: u32, keycode: Keycode) {
+        let guard = self.arc.internal.lock().unwrap();
+        let Some((focus, _)) = guard.focus.as_ref() else {
+            return;
+        };
+        // Only send repeat if the key was actually forwarded to the client
+        if !guard.forwarded_pressed_keys.contains(&keycode) {
+            return;
+        }
+        let surface = focus.wl_surface().map(|s| s.into_owned());
+        let serial: u32 = SERIAL_COUNTER.next_serial().into();
+        let raw_key = keycode.raw() - 8;
+        drop(guard);
+
+        let Some(surface) = surface else {
+            return;
+        };
+
+        for_each_focused_kbds(seat, &surface, |kbd| {
+            if kbd.version() >= 10 {
+                kbd.key(serial, time, raw_key, WlKeyState::Repeated);
+            } else {
+                kbd.key(serial, time, raw_key, WlKeyState::Pressed);
+                kbd.key(serial, time, raw_key, WlKeyState::Released);
+            }
+        });
     }
 }
 
