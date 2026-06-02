@@ -7,7 +7,6 @@ use downcast_rs::{Downcast, impl_downcast};
 use std::collections::HashSet;
 #[cfg(feature = "wayland_frontend")]
 use std::sync::RwLock;
-use std::time::Duration;
 use std::{
     default::Default,
     fmt, io,
