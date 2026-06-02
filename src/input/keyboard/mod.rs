@@ -1042,54 +1042,36 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         }
 
         let kbd = self.clone();
-        let duration = Duration::from_millis(delay as _);
+        let rate_duration = Duration::from_millis(rate as _);
+        let timer_token: Arc<Mutex<Option<RegistrationToken>>> = Arc::new(Mutex::new(None));
+        let timer_token_clone = timer_token.clone();
+        let mut first_fire = true;
+
         let handle = get_handle(data);
-        let token = handle.insert_source(
-            calloop::timer::Timer::from_duration(duration),
-            move |_, _, data| {
-                time_ms += delay as u32;
-                let seat = kbd.get_seat(data);
-                kbd.send_repeat(&seat, time_ms, keycode);
+        let token = handle
+            .insert_source(
+                calloop::timer::Timer::from_duration(Duration::from_millis(delay as _)),
+                move |_, _, data| {
+                    // Check if repeat was cancelled
+                    if timer_token_clone.lock().unwrap().is_none() {
+                        return calloop::timer::TimeoutAction::Drop;
+                    }
 
-                let mut guard = kbd.arc.internal.lock().unwrap();
-                let handle = get_handle(data);
-                {
-                    let timer = guard.key_repeat_timer.lock().unwrap();
-                    match *timer {
-                        Some(token) => handle.remove(token),
-                        None => {
-                            debug!("Key starts repeating but there is no delay timer. Was repeat already cancelled?");
-                            return calloop::timer::TimeoutAction::Drop;
-                        }
-                    };
-                }
-
-                let kbd = kbd.clone();
-                let duration = Duration::from_millis(rate as _);
-                let token = handle.insert_source(
-                    calloop::timer::Timer::from_duration(duration),
-                    move |_, _, data| {
+                    if first_fire {
+                        time_ms += delay as u32;
+                        first_fire = false;
+                    } else {
                         time_ms += rate as u32;
-                        let guard = kbd.arc.internal.lock().unwrap();
-                        let timer = guard.key_repeat_timer.lock().unwrap();
+                    }
 
-                        if timer.is_some() {
-                            drop(timer);
-                            drop(guard);
-                            let seat = kbd.get_seat(data);
-                            kbd.send_repeat(&seat, time_ms, keycode);
-                            calloop::timer::TimeoutAction::ToDuration(duration)
-                        } else {
-                            debug!("Cancelling an orphaned keyboard repeat.");
-                            calloop::timer::TimeoutAction::Drop
-                        }
-                    },
-                ).unwrap();
-                guard.key_repeat_timer = Arc::new(Mutex::new(Some(token)));
-                calloop::timer::TimeoutAction::Drop
-            }
-        ).unwrap();
-        guard.key_repeat_timer = Arc::new(Mutex::new(Some(token)));
+                    let seat = kbd.get_seat(data);
+                    kbd.send_repeat(&seat, time_ms, keycode);
+                    calloop::timer::TimeoutAction::ToDuration(rate_duration)
+                },
+            )
+            .unwrap();
+        *timer_token.lock().unwrap() = Some(token);
+        guard.key_repeat_timer = timer_token;
     }
 
     /// Cancels any ongoing key repeat
