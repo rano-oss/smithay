@@ -1004,6 +1004,8 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         <D as SeatHandler>::KeyboardFocus: crate::wayland::seat::WaylandFocus,
     {
         // Stop any existing repeat
+
+        use std::time::Duration;
         self.key_stop_repeat(data, &get_handle);
 
         // Register repeating only for pressed keys
