@@ -36,6 +36,7 @@ use crate::{
     wayland::{
         input_method_v3::InputMethodUserData,
         seat::{KeyboardUserData, WaylandFocus},
+        Dispatch2, GlobalDispatch2,
     },
 };
 
@@ -73,7 +74,9 @@ impl KeyboardFilterManagerState {
     where
         D: GlobalDispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData>,
         D: Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
+        D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>>,
         D: SeatHandler,
+        <D as SeatHandler>::KeyboardFocus: WaylandFocus,
         D: 'static,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
@@ -90,19 +93,17 @@ impl KeyboardFilterManagerState {
     }
 }
 
-impl<D> GlobalDispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData, D>
-    for KeyboardFilterManagerState
+impl<D> GlobalDispatch2<XxKeyboardFilterManagerV1, D> for KeyboardFilterManagerGlobalData
 where
-    D: GlobalDispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData>,
     D: Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
     D: 'static,
 {
     fn bind(
+        &self,
         _: &mut D,
         _: &DisplayHandle,
         _: &Client,
         resource: New<XxKeyboardFilterManagerV1>,
-        _: &KeyboardFilterManagerGlobalData,
         data_init: &mut DataInit<'_, D>,
     ) {
         data_init.init(
@@ -113,25 +114,24 @@ where
         );
     }
 
-    fn can_view(client: Client, global_data: &KeyboardFilterManagerGlobalData) -> bool {
-        (global_data.filter)(&client)
+    fn can_view(&self, client: &Client) -> bool {
+        (self.filter)(client)
     }
 }
 
-impl<D> Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData, D> for KeyboardFilterManagerState
+impl<D> Dispatch2<XxKeyboardFilterManagerV1, D> for KeyboardFilterManagerUserData
 where
-    D: Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
     D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>>,
     D: SeatHandler,
     <D as SeatHandler>::KeyboardFocus: WaylandFocus,
     D: 'static,
 {
     fn request(
+        &self,
         _state: &mut D,
         _client: &Client,
         resource: &XxKeyboardFilterManagerV1,
         request: xx_keyboard_filter_manager_v1::Request,
-        data: &KeyboardFilterManagerUserData,
         _dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
@@ -143,7 +143,7 @@ where
                 extensions,
             } => {
                 {
-                    let bind = data.inner.lock().unwrap();
+                    let bind = self.inner.lock().unwrap();
                     if bind.bound_keyboards.contains(&keyboard) {
                         resource.post_error(
                             xx_keyboard_filter_manager_v1::Error::AlreadyBound,
@@ -187,7 +187,7 @@ where
                         keyboard_handle: kb_handle.clone(),
                         pending_events: pending_events.clone(),
                         focused_surface: focused_surface.clone(),
-                        manager_data: data.inner.clone(),
+                        manager_data: self.inner.clone(),
                         bound_keyboard: keyboard.clone(),
                         bound_input_method: input_method.clone(),
                         im_keyboard: keyboard.clone(),
@@ -205,7 +205,7 @@ where
                 }
 
                 {
-                    let mut bind = data.inner.lock().unwrap();
+                    let mut bind = self.inner.lock().unwrap();
                     bind.bound_keyboards.insert(keyboard);
                     bind.bound_ims.insert(input_method);
                 }
@@ -220,13 +220,7 @@ where
 #[macro_export]
 macro_rules! delegate_keyboard_filter_manager_v1 {
     ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
-        $crate::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols_experimental::keyboard_filter::v3::server::xx_keyboard_filter_manager_v1::XxKeyboardFilterManagerV1:
-            $crate::wayland::keyboard_filter::KeyboardFilterManagerGlobalData
-        ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
-        $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols_experimental::keyboard_filter::v3::server::xx_keyboard_filter_manager_v1::XxKeyboardFilterManagerV1: $crate::wayland::keyboard_filter::KeyboardFilterManagerUserData
-        ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
+        $crate::delegate_dispatch2!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty);
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             $crate::reexports::wayland_protocols_experimental::keyboard_filter::v3::server::xx_keyboard_filter_v1::XxKeyboardFilterV1: $crate::wayland::keyboard_filter::KeyboardFilterUserData<Self>
         ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);

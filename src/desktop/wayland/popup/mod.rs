@@ -10,7 +10,7 @@ use crate::{
     wayland::{
         compositor::with_states,
         input_method, input_method_v3,
-        shell::xdg::{self, SurfaceCachedState, XdgPopupSurfaceData},
+        shell::xdg::{self, SurfaceCachedState},
     },
 };
 

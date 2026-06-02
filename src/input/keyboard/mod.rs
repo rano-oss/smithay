@@ -4,9 +4,7 @@ use crate::backend::input::{Event, InputBackend, KeyState, KeyboardKeyEvent as K
 use crate::utils::{IsAlive, SERIAL_COUNTER, Serial};
 use calloop::{LoopHandle, RegistrationToken};
 use downcast_rs::{Downcast, impl_downcast};
-use std::cell::RefCell;
 use std::collections::HashSet;
-use std::rc::Rc;
 #[cfg(feature = "wayland_frontend")]
 use std::sync::RwLock;
 use std::time::Duration;
@@ -36,63 +34,6 @@ pub use modifiers_state::{ModifiersState, SerializedMods};
 mod xkb_config;
 pub use xkb_config::XkbConfig;
 
-
-/// Trait representing object that can receive keyboard interactions
-pub trait KeyboardTargetSimple<D> : std::fmt::Debug
-where
-    D: SeatHandler,
-{
-    /// A key was pressed on a keyboard from a given seat
-    fn key(
-        &self,
-        seat: &Seat<D>,
-        key: KeysymHandle<'_>,
-        state: KeyState,
-        serial: Serial,
-        time: u32,
-    );
-    /// Hold modifiers were changed on a keyboard from a given seat
-    fn modifiers(&self, seat: &Seat<D>, modifiers: ModifiersState, serial: Serial);
-}
-
-pub(crate) struct KeyboardTargetWithData<'a, D>
-where
-    D: SeatHandler,
-{
-    pub target: &'a <D as SeatHandler>::KeyboardFocus,
-    pub data: Rc<RefCell<&'a mut D>>,
-}
-
-impl<'a, D> std::fmt::Debug for KeyboardTargetWithData<'a, D>
-where
-    D: SeatHandler,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Ok(())
-}
-}
-
-impl<'a, D> KeyboardTargetSimple<D> for KeyboardTargetWithData<'a, D>
-where
-    D: SeatHandler,
-{
-    fn key(
-        &self,
-        seat: &Seat<D>,
-        key: KeysymHandle<'_>,
-        state: KeyState,
-        serial: Serial,
-        time: u32,
-    ) {
-        let mut data = self.data.borrow_mut();
-        self.target.key(seat, &mut data, key, state, serial, time)
-    }
-    fn modifiers(&self, seat: &Seat<D>, modifiers: ModifiersState, serial: Serial) {
-        let mut data = self.data.borrow_mut();
-        self.target.modifiers(seat, &mut data, modifiers, serial)
-    }
-}
-    
 
 /// Trait representing object that can receive keyboard interactions
 pub trait KeyboardTarget<D>: IsAlive + fmt::Debug + Send
@@ -265,12 +206,6 @@ impl fmt::Debug for Xkb {
 // same thread
 unsafe impl Send for Xkb {}
 
-pub(crate) struct XkbRelatedState<'a> {
-    pub(crate) mods_state: ModifiersState,
-    xkb: &'a Arc<Mutex<Xkb>>,
-    pub(crate) led_state: &'a LedState,
-}
-
 pub(crate) struct KbdInternal<D: SeatHandler> {
     pub(crate) focus: Option<(<D as SeatHandler>::KeyboardFocus, Serial)>,
     pending_focus: Option<<D as SeatHandler>::KeyboardFocus>,
@@ -355,14 +290,6 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
             grab: GrabStatus::None,
             key_repeat_timer: Arc::new(Mutex::new(None)),
         })
-    }
-
-    pub(crate) fn xkb_related_state<'a>(&'a self) -> XkbRelatedState<'a> {
-        XkbRelatedState {
-            mods_state: self.mods_state,
-            xkb: &self.xkb,
-            led_state: &self.led_state,
-        }
     }
 
     // returns whether the modifiers or led state has changed
@@ -957,13 +884,12 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     pub(crate) fn change_keymap(
         &self,
         data: &mut D,
-        focus: &Option<&mut <D as SeatHandler>::KeyboardFocus>,
+        focus: Option<&<D as SeatHandler>::KeyboardFocus>,
         keymap: &xkb::Keymap,
         mods: ModifiersState,
     ) {
         let mut keymap_file = self.arc.keymap.lock().unwrap();
         keymap_file.change_keymap(keymap);
-
         self.send_keymap(data, focus, &keymap_file, mods);
     }
 
@@ -975,34 +901,13 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     pub(crate) fn send_keymap(
         &self,
         data: &mut D,
-        focus: &Option<&mut <D as SeatHandler>::KeyboardFocus>,
-        keymap_file: &KeymapFile,
-        mods: ModifiersState,
-    ) -> bool {
-        let seat = self.get_seat(data);
-        let target = focus.as_ref().map(|focus: &&mut <D as SeatHandler>::KeyboardFocus| KeyboardTargetWithData {
-            target: *focus,
-            data: Rc::new(RefCell::new(data)),
-        });
-        self.send_keymap_decoupled(
-            &seat,
-            &target.as_ref(),
-            keymap_file,
-            mods,
-        )
-    }
-    
-    #[cfg(feature = "wayland_frontend")]
-    pub(crate) fn send_keymap_decoupled(
-        &self,
-        seat: &Seat<D>,
-        focus: &Option<&impl KeyboardTargetSimple<D>>,
+        focus: Option<&<D as SeatHandler>::KeyboardFocus>,
         keymap_file: &KeymapFile,
         mods: ModifiersState,
     ) -> bool {
         use std::os::unix::io::AsFd;
         use tracing::warn;
-        use wayland_server::{Resource, protocol::wl_keyboard::KeymapFormat};
+        use wayland_server::protocol::wl_keyboard::KeymapFormat;
 
         // Ignore request which do not change the keymap.
         let new_id = keymap_file.id();
@@ -1027,7 +932,8 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
 
         // Send updated modifiers.
         if let Some(focus) = focus {
-            focus.modifiers(&seat, mods, SERIAL_COUNTER.next_serial());
+            let seat = self.get_seat(data);
+            focus.modifiers(&seat, data, mods, SERIAL_COUNTER.next_serial());
         }
 
         true
@@ -1060,7 +966,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         };
 
         #[cfg(feature = "wayland_frontend")]
-        self.change_keymap(data, &focus, &keymap, mods);
+        self.change_keymap(data, focus.as_deref(), &keymap, mods);
 
         if leds_changed {
             let led_state = internal.led_state;
@@ -1653,56 +1559,29 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         serial: Serial,
         time: u32,
     ) {
-        let focus = self.inner.focus.as_ref()
-            .map(|(f, _)| KeyboardTargetWithData {
-                target: f,
-                data: Rc::new(RefCell::new(data)),
-            });
-        Self::input_generic(
-            self.inner.xkb_related_state(),
-            focus.as_ref(),
-            self.seat,
-            keycode, key_state, modifiers, serial, time,
-            true,
-        )
-    }
-
-    pub(crate) fn input_generic(
-        inner: XkbRelatedState<'_>,
-        focus: Option<&impl KeyboardTargetSimple<D>>,
-        seat: &Seat<D>,
-        keycode: Keycode,
-        key_state: KeyState,
-        modifiers: Option<ModifiersState>,
-        serial: Serial,
-        time: u32,
-        send_key: bool,
-    ) {
-        let focus = match focus.as_ref() {
-            Some(focus) => *focus,
+        let (focus, _) = match self.inner.focus.as_ref() {
+            Some(focus) => focus,
             None => return,
         };
 
         // Ensure keymap is up to date.
         #[cfg(feature = "wayland_frontend")]
-        if let Some(keyboard_handle) = seat.get_keyboard() {
+        if let Some(keyboard_handle) = self.seat.get_keyboard() {
             let keymap_file = keyboard_handle.arc.keymap.lock().unwrap();
-            let mods = inner.mods_state;
-            keyboard_handle.send_keymap_decoupled(seat, &Some(focus), &keymap_file, mods);
+            let mods = self.inner.mods_state;
+            keyboard_handle.send_keymap(data, Some(focus), &keymap_file, mods);
         }
 
-        if send_key {
-            // key event must be sent before modifiers event for libxkbcommon
-            // to process them correctly
-            let key = KeysymHandle {
-                xkb: &inner.xkb,
-                keycode,
-            };
+        // key event must be sent before modifiers event for libxkbcommon
+        // to process them correctly
+        let key = KeysymHandle {
+            xkb: &self.inner.xkb,
+            keycode,
+        };
 
-            focus.key(seat, key, key_state, serial, time);
-        }
+        focus.key(self.seat, data, key, key_state, serial, time);
         if let Some(mods) = modifiers {
-            focus.modifiers(seat, mods, serial);
+            focus.modifiers(self.seat, data, mods, serial);
         }
     }
 

@@ -71,14 +71,17 @@
 //! ```
 
 use wayland_server::{
-    backend::GlobalId, protocol::wl_surface::WlSurface, Client, DataInit, Dispatch, DisplayHandle,
-    GlobalDispatch, New,
+    backend::GlobalId, protocol::wl_surface::WlSurface, Client, DataInit, DisplayHandle, New,
 };
+
+use crate::wayland::{Dispatch2, GlobalDispatch2};
+use wayland_server::{Dispatch, GlobalDispatch};
 
 use wayland_protocols_experimental::input_method::v1::server::{
     xx_input_method_manager_v2::{self, XxInputMethodManagerV2},
     xx_input_method_v1::XxInputMethodV1,
     xx_input_popup_positioner_v1::XxInputPopupPositionerV1,
+    xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
 
 use crate::{
@@ -184,8 +187,10 @@ impl InputMethodManagerState {
     pub fn new<D, F>(display: &DisplayHandle, filter: F) -> Self
     where
         D: GlobalDispatch<XxInputMethodManagerV2, InputMethodManagerGlobalData>,
-        D: Dispatch<XxInputMethodManagerV2, ()>,
+        D: Dispatch<XxInputMethodManagerV2, ManagerUserData>,
         D: Dispatch<XxInputMethodV1, InputMethodUserData<D>>,
+        D: Dispatch<XxInputPopupPositionerV1, PositionerUserData>,
+        D: Dispatch<XxInputPopupSurfaceV2, InputMethodPopupSurfaceUserData>,
         D: SeatHandler,
         D: 'static,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
@@ -204,44 +209,44 @@ impl InputMethodManagerState {
     }
 }
 
-impl<D> GlobalDispatch<XxInputMethodManagerV2, InputMethodManagerGlobalData, D> for InputMethodManagerState
+impl<D> GlobalDispatch2<XxInputMethodManagerV2, D> for InputMethodManagerGlobalData
 where
-    D: GlobalDispatch<XxInputMethodManagerV2, InputMethodManagerGlobalData>,
-    D: Dispatch<XxInputMethodManagerV2, ()>,
-    D: Dispatch<XxInputMethodV1, InputMethodUserData<D>>,
-    D: SeatHandler,
+    D: Dispatch<XxInputMethodManagerV2, ManagerUserData>,
     D: 'static,
 {
     fn bind(
+        &self,
         _: &mut D,
         _: &DisplayHandle,
         _: &Client,
         resource: New<XxInputMethodManagerV2>,
-        _: &InputMethodManagerGlobalData,
         data_init: &mut DataInit<'_, D>,
     ) {
-        data_init.init(resource, ());
+        data_init.init(resource, ManagerUserData);
     }
 
-    fn can_view(client: Client, global_data: &InputMethodManagerGlobalData) -> bool {
-        (global_data.filter)(&client)
+    fn can_view(&self, client: &Client) -> bool {
+        (self.filter)(client)
     }
 }
 
-impl<D> Dispatch<XxInputMethodManagerV2, (), D> for InputMethodManagerState
+/// User data for the input method manager resource.
+#[allow(missing_debug_implementations)]
+pub struct ManagerUserData;
+
+impl<D> Dispatch2<XxInputMethodManagerV2, D> for ManagerUserData
 where
-    D: Dispatch<XxInputMethodManagerV2, ()>,
     D: Dispatch<XxInputMethodV1, InputMethodUserData<D>>,
     D: Dispatch<XxInputPopupPositionerV1, PositionerUserData>,
     D: SeatHandler + InputMethodHandler,
     D: 'static,
 {
     fn request(
+        &self,
         state: &mut D,
         client: &Client,
         _: &XxInputMethodManagerV2,
         request: xx_input_method_manager_v2::Request,
-        _: &(),
         dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
@@ -306,13 +311,7 @@ where
 #[macro_export]
 macro_rules! delegate_input_method_manager_v3 {
     ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
-        $crate::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_method_manager_v2::XxInputMethodManagerV2:
-            $crate::wayland::input_method_v3::InputMethodManagerGlobalData
-        ] => $crate::wayland::input_method_v3::InputMethodManagerState);
-        $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_method_manager_v2::XxInputMethodManagerV2: ()
-        ] => $crate::wayland::input_method_v3::InputMethodManagerState);
+        $crate::delegate_dispatch2!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty);
         $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             $crate::reexports::wayland_protocols_experimental::input_method::v1::server::xx_input_method_v1::XxInputMethodV1:
             $crate::wayland::input_method_v3::InputMethodUserData<Self>
