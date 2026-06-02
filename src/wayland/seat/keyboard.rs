@@ -72,8 +72,13 @@ where
         };
 
         let guard = self.arc.internal.lock().unwrap();
+        let rate = if kbd.version() >= 10 {
+            0 // Enables compositor-side key repeat. See wl_keyboard key event
+        } else {
+            guard.repeat_rate
+        };
         if kbd.version() >= 4 {
-            kbd.repeat_info(guard.repeat_rate, guard.repeat_delay);
+            kbd.repeat_info(rate, guard.repeat_delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {
             if focused.same_client_as(&kbd.id()) {
@@ -312,6 +317,18 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
                 modifiers.layout_effective,
             );
         })
+    }
+
+    fn repeat(&self, seat: &Seat<D>, _data: &mut D, keycode: Keycode, serial: Serial, time: u32) {
+        let raw_key = keycode.raw() - 8;
+        for_each_focused_kbds(seat, self, |kbd| {
+            if kbd.version() >= 10 {
+                kbd.key(serial.into(), time, raw_key, WlKeyState::Repeated);
+            } else {
+                kbd.key(serial.into(), time, raw_key, WlKeyState::Pressed);
+                kbd.key(serial.into(), time, raw_key, WlKeyState::Released);
+            }
+        });
     }
 }
 

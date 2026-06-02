@@ -321,6 +321,10 @@ impl<BackendData: Backend> SeatHandler for AnvilState<BackendData> {
     fn led_state_changed(&mut self, _seat: &Seat<Self>, led_state: LedState) {
         self.backend_data.update_led_state(led_state)
     }
+
+    fn loop_handle(&self) -> Option<smithay::reexports::calloop::LoopHandle<'static, Self>> {
+        Some(self.handle.clone())
+    }
 }
 
 impl<BackendData: Backend> TabletSeatHandler for AnvilState<BackendData> {
