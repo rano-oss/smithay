@@ -4,13 +4,13 @@ use crate::{
     wayland::{
         compositor::{get_role, with_states},
         seat::WaylandFocus,
-        shell::xdg::{PopupCachedState, XDG_POPUP_ROLE, XdgPopupSurfaceData, XdgPopupSurfaceRoleAttributes},
+        shell::xdg::{PopupCachedState, XdgPopupSurfaceData, XdgPopupSurfaceRoleAttributes, XDG_POPUP_ROLE},
     },
 };
 use std::sync::{Arc, Mutex};
 use tracing::trace;
 use wayland_protocols::xdg::shell::server::xdg_wm_base;
-use wayland_server::{Resource, protocol::wl_surface::WlSurface};
+use wayland_server::{protocol::wl_surface::WlSurface, Resource};
 
 use super::{PopupGrab, PopupGrabError, PopupGrabInner, PopupKind};
 
@@ -78,6 +78,9 @@ impl PopupManager {
             PopupKind::InputMethod(ref _input_method) => {
                 return Err(PopupGrabError::InvalidGrab);
             }
+            PopupKind::InputMethodV3(ref _input_method) => {
+                return Err(PopupGrabError::InvalidGrab);
+            }
         }
 
         // The primary store for the grab is the seat, additional we store it
@@ -137,7 +140,8 @@ impl PopupManager {
                 let tree = states.data_map.get::<PopupTree>().unwrap();
                 trace!(
                     "Adding popup {:?} to existing PopupTree on root {:?}",
-                    popup, root
+                    popup,
+                    root
                 );
                 tree.insert(popup);
 

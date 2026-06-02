@@ -10,8 +10,8 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::server::zwp_virtual_keyboar
     self, ZwpVirtualKeyboardV1,
 };
 use wayland_server::{
-    Client, DataInit, DisplayHandle, Resource,
     protocol::wl_keyboard::{KeyState, KeymapFormat},
+    Client, DataInit, DisplayHandle, Resource,
 };
 use xkbcommon::xkb;
 
@@ -20,8 +20,8 @@ use crate::{
     input::{Seat, SeatHandler},
     utils::SERIAL_COUNTER,
     wayland::{
+        seat::{keyboard::for_each_focused_kbds, WaylandFocus},
         Dispatch2,
-        seat::{WaylandFocus, keyboard::for_each_focused_kbds},
     },
 };
 
@@ -104,7 +104,7 @@ where
                 let keyboard_handle = self.seat.get_keyboard().unwrap();
                 let mut internal = keyboard_handle.arc.internal.lock().unwrap();
                 let focus = internal.focus.as_mut().map(|(focus, _)| focus);
-                keyboard_handle.send_keymap(user_data, &focus, &vk_state.keymap, vk_state.mods);
+                keyboard_handle.send_keymap(user_data, focus.as_deref(), &vk_state.keymap, vk_state.mods);
 
                 if let Some(wl_surface) = focus.and_then(|f| f.wl_surface()) {
                     for_each_focused_kbds(&self.seat, &wl_surface, |kbd| {
@@ -147,11 +147,11 @@ where
                 let mut internal = keyboard_handle.arc.internal.lock().unwrap();
                 let focus = internal.focus.as_mut().map(|(focus, _)| focus);
                 let keymap_changed =
-                    keyboard_handle.send_keymap(user_data, &focus, &state.keymap, state.mods);
+                    keyboard_handle.send_keymap(user_data, focus.as_deref(), &state.keymap, state.mods);
 
                 // Report modifiers change to all keyboards.
                 if !keymap_changed {
-                    if let Some(focus) = focus {
+                    if let Some(focus) = focus.as_ref() {
                         focus.modifiers(&self.seat, user_data, state.mods, SERIAL_COUNTER.next_serial());
                     }
                 }
