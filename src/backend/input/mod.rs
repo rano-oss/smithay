@@ -87,15 +87,13 @@ impl<B: InputBackend> Event<B> for UnusedEvent {
     }
 }
 
-/// State of key on a keyboard. Either pressed, released, or repeated.
+/// State of key on a keyboard. Either pressed or released
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum KeyState {
     /// Key is released
     Released,
     /// Key is pressed
     Pressed,
-    /// Key is being held and repetition was triggered.
-    Repeated,
 }
 
 /// Trait for keyboard event

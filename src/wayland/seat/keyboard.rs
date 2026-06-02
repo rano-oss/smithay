@@ -72,12 +72,12 @@ where
         };
 
         let guard = self.arc.internal.lock().unwrap();
+        let rate = if kbd.version() >= 10 {
+            0 // Enables compositor-side key repeat. See wl_keyboard key event
+        } else {
+            guard.repeat_rate
+        };
         if kbd.version() >= 4 {
-            let rate = if kbd.version() >= 10 {
-                0 // Enables compositor-side key repeat. See wl_keyboard key event
-            } else {
-                guard.repeat_rate
-            };
             kbd.repeat_info(rate, guard.repeat_delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {
@@ -324,7 +324,7 @@ impl From<KeyState> for WlKeyState {
     #[inline]
     fn from(state: KeyState) -> WlKeyState {
         match state {
-            KeyState::Pressed | KeyState::Repeated => WlKeyState::Pressed,
+            KeyState::Pressed => WlKeyState::Pressed,
             KeyState::Released => WlKeyState::Released,
         }
     }
