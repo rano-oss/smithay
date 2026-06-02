@@ -170,7 +170,7 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
 
     // Handle popup commits.
     popups.commit(surface);
-    if let Some(popup) = popups.find_popup(surface) {
+    if let Some(mut popup) = popups.find_popup(surface) {
         match popup {
             PopupKind::Xdg(ref xdg) => {
                 if !xdg.is_initial_configure_sent() {
@@ -180,6 +180,12 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
                 }
             }
             PopupKind::InputMethod(ref _input_method) => {}
+            PopupKind::InputMethodV3(ref mut popup) => {
+                if !popup.is_initial_configure_sent() {
+                    popup.send_pending_configure();
+                    popup.input_method().done();
+                };
+            }
         }
     }
 }

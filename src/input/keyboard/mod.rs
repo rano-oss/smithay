@@ -361,12 +361,154 @@ pub enum Error {
     IoError(io::Error),
 }
 
+use wayland_server::protocol::{wl_keyboard, wl_surface};
+
+pub(crate) trait WlKeyboardApi {
+    fn keymap(
+        &self,
+        format: wl_keyboard::KeymapFormat,
+        fd: ::std::os::unix::io::BorrowedFd<'_>,
+        size: u32,
+    );
+    fn enter(
+        &self,
+        serial: u32,
+        surface: &wl_surface::WlSurface,
+        keys: Vec<u8>,
+    );
+    fn leave(&self, serial: u32, surface: &wl_surface::WlSurface);
+    fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState);
+    fn modifiers(
+        &self,
+        serial: u32,
+        mods_depressed: u32,
+        mods_latched: u32,
+        mods_locked: u32,
+        group: u32,
+    );
+    /// Repeat info cannot be derived from input events, but must be forwarded from the intercepted to the intercepting keyboard instance.
+    /// This means intercepting only at the input events entry doesn't work. There must be full low-level interception instead.
+    fn repeat_info(&self, rate: i32, delay: i32);
+    fn version(&self) -> u32;
+}
+
+impl WlKeyboardApi for wl_keyboard::WlKeyboard {
+    fn keymap(
+        &self,
+        format: wl_keyboard::KeymapFormat,
+        fd: ::std::os::unix::io::BorrowedFd<'_>,
+        size: u32,
+    ) {
+        Self::keymap(self, format, fd, size)
+    }
+
+    fn enter(
+        &self,
+        serial: u32,
+        surface: &wl_surface::WlSurface,
+        keys: Vec<u8>,
+    ) {
+        Self::enter(self, serial, surface, keys.clone())
+    }
+
+    fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
+        Self::leave(self, serial, surface)
+    }
+    
+    fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
+        Self::key(self, serial, time, key, state)
+    }
+    fn modifiers(
+        &self,
+        serial: u32,
+        mods_depressed: u32,
+        mods_latched: u32,
+        mods_locked: u32,
+        group: u32,
+    ) {
+        Self::modifiers(self, serial, mods_depressed, mods_latched, mods_locked, group)
+    }
+    fn repeat_info(&self, rate: i32, delay: i32) {
+        Self::repeat_info(self, rate, delay)
+    }
+    fn version(&self) -> u32 {
+        <Self as Resource>::version(self)
+    }
+}
+
+pub(crate) struct KnownKbds {
+    /// The list of client keyboards
+    /// Contains Arc so that interceptor can forward events to them
+    pub(crate) keyboards: Arc<Mutex<Vec<Weak<wl_keyboard::WlKeyboard>>>>,
+    /// If present, all events are directed to it rather than the keyboards.
+    /// While this is used only by the input method, the implementation is hidden behind a trait to limit the knowledge of the input method by the keyboard.
+    pub(crate) interceptor: Arc<Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>>,
+}
+
+impl fmt::Debug for KnownKbds {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KnownKbds")
+            .field("keyboards", &self.keyboards)
+            //.field("interceptor", &self.interceptor)//.as_ref().map(|_| "dyn WlKeyboardApi"))
+            .finish()
+    }
+}
+
+impl KnownKbds {
+    pub(crate) fn clear_interceptor(&self) {
+        *self.interceptor.lock().unwrap() = None;
+    }
+
+    pub(crate) fn for_each_active(&self, f: impl Fn(&dyn WlKeyboardApi)) {
+        if let Some(kbd) = self.interceptor.lock().unwrap().as_ref() {
+            f(kbd.as_ref())
+        } else {
+            Self::for_each_active_kbd(&self.keyboards.lock().unwrap(), f);
+        }
+    }
+
+    pub(crate) fn for_each_focused(
+        &self,
+        surface: &wl_surface::WlSurface,
+        mut f: impl FnMut(&dyn WlKeyboardApi),
+    ) {
+        if let Some(kbd) = self.interceptor.lock().unwrap().as_ref() {
+            f(kbd.as_ref())
+        } else {
+            Self::for_each_focused_kbd(&self.keyboards.lock().unwrap(), surface, f);
+        }
+    }
+
+    /// Direct access to the keyboards. For use by the interceptor
+    pub(crate) fn for_each_active_kbd(
+        keyboards: &Vec<Weak<wl_keyboard::WlKeyboard>>,
+        mut f: impl FnMut(&dyn WlKeyboardApi),
+    ) {
+        keyboards
+            .iter()
+            .filter_map(|k| k.upgrade().ok())
+            .for_each(|k| f(&k))
+    }
+
+    pub(crate) fn for_each_focused_kbd(
+        keyboards: &Vec<Weak<wl_keyboard::WlKeyboard>>,
+        surface: &wl_surface::WlSurface,
+        mut f: impl FnMut(&dyn WlKeyboardApi),
+    ) {
+        keyboards
+            .iter()
+            .filter_map(|k| k.upgrade().ok())
+            .filter(|k| k.id().same_client_as(&surface.id()))
+            .for_each(|k| f(&k))
+    }
+}
+
 pub(crate) struct KbdRc<D: SeatHandler> {
     pub(crate) internal: Mutex<KbdInternal<D>>,
     #[cfg(feature = "wayland_frontend")]
-    pub(crate) keymap: Mutex<KeymapFile>,
+    pub(crate) keymap: Arc<Mutex<KeymapFile>>,
     #[cfg(feature = "wayland_frontend")]
-    pub(crate) known_kbds: Mutex<Vec<Weak<wayland_server::protocol::wl_keyboard::WlKeyboard>>>,
+    pub(crate) known_kbds: KnownKbds,
     #[cfg(feature = "wayland_frontend")]
     pub(crate) last_enter: Mutex<Option<Serial>>,
     pub(crate) span: tracing::Span,
@@ -706,10 +848,13 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         Ok(Self {
             arc: Arc::new(KbdRc {
                 #[cfg(feature = "wayland_frontend")]
-                keymap: Mutex::new(keymap_file),
+                keymap: Arc::new(Mutex::new(keymap_file)),
                 internal: Mutex::new(internal),
                 #[cfg(feature = "wayland_frontend")]
-                known_kbds: Mutex::new(Vec::new()),
+                known_kbds: KnownKbds {
+                    keyboards: Arc::new(Mutex::new(Vec::new())),
+                    interceptor: Arc::new(Mutex::new(None)),
+                },
                 #[cfg(feature = "wayland_frontend")]
                 last_enter: Mutex::new(None),
                 #[cfg(feature = "wayland_frontend")]
@@ -748,7 +893,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     ) -> bool {
         use std::os::unix::io::AsFd;
         use tracing::warn;
-        use wayland_server::{Resource, protocol::wl_keyboard::KeymapFormat};
+        use wayland_server::protocol::wl_keyboard::KeymapFormat;
 
         // Ignore request which do not change the keymap.
         let new_id = keymap_file.id();
@@ -759,11 +904,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
 
         // Update keymap for every wl_keyboard.
         let known_kbds = &self.arc.known_kbds;
-        for kbd in &*known_kbds.lock().unwrap() {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
-
+        known_kbds.for_each_active(|kbd| {
             let res = keymap_file.with_fd(kbd.version() >= 7, |fd, size| {
                 kbd.keymap(KeymapFormat::XkbV1, fd.as_fd(), size as u32)
             });
@@ -773,7 +914,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                     "Failed to send keymap to client"
                 );
             }
-        }
+        });
 
         // Send updated modifiers.
         let seat = self.get_seat(data);
@@ -1235,14 +1376,11 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         guard.repeat_delay = delay;
         guard.repeat_rate = rate;
         #[cfg(feature = "wayland_frontend")]
-        for kbd in &*self.arc.known_kbds.lock().unwrap() {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
+        self.arc.known_kbds.for_each_active(|kbd| {
             if kbd.version() >= 4 {
                 kbd.repeat_info(rate, delay);
             }
-        }
+        })
     }
 
     /// Access the [`Serial`] of the last `keyboard_enter` event, if that focus is still active.
