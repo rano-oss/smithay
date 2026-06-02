@@ -71,11 +71,11 @@
 //! ```
 
 use wayland_server::{
-    backend::GlobalId, protocol::wl_surface::WlSurface, Client, DataInit, DisplayHandle, New,
+    backend::GlobalId, protocol::wl_surface::WlSurface, Client, DataInit, Dispatch, DisplayHandle,
+    GlobalDispatch, New,
 };
 
 use crate::wayland::{Dispatch2, GlobalDispatch2};
-use wayland_server::{Dispatch, GlobalDispatch};
 
 use wayland_protocols_experimental::input_method::v1::server::{
     xx_input_method_manager_v2::{self, XxInputMethodManagerV2},
@@ -231,7 +231,7 @@ where
 }
 
 /// User data for the input method manager resource.
-#[allow(missing_debug_implementations)]
+#[derive(Debug)]
 pub struct ManagerUserData;
 
 impl<D> Dispatch2<XxInputMethodManagerV2, D> for ManagerUserData
@@ -260,39 +260,28 @@ where
                 let handle = user_data.get::<InputMethodHandle>().unwrap();
                 let text_input_handle = user_data.get::<TextInputHandle>().unwrap();
 
+                let im_user_data = InputMethodUserData {
+                    seat: seat.clone(),
+                    handle: handle.clone(),
+                    text_input_handle: text_input_handle.clone(),
+                    keyboard_handle: seat.get_keyboard().unwrap(),
+                    keyboard_filter: Default::default(),
+                    dismiss_popup: D::dismiss_popup,
+                };
+
                 let app_id = match state.input_method_app_id(client, dh) {
                     Some(id) => id,
                     None => {
                         tracing::warn!("Input method client has no app_id (no security context?), rejecting registration");
                         // Must still init the resource to avoid panic, then send unavailable
-                        let instance = data_init.init(
-                            input_method,
-                            InputMethodUserData {
-                                seat: seat.clone(),
-                                handle: handle.clone(),
-                                text_input_handle: text_input_handle.clone(),
-                                keyboard_handle: seat.get_keyboard().unwrap(),
-                                keyboard_filter: Default::default(),
-                                dismiss_popup: D::dismiss_popup,
-                            },
-                        );
+                        let instance = data_init.init(input_method, im_user_data);
                         instance.unavailable();
                         return;
                     }
                 };
 
                 text_input_handle.enter();
-                let instance = data_init.init(
-                    input_method,
-                    InputMethodUserData {
-                        seat: seat.clone(),
-                        handle: handle.clone(),
-                        text_input_handle: text_input_handle.clone(),
-                        keyboard_handle: seat.get_keyboard().unwrap(),
-                        keyboard_filter: Default::default(),
-                        dismiss_popup: D::dismiss_popup,
-                    },
-                );
+                let instance = data_init.init(input_method, im_user_data);
                 handle.add_instance(&instance, app_id.clone());
                 state.input_method_instance_registered();
             }

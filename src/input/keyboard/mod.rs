@@ -1261,7 +1261,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     where
         F: FnOnce(&mut D, &ModifiersState, KeysymHandle<'_>) -> T,
     {
-        trace!("Handling key event");
+        trace!("Handling keystroke");
 
         let mut guard = self.arc.internal.lock().unwrap();
         let (mods_changed, leds_changed) = guard.key_input(keycode, state);
@@ -1290,9 +1290,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         &self,
         data: &mut D,
         keycode: Keycode,
-        event: KeyState,
+        state: KeyState,
         serial: Serial,
-        time_ms: u32,
+        time: u32,
         mods_changed: bool,
     ) {
         let mut guard = self.arc.internal.lock().unwrap();
@@ -1301,7 +1301,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         let seat = self.get_seat(data);
         let modifiers = mods_changed.then_some(guard.mods_state);
         guard.with_grab(data, &seat, |data, handle, grab| {
-            grab.input(data, handle, keycode, event, modifiers, serial, time_ms);
+            grab.input(data, handle, keycode, state, modifiers, serial, time);
         });
         if guard.focus.is_some() {
             trace!("Input forwarded to client");
