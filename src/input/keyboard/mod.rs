@@ -14,7 +14,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use thiserror::Error;
-use tracing::{debug, error, info, info_span, instrument, trace};
+use tracing::{debug, info, info_span, instrument, trace};
 
 use xkbcommon::xkb::ffi::XKB_STATE_LAYOUT_EFFECTIVE;
 pub use xkbcommon::xkb::{self, ContextFlags, Keycode, Keysym, keysyms};
@@ -221,15 +221,7 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     pub(crate) key_repeat_timer: Arc<Mutex<Option<RegistrationToken>>>,
 }
 
-#[cfg(feature = "wayland_frontend")]
-impl<D: SeatHandler> Drop for KbdInternal<D> {
-    fn drop(&mut self) {
-        let timer = self.key_repeat_timer.lock().unwrap().take();
-        if timer.is_some() {
-            error!("A keyboard was dropped without unregistering a repeat handler. This is a bug in smithay or in the compositor.");
-        }
-    }
-}
+
 
 // focus_hook does not implement debug, so we have to impl Debug manually
 impl<D: SeatHandler> fmt::Debug for KbdInternal<D> {
@@ -1005,9 +997,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     pub fn key_register_repeat<B: InputBackend>(
         &self,
         data: &mut D,
-        get_handle: impl Fn(&D) -> &LoopHandle<'static, D> + 'static,
+        get_handle: impl Fn(&D) -> &LoopHandle<'static, D>,
         event: B::KeyboardKeyEvent,
-        on_key: impl Fn(&mut D, KeyState, u32, Keycode) + Clone + 'static,
+        on_key: impl FnOnce(&mut D, KeyState, u32, Keycode),
     ) where
         <D as SeatHandler>::KeyboardFocus: crate::wayland::seat::WaylandFocus,
     {
