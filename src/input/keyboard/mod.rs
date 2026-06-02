@@ -1,6 +1,6 @@
 //! Keyboard-related types for smithay's input abstraction
 
-use crate::backend::input::{Event, InputBackend, KeyState, KeyboardKeyEvent};
+use crate::backend::input::KeyState;
 use crate::utils::{IsAlive, SERIAL_COUNTER, Serial};
 use calloop::{LoopHandle, RegistrationToken};
 use downcast_rs::{Downcast, impl_downcast};
@@ -985,30 +985,26 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         None
     }
 
-    /// Processes the keyboard event, starting or stopping key repeat.
-    /// If this method is used, it must receive all keyboard events.
+    /// Starts or stops key repeat for the given key event.
     ///
-    /// `on_key` is called for the initial press/release event (for compositor shortcut handling).
+    /// Call this after [`KeyboardHandle::input`] for keys that were forwarded to the client.
+    /// On press: starts a repeat timer (if the key is repeatable and rate > 0).
+    /// On release: stops any ongoing repeat.
+    ///
     /// Key repeat is handled internally: v10+ clients receive `wl_keyboard::key` with state
     /// `repeated`, older clients receive simulated press+release pairs.
     #[cfg(feature = "wayland_frontend")]
-    pub fn key_repeat<B: InputBackend>(
+    pub fn key_repeat(
         &self,
         data: &mut D,
         get_handle: impl Fn(&D) -> &LoopHandle<'static, D>,
-        event: B::KeyboardKeyEvent,
-        on_key: impl FnOnce(&mut D, KeyState, u32, Keycode),
+        keycode: Keycode,
+        state: KeyState,
+        time: u32,
     ) where
         <D as SeatHandler>::KeyboardFocus: crate::wayland::seat::WaylandFocus,
     {
-        let time_ms = event.time_msec();
-        let keycode = event.key_code();
-        let state = event.state();
-
-        // Forward initial hardware event
-        on_key(data, state, time_ms, keycode);
-
-        // Unregister preexisting repeating
+        // Stop any existing repeat
         self.key_stop_repeat(data, &get_handle);
 
         // Register repeating only for pressed keys
@@ -1019,7 +1015,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         let mut guard = self.arc.internal.lock().unwrap();
         let delay = guard.repeat_delay;
         let rate = guard.repeat_rate;
-        let mut time_ms = time_ms;
+        let mut time_ms = time;
 
         if rate <= 0 {
             return;
@@ -1262,12 +1258,12 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             let Ok(kbd) = kbd.upgrade() else {
                 continue;
             };
+            let rate = if kbd.version() >= 10 {
+                0 // Enables compositor-side key repeat. See wl_keyboard key event
+            } else {
+                rate
+            };
             if kbd.version() >= 4 {
-                let rate = if kbd.version() >= 10 {
-                    0 // Enables compositor-side key repeat. See wl_keyboard key event
-                } else {
-                    rate
-                };
                 kbd.repeat_info(rate, delay);
             }
         }

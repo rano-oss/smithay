@@ -1,6 +1,6 @@
 use std::{convert::TryInto, process::Command, sync::atomic::Ordering};
 
-use crate::{AnvilState, focus::PointerFocusTarget, shell::FullscreenSurface};
+use crate::{focus::PointerFocusTarget, shell::FullscreenSurface, AnvilState};
 
 #[cfg(feature = "udev")]
 use crate::udev::UdevData;
@@ -12,9 +12,9 @@ use smithay::{
         self, Axis, AxisSource, Event, InputBackend, InputEvent, KeyState, KeyboardKeyEvent,
         PointerAxisEvent, PointerButtonEvent,
     },
-    desktop::{WindowSurfaceType, layer_map_for_output},
+    desktop::{layer_map_for_output, WindowSurfaceType},
     input::{
-        keyboard::{FilterResult, Keysym, ModifiersState, keysyms as xkb},
+        keyboard::{keysyms as xkb, FilterResult, Keysym, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
     output::Scale,
@@ -22,7 +22,7 @@ use smithay::{
         wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1,
         wayland_server::protocol::wl_pointer,
     },
-    utils::{Logical, Point, SERIAL_COUNTER as SCOUNTER, Serial, Transform},
+    utils::{Logical, Point, Serial, Transform, SERIAL_COUNTER as SCOUNTER},
     wayland::{
         input_method::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
@@ -58,7 +58,7 @@ use smithay::{
     },
     reexports::wayland_server::DisplayHandle,
     wayland::{
-        pointer_constraints::{PointerConstraint, with_pointer_constraint},
+        pointer_constraints::{with_pointer_constraint, PointerConstraint},
         seat::WaylandFocus,
         tablet_manager::{TabletDescriptor, TabletSeatTrait},
     },
@@ -159,6 +159,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| {
                         FilterResult::Forward
                     });
+                    let keyboard = self.seat.get_keyboard().unwrap();
+                    keyboard.key_repeat(self, |d| &d.handle, keycode, state, time);
                     return KeyAction::None;
                 };
             }
@@ -217,6 +219,12 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .unwrap_or(KeyAction::None);
 
         self.suppressed_keys = suppressed_keys;
+
+        if matches!(action, KeyAction::None) {
+            let keyboard = self.seat.get_keyboard().unwrap();
+            keyboard.key_repeat(self, |d| &d.handle, keycode, state, time);
+        }
+
         action
     }
 
@@ -555,6 +563,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     }
 
     pub fn release_all_keys(&mut self) {
+        let keyboard = self.seat.get_keyboard().unwrap();
+        keyboard.key_stop_repeat(self, |d| &d.handle);
         let keyboard = self.seat.get_keyboard().unwrap();
         for keycode in keyboard.pressed_keys() {
             keyboard.input(
