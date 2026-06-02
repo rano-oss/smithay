@@ -218,10 +218,8 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     pub(crate) led_state: LedState,
     grab: GrabStatus<dyn KeyboardGrab<D>>,
     /// Holds the token to cancel key repeat.
-    pub(crate) key_repeat_timer: Option<RegistrationToken>,
+    pub(crate) key_repeat_token: Option<RegistrationToken>,
 }
-
-
 
 // focus_hook does not implement debug, so we have to impl Debug manually
 impl<D: SeatHandler> fmt::Debug for KbdInternal<D> {
@@ -235,7 +233,7 @@ impl<D: SeatHandler> fmt::Debug for KbdInternal<D> {
             .field("xkb", &self.xkb)
             .field("repeat_rate", &self.repeat_rate)
             .field("repeat_delay", &self.repeat_delay)
-            .field("key_repeat_timer", &self.key_repeat_timer)
+            .field("key_repeat_timer", &self.key_repeat_token)
             .finish()
     }
 }
@@ -278,7 +276,7 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
             led_mapping,
             led_state,
             grab: GrabStatus::None,
-            key_repeat_timer: None,
+            key_repeat_token: None,
         })
     }
 
@@ -994,7 +992,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Key repeat is handled internally: v10+ clients receive `wl_keyboard::key` with state
     /// `repeated`, older clients receive simulated press+release pairs.
     #[cfg(feature = "wayland_frontend")]
-    pub fn key_register_repeat<B: InputBackend>(
+    pub fn key_repeat<B: InputBackend>(
         &self,
         data: &mut D,
         get_handle: impl Fn(&D) -> &LoopHandle<'static, D>,
@@ -1055,13 +1053,13 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 },
             )
             .unwrap();
-        guard.key_repeat_timer = Some(token);
+        guard.key_repeat_token = Some(token);
     }
 
     /// Cancels any ongoing key repeat
     pub fn key_stop_repeat(&self, data: &mut D, get_handle: impl Fn(&D) -> &LoopHandle<'static, D>) {
         let mut guard = self.arc.internal.lock().unwrap();
-        if let Some(token) = guard.key_repeat_timer.take() {
+        if let Some(token) = guard.key_repeat_token.take() {
             let handle = get_handle(data);
             handle.remove(token);
         };
