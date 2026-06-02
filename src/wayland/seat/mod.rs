@@ -75,12 +75,11 @@ use crate::wayland::{Dispatch2, GlobalDispatch2};
 
 pub use self::{
     keyboard::KeyboardUserData,
-    pointer::{CURSOR_IMAGE_ROLE, PointerUserData},
+    pointer::{PointerUserData, CURSOR_IMAGE_ROLE},
     touch::TouchUserData,
 };
 
 use wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
     backend::{ClientId, GlobalId, ObjectId},
     protocol::{
         wl_keyboard::WlKeyboard,
@@ -89,6 +88,7 @@ use wayland_server::{
         wl_surface,
         wl_touch::WlTouch,
     },
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 
 use super::compositor::CompositorHandler;
@@ -172,7 +172,7 @@ impl<D: SeatHandler + 'static> SeatState<D> {
     {
         let Seat { arc } = self.new_seat(name);
 
-        let global_id = display.create_global::<D, _, _>(9, SeatGlobalData { arc: arc.clone() });
+        let global_id = display.create_global::<D, _, _>(10, SeatGlobalData { arc: arc.clone() });
         arc.inner.lock().unwrap().global = Some(global_id);
 
         Seat { arc }
