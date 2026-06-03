@@ -5,7 +5,9 @@ use wayland_protocols_experimental::input_method::v1::server::xx_input_method_v1
 use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_surface_v2::{
     self, XxInputPopupSurfaceV2,
 };
-use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface, Dispatch, Resource};
+use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface, Resource};
+
+use crate::wayland::Dispatch2;
 
 use crate::input::SeatHandler;
 use crate::utils::{
@@ -16,7 +18,7 @@ use crate::utils::{
 use super::{
     configure_tracker::ConfigureTracker,
     positioner::{PositionerState, PositionerUserData},
-    InputMethodHandler, InputMethodManagerState, InputMethodUserData,
+    InputMethodHandler, InputMethodUserData,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,19 +285,20 @@ impl InputMethodPopupSurfaceUserData {
     }
 }
 
-impl<D> Dispatch<XxInputPopupSurfaceV2, InputMethodPopupSurfaceUserData, D> for InputMethodManagerState
+impl<D> Dispatch2<XxInputPopupSurfaceV2, D> for InputMethodPopupSurfaceUserData
 where
     D: InputMethodHandler + SeatHandler,
 {
     fn request(
+        &self,
         state: &mut D,
         _client: &wayland_server::Client,
         popup: &XxInputPopupSurfaceV2,
         request: xx_input_popup_surface_v2::Request,
-        data: &InputMethodPopupSurfaceUserData,
         _dhandle: &wayland_server::DisplayHandle,
         _data_init: &mut wayland_server::DataInit<'_, D>,
     ) {
+        let data = self;
         use xx_input_popup_surface_v2::Request;
         match request {
             Request::AckConfigure { serial } => {
@@ -380,12 +383,7 @@ where
         }
     }
 
-    fn destroyed(
-        _state: &mut D,
-        _client: ClientId,
-        _object: &XxInputPopupSurfaceV2,
-        data: &InputMethodPopupSurfaceUserData,
-    ) {
-        data.alive_tracker.destroy_notify();
+    fn destroyed(&self, _state: &mut D, _client: ClientId, _object: &XxInputPopupSurfaceV2) {
+        self.alive_tracker.destroy_notify();
     }
 }

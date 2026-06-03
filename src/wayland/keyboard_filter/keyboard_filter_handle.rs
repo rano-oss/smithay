@@ -15,7 +15,7 @@ use wayland_server::{
         wl_keyboard::{KeyState, WlKeyboard},
         wl_surface::WlSurface,
     },
-    Client, DataInit, Dispatch, DisplayHandle, Resource, Weak,
+    Client, DataInit, DisplayHandle, Resource, Weak,
 };
 
 use crate::input::{
@@ -23,7 +23,9 @@ use crate::input::{
     Seat, SeatHandler,
 };
 
-use super::{KeyboardFilterManagerState, KeyboardFilterManagerUserDataInner};
+use super::KeyboardFilterManagerUserDataInner;
+
+use crate::wayland::Dispatch2;
 
 #[derive(Debug)]
 pub(crate) struct BufferedEvent {
@@ -180,21 +182,21 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) im_surface: WlSurface,
 }
 
-impl<D> Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>, D> for KeyboardFilterManagerState
+impl<D> Dispatch2<XxKeyboardFilterV1, D> for KeyboardFilterUserData<D>
 where
-    D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>>,
     D: SeatHandler,
     D: 'static,
 {
     fn request(
+        &self,
         _state: &mut D,
         _client: &Client,
         resource: &XxKeyboardFilterV1,
         request: <XxKeyboardFilterV1 as Resource>::Request,
-        data: &KeyboardFilterUserData<D>,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
+        let data = self;
         use xx_keyboard_filter_v1::Request;
         match request {
             Request::Unbind => {
@@ -264,11 +266,12 @@ where
     }
 
     fn destroyed(
+        &self,
         _state: &mut D,
         _client: wayland_server::backend::ClientId,
         _resource: &XxKeyboardFilterV1,
-        data: &KeyboardFilterUserData<D>,
     ) {
+        let data = self;
         // Flush pending as passthrough
         let mut pending = data.pending_events.lock().unwrap();
         if let Some(ref surface) = *data.focused_surface.lock().unwrap() {

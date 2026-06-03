@@ -66,6 +66,10 @@ const MANAGER_VERSION: u32 = 2;
 
 mod text_input_handle;
 
+/// User data for the text input manager protocol object
+#[derive(Debug)]
+pub struct TextInputManagerUserData;
+
 /// Extends [Seat] with text input functionality
 pub trait TextInputSeat {
     /// Get text input associated with this seat
@@ -91,7 +95,7 @@ impl TextInputManagerState {
     pub fn new<D>(display: &DisplayHandle) -> Self
     where
         D: GlobalDispatch<ZwpTextInputManagerV3, GlobalData>,
-        D: Dispatch<ZwpTextInputManagerV3, GlobalData>,
+        D: Dispatch<ZwpTextInputManagerV3, TextInputManagerUserData>,
         D: Dispatch<ZwpTextInputV3, TextInputUserData>,
         D: 'static,
     {
@@ -108,8 +112,7 @@ impl TextInputManagerState {
 
 impl<D> GlobalDispatch2<ZwpTextInputManagerV3, D> for GlobalData
 where
-    D: Dispatch<ZwpTextInputManagerV3, GlobalData>,
-    D: Dispatch<ZwpTextInputV3, TextInputUserData>,
+    D: Dispatch<ZwpTextInputManagerV3, TextInputManagerUserData>,
     D: 'static,
 {
     fn bind(
@@ -120,11 +123,11 @@ where
         resource: New<ZwpTextInputManagerV3>,
         data_init: &mut DataInit<'_, D>,
     ) {
-        data_init.init(resource, GlobalData);
+        data_init.init(resource, TextInputManagerUserData);
     }
 }
 
-impl<D> Dispatch2<ZwpTextInputManagerV3, D> for GlobalData
+impl<D> Dispatch2<ZwpTextInputManagerV3, D> for TextInputManagerUserData
 where
     D: Dispatch<ZwpTextInputV3, TextInputUserData>,
     D: SeatHandler,
@@ -157,7 +160,7 @@ where
                         handle: handle.clone(),
                         input_method_handle: input_method_handle.clone(),
                         input_method_v3_handle: input_method_v3_handle.clone(),
-                        surface_commit_hook: Mutex::new(None)
+                        surface_commit_hook: Mutex::new(None),
                     },
                 );
                 handle.add_instance(&instance);

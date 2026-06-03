@@ -5,7 +5,9 @@ use tracing::{debug, warn};
 
 use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3;
 use wayland_server::backend::{ClientId, ObjectId};
-use wayland_server::{protocol::wl_surface::WlSurface, Dispatch, Resource};
+use wayland_server::{protocol::wl_surface::WlSurface, Resource};
+
+use crate::wayland::Dispatch2;
 use zwp_text_input_v3::{ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3};
 
 use crate::input::SeatHandler;
@@ -13,8 +15,6 @@ use crate::utils::{Logical, Rectangle};
 use crate::wayland::compositor::{self, HookId};
 use crate::wayland::input_method;
 use crate::wayland::input_method_v3;
-
-use super::TextInputManagerState;
 
 #[derive(Default, Debug)]
 pub(crate) struct TextInput {
@@ -213,22 +213,22 @@ pub struct TextInputUserData {
     pub(super) surface_commit_hook: Mutex<Option<HookId>>,
 }
 
-impl<D> Dispatch<ZwpTextInputV3, TextInputUserData, D> for TextInputManagerState
+impl<D> Dispatch2<ZwpTextInputV3, D> for TextInputUserData
 where
-    D: Dispatch<ZwpTextInputV3, TextInputUserData>,
     D: SeatHandler,
     D: input_method_v3::InputMethodHandler,
     D: 'static,
 {
     fn request(
+        &self,
         state: &mut D,
         _client: &wayland_server::Client,
         resource: &ZwpTextInputV3,
         request: zwp_text_input_v3::Request,
-        data: &TextInputUserData,
         _dhandle: &wayland_server::DisplayHandle,
         _data_init: &mut wayland_server::DataInit<'_, D>,
     ) {
+        let data = self;
         // Always increment serial to not desync with clients.
         if matches!(request, zwp_text_input_v3::Request::Commit) {
             data.handle.increment_serial(resource);
@@ -400,7 +400,8 @@ where
         }
     }
 
-    fn destroyed(state: &mut D, _client: ClientId, text_input: &ZwpTextInputV3, data: &TextInputUserData) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, text_input: &ZwpTextInputV3) {
+        let data = self;
         let destroyed_id = text_input.id();
         let deactivate_im = {
             let mut inner = data.handle.inner.lock().unwrap();

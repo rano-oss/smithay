@@ -1,11 +1,11 @@
-use super::InputMethodManagerState;
 use crate::utils::{Logical, Point, Rectangle, Size};
+use crate::wayland::Dispatch2;
 use std::cmp::min;
 use std::sync::Mutex;
 use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_positioner_v1::{
     self, Anchor, ConstraintAdjustment, Gravity, XxInputPopupPositionerV1,
 };
-use wayland_server::{Dispatch, Resource, WEnum};
+use wayland_server::{Resource, WEnum};
 
 /// Not sure what to write here. I just copied the pattern of UserData without analyzing it.
 #[derive(Default, Debug)]
@@ -327,22 +327,17 @@ impl PositionerState {
     }
 }
 
-impl<D> Dispatch<XxInputPopupPositionerV1, PositionerUserData, D> for InputMethodManagerState
-where
-/*D: Dispatch<XdgPositioner, XdgPositionerUserData>,
-D: XdgShellHandler,
-D: 'static,*/
-{
+impl<D> Dispatch2<XxInputPopupPositionerV1, D> for PositionerUserData {
     fn request(
+        &self,
         _state: &mut D,
         _client: &wayland_server::Client,
         positioner: &XxInputPopupPositionerV1,
         request: xx_input_popup_positioner_v1::Request,
-        data: &PositionerUserData,
         _dhandle: &wayland_server::DisplayHandle,
         _data_init: &mut wayland_server::DataInit<'_, D>,
     ) {
-        let mut state = data.inner.lock().unwrap();
+        let mut state = self.inner.lock().unwrap();
         use xx_input_popup_positioner_v1::Request;
         match request {
             Request::SetSize { width, height } => {

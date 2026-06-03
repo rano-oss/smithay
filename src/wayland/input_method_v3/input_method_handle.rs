@@ -12,18 +12,18 @@ use wayland_server::{
     backend::{ClientId, ObjectId},
     protocol::wl_surface::WlSurface,
 };
-use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
+use wayland_server::{Client, DataInit, DisplayHandle, Resource};
 
 use crate::{
     input::{keyboard::KeyboardHandle, Seat, SeatHandler},
     utils::{Logical, Rectangle},
-    wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle},
+    wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle, Dispatch2},
 };
 
 use super::{
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
     positioner::PositionerUserData,
-    InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
+    InputMethodHandler, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
 /// Contains all input method instances and tracks which one is active.
@@ -275,24 +275,24 @@ impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
     }
 }
 
-impl<D> Dispatch<XxInputMethodV1, InputMethodUserData<D>, D> for InputMethodManagerState
+impl<D> Dispatch2<XxInputMethodV1, D> for InputMethodUserData<D>
 where
-    D: Dispatch<XxInputMethodV1, InputMethodUserData<D>>,
-    D: Dispatch<XxInputPopupSurfaceV2, InputMethodPopupSurfaceUserData>,
     D: SeatHandler,
     D: InputMethodHandler,
+    D: wayland_server::Dispatch<XxInputPopupSurfaceV2, InputMethodPopupSurfaceUserData>,
     <D as SeatHandler>::KeyboardFocus: WaylandFocus,
     D: 'static,
 {
     fn request(
+        &self,
         state: &mut D,
         _client: &Client,
         im: &XxInputMethodV1,
         request: xx_input_method_v1::Request,
-        data: &InputMethodUserData<D>,
         _dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
+        let data = self;
         use xx_input_method_v1::Request;
         match request {
             Request::CommitString { text } => {
@@ -441,12 +441,8 @@ where
         }
     }
 
-    fn destroyed(
-        _state: &mut D,
-        _client: ClientId,
-        input_method: &XxInputMethodV1,
-        data: &InputMethodUserData<D>,
-    ) {
+    fn destroyed(&self, _state: &mut D, _client: ClientId, input_method: &XxInputMethodV1) {
+        let data = self;
         let destroyed_id = input_method.id();
         let mut inner = data.handle.inner.lock().unwrap();
         // Clear active ID if this was the active instance

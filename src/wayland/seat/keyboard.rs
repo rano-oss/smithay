@@ -15,7 +15,7 @@ use crate::{
     backend::input::{KeyState, Keycode},
     input::{
         keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
-        Seat, SeatHandler, SeatState, WeakSeat,
+        Seat, SeatHandler, WeakSeat,
     },
     utils::{iter::new_locked_obj_iter_from_vec, HookId, Serial},
     wayland::{
@@ -133,24 +133,23 @@ impl<D: SeatHandler> fmt::Debug for KeyboardUserData<D> {
     }
 }
 
-impl<D> Dispatch<WlKeyboard, KeyboardUserData<D>, D> for SeatState<D>
+impl<D> Dispatch2<WlKeyboard, D> for KeyboardUserData<D>
 where
-    D: 'static + Dispatch<WlKeyboard, KeyboardUserData<D>>,
-    D: SeatHandler,
+    D: SeatHandler + 'static,
 {
     fn request(
+        &self,
         _state: &mut D,
         _client: &wayland_server::Client,
         _resource: &WlKeyboard,
         _request: wl_keyboard::Request,
-        _data: &KeyboardUserData<D>,
         _dhandle: &DisplayHandle,
         _data_init: &mut wayland_server::DataInit<'_, D>,
     ) {
     }
 
-    fn destroyed(_state: &mut D, _client_id: ClientId, keyboard: &WlKeyboard, data: &KeyboardUserData<D>) {
-        if let Some(ref handle) = data.handle {
+    fn destroyed(&self, _state: &mut D, _client_id: ClientId, keyboard: &WlKeyboard) {
+        if let Some(ref handle) = self.handle {
             handle
                 .arc
                 .known_kbds
