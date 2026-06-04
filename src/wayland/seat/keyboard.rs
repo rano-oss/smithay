@@ -318,6 +318,18 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
             );
         })
     }
+
+    fn repeat(&self, seat: &Seat<D>, _data: &mut D, keycode: Keycode, serial: Serial, time: u32) {
+        let raw_key = keycode.raw() - 8;
+        for_each_focused_kbds(seat, self, |kbd| {
+            if kbd.version() >= 10 {
+                kbd.key(serial.into(), time, raw_key, WlKeyState::Repeated);
+            } else {
+                kbd.key(serial.into(), time, raw_key, WlKeyState::Pressed);
+                kbd.key(serial.into(), time, raw_key, WlKeyState::Released);
+            }
+        });
+    }
 }
 
 impl From<KeyState> for WlKeyState {
@@ -333,40 +345,7 @@ impl From<KeyState> for WlKeyState {
 impl<D> KeyboardHandle<D>
 where
     D: SeatHandler + 'static,
-    <D as SeatHandler>::KeyboardFocus: WaylandFocus,
 {
-    /// Send a key repeat event directly to focused client keyboards.
-    ///
-    /// For v10+ clients: sends `wl_keyboard::key` with state `repeated`.
-    /// For older clients: sends a simulated press followed by release.
-    pub(crate) fn send_repeat(&self, seat: &Seat<D>, time: u32, keycode: Keycode) {
-        let guard = self.arc.internal.lock().unwrap();
-        let Some((focus, _)) = guard.focus.as_ref() else {
-            return;
-        };
-        // Only send repeat if the key was actually forwarded to the client
-        if !guard.forwarded_pressed_keys.contains(&keycode) {
-            return;
-        }
-        let surface = focus.wl_surface().map(|s| s.into_owned());
-        let serial: u32 = SERIAL_COUNTER.next_serial().into();
-        let raw_key = keycode.raw() - 8;
-        drop(guard);
-
-        let Some(surface) = surface else {
-            return;
-        };
-
-        for_each_focused_kbds(seat, &surface, |kbd| {
-            if kbd.version() >= 10 {
-                kbd.key(serial, time, raw_key, WlKeyState::Repeated);
-            } else {
-                kbd.key(serial, time, raw_key, WlKeyState::Pressed);
-                kbd.key(serial, time, raw_key, WlKeyState::Released);
-            }
-        });
-    }
-
     /// Start or stop compositor-side key repeat based on key state.
     ///
     /// Called from `input_forward` when `compositor_key_repeat` feature is enabled.
@@ -407,8 +386,19 @@ where
                                     time_ms += rate as u32;
                                 }
 
-                                let seat = kbd.get_seat(data);
-                                kbd.send_repeat(&seat, time_ms, keycode);
+                                let guard = kbd.arc.internal.lock().unwrap();
+                                // Only repeat if key is still forwarded
+                                if !guard.forwarded_pressed_keys.contains(&keycode) {
+                                    return calloop::timer::TimeoutAction::Drop;
+                                }
+                                let focus = guard.focus.as_ref().map(|(f, _)| f.clone());
+                                drop(guard);
+
+                                if let Some(focus) = focus {
+                                    let seat = kbd.get_seat(data);
+                                    let serial = SERIAL_COUNTER.next_serial();
+                                    focus.repeat(&seat, data, keycode, serial, time_ms);
+                                }
                                 calloop::timer::TimeoutAction::ToDuration(rate_duration)
                             },
                         )

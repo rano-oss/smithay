@@ -23,8 +23,6 @@ use super::{GrabStatus, Seat, SeatHandler};
 
 #[cfg(feature = "wayland_frontend")]
 use wayland_server::{Resource, Weak};
-#[cfg(feature = "compositor_key_repeat")]
-use crate::wayland::seat::WaylandFocus;
 #[cfg(feature = "wayland_frontend")]
 mod keymap_file;
 #[cfg(feature = "wayland_frontend")]
@@ -57,6 +55,11 @@ where
     );
     /// Hold modifiers were changed on a keyboard from a given seat
     fn modifiers(&self, seat: &Seat<D>, data: &mut D, modifiers: ModifiersState, serial: Serial);
+    /// A key repeat event for a given seat (compositor-side repeat)
+    ///
+    /// Default implementation does nothing. Wayland targets send protocol-appropriate
+    /// repeat events based on client version.
+    fn repeat(&self, _seat: &Seat<D>, _data: &mut D, _keycode: Keycode, _serial: Serial, _time: u32) {}
     /// Keyboard focus of a given seat moved from another handler to this handler
     fn replace(
         &self,
@@ -964,7 +967,6 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     ///
     /// The module [`keysyms`] exposes definitions of all possible keysyms to be compared against.
     /// This includes non-character keysyms, such as XF86 special keys.
-    #[cfg(not(feature = "compositor_key_repeat"))]
     #[instrument(level = "trace", parent = &self.arc.span, skip(self, data, filter))]
     pub fn input<T, F>(
         &self,
@@ -1031,7 +1033,6 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Forward a key event to the focused client
     ///
     /// Useful in conjunction with [`KeyboardHandle::input_intercept`].
-    #[cfg(not(feature = "compositor_key_repeat"))]
     pub fn input_forward(
         &self,
         data: &mut D,
@@ -1062,6 +1063,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         } else {
             trace!("No client currently focused");
         }
+        drop(guard);
+        #[cfg(feature = "compositor_key_repeat")]
+        self.manage_key_repeat(data, keycode, state, time);
     }
 
     /// Set the current focus of this keyboard
@@ -1442,75 +1446,4 @@ impl<D: SeatHandler + 'static> KeyboardGrab<D> for DefaultGrab {
     }
 
     fn unset(&mut self, _data: &mut D) {}
-}
-
-/// Compositor-side key repeat impl block (requires `WaylandFocus` bound for `manage_key_repeat`)
-#[cfg(feature = "compositor_key_repeat")]
-impl<D> KeyboardHandle<D>
-where
-    D: SeatHandler + 'static,
-    <D as SeatHandler>::KeyboardFocus: WaylandFocus,
-{
-    /// Process a key event and forward it to the focused client with compositor-side key repeat.
-    ///
-    /// The `filter` closure allows the compositor to intercept the event
-    /// as interpreted by the keymap before it is forwarded to the focused client.
-    #[instrument(level = "trace", parent = &self.arc.span, skip(self, data, filter))]
-    pub fn input<T, F>(
-        &self,
-        data: &mut D,
-        keycode: Keycode,
-        state: KeyState,
-        serial: Serial,
-        time: u32,
-        filter: F,
-    ) -> Option<T>
-    where
-        F: FnOnce(&mut D, &ModifiersState, KeysymHandle<'_>) -> FilterResult<T>,
-    {
-        let (filter_result, mods_changed) = self.input_intercept(data, keycode, state, filter);
-        if let FilterResult::Intercept(val) = filter_result {
-            trace!("Input was intercepted by filter");
-            return Some(val);
-        }
-
-        self.input_forward(data, keycode, state, serial, time, mods_changed);
-        None
-    }
-
-    /// Forward a key event to the focused client with compositor-side key repeat.
-    ///
-    /// Useful in conjunction with [`KeyboardHandle::input_intercept`].
-    pub fn input_forward(
-        &self,
-        data: &mut D,
-        keycode: Keycode,
-        state: KeyState,
-        serial: Serial,
-        time: u32,
-        mods_changed: bool,
-    ) {
-        let mut guard = self.arc.internal.lock().unwrap();
-        match state {
-            KeyState::Pressed => {
-                guard.forwarded_pressed_keys.insert(keycode);
-            }
-            KeyState::Released => {
-                guard.forwarded_pressed_keys.remove(&keycode);
-            }
-        };
-
-        let seat = self.get_seat(data);
-        let modifiers = mods_changed.then_some(guard.mods_state);
-        guard.with_grab(data, &seat, |data, handle, grab| {
-            grab.input(data, handle, keycode, state, modifiers, serial, time);
-        });
-        if guard.focus.is_some() {
-            trace!("Input forwarded to client");
-        } else {
-            trace!("No client currently focused");
-        }
-        drop(guard);
-        self.manage_key_repeat(data, keycode, state, time);
-    }
 }
