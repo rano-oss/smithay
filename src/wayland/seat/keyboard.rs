@@ -2,27 +2,27 @@ use std::{cell::RefCell, fmt};
 
 use tracing::{instrument, trace, warn};
 use wayland_server::{
-    Client, DisplayHandle, Resource,
     backend::{ClientId, ObjectId},
     protocol::{
         wl_keyboard::{self, KeyState as WlKeyState, WlKeyboard},
         wl_surface::WlSurface,
     },
+    Client, DisplayHandle, Resource,
 };
 
 use super::WaylandFocus;
 use crate::{
     backend::input::{KeyState, Keycode},
     input::{
-        Seat, SeatHandler, WeakSeat,
         keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState},
+        Seat, SeatHandler, WeakSeat,
     },
-    utils::{HookId, SERIAL_COUNTER, Serial, iter::new_locked_obj_iter_from_vec},
+    utils::{iter::new_locked_obj_iter_from_vec, HookId, Serial, SERIAL_COUNTER},
     wayland::{
-        Dispatch2,
         compositor::{add_destruction_hook, remove_destruction_hook, with_states},
         input_method::InputMethodSeat,
         text_input::TextInputSeat,
+        Dispatch2,
     },
 };
 
@@ -365,6 +365,58 @@ where
                 kbd.key(serial, time, raw_key, WlKeyState::Released);
             }
         });
+    }
+
+    /// Start or stop compositor-side key repeat based on key state.
+    ///
+    /// Called from `input_forward` when `compositor_key_repeat` feature is enabled.
+    /// Stops any existing repeat timer, then starts a new one for pressed repeatable keys.
+    #[cfg(feature = "compositor_key_repeat")]
+    pub(crate) fn manage_key_repeat(&self, data: &mut D, keycode: Keycode, state: KeyState, time: u32) {
+        let mut guard = self.arc.internal.lock().unwrap();
+        let loop_handle = data.loop_handle();
+
+        // Stop any existing repeat
+        if let Some(token) = guard.key_repeat_token.take() {
+            loop_handle.remove(token);
+        }
+
+        // Start repeat only for pressed keys
+        if state == KeyState::Pressed {
+            let rate = guard.repeat_rate;
+            let delay = guard.repeat_delay;
+
+            if rate > 0 {
+                let repeats = guard.xkb.lock().unwrap().keymap.key_repeats(keycode);
+                if repeats {
+                    use std::time::Duration;
+
+                    let kbd = self.clone();
+                    let rate_duration = Duration::from_millis(rate as _);
+                    let mut time_ms = time;
+                    let mut first_fire = true;
+
+                    let token = loop_handle
+                        .insert_source(
+                            calloop::timer::Timer::from_duration(Duration::from_millis(delay as _)),
+                            move |_, _, data| {
+                                if first_fire {
+                                    time_ms += delay as u32;
+                                    first_fire = false;
+                                } else {
+                                    time_ms += rate as u32;
+                                }
+
+                                let seat = kbd.get_seat(data);
+                                kbd.send_repeat(&seat, time_ms, keycode);
+                                calloop::timer::TimeoutAction::ToDuration(rate_duration)
+                            },
+                        )
+                        .unwrap();
+                    guard.key_repeat_token = Some(token);
+                }
+            }
+        }
     }
 }
 

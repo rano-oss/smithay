@@ -23,7 +23,7 @@ profiling = { version = "1.0" }
 
 [dependencies.smithay]
 default-features = false
-features = ["desktop", "wayland_frontend"]
+features = ["desktop", "wayland_frontend", "compositor_key_repeat"]
 path = ".."
 
 [dependencies.x11rb]

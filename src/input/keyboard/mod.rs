@@ -2,7 +2,8 @@
 
 use crate::backend::input::KeyState;
 use crate::utils::{IsAlive, SERIAL_COUNTER, Serial};
-use calloop::{LoopHandle, RegistrationToken};
+#[cfg(feature = "compositor_key_repeat")]
+use calloop::RegistrationToken;
 use downcast_rs::{Downcast, impl_downcast};
 use std::collections::HashSet;
 #[cfg(feature = "wayland_frontend")]
@@ -22,6 +23,8 @@ use super::{GrabStatus, Seat, SeatHandler};
 
 #[cfg(feature = "wayland_frontend")]
 use wayland_server::{Resource, Weak};
+#[cfg(feature = "compositor_key_repeat")]
+use crate::wayland::seat::WaylandFocus;
 #[cfg(feature = "wayland_frontend")]
 mod keymap_file;
 #[cfg(feature = "wayland_frontend")]
@@ -136,7 +139,7 @@ impl LedState {
 /// thread, but should not have additional ref-counts kept on one thread.
 pub struct Xkb {
     context: xkb::Context,
-    keymap: xkb::Keymap,
+    pub(crate) keymap: xkb::Keymap,
     state: xkb::State,
 }
 
@@ -210,13 +213,14 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     pub(crate) pressed_keys: HashSet<Keycode>,
     pub(crate) forwarded_pressed_keys: HashSet<Keycode>,
     pub(crate) mods_state: ModifiersState,
-    xkb: Arc<Mutex<Xkb>>,
+    pub(crate) xkb: Arc<Mutex<Xkb>>,
     pub(crate) repeat_rate: i32,
     pub(crate) repeat_delay: i32,
     led_mapping: LedMapping,
     pub(crate) led_state: LedState,
     grab: GrabStatus<dyn KeyboardGrab<D>>,
     /// Holds the token to cancel key repeat.
+    #[cfg(feature = "compositor_key_repeat")]
     pub(crate) key_repeat_token: Option<RegistrationToken>,
 }
 
@@ -232,7 +236,6 @@ impl<D: SeatHandler> fmt::Debug for KbdInternal<D> {
             .field("xkb", &self.xkb)
             .field("repeat_rate", &self.repeat_rate)
             .field("repeat_delay", &self.repeat_delay)
-            .field("key_repeat_timer", &self.key_repeat_token)
             .finish()
     }
 }
@@ -275,6 +278,7 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
             led_mapping,
             led_state,
             grab: GrabStatus::None,
+            #[cfg(feature = "compositor_key_repeat")]
             key_repeat_token: None,
         })
     }
@@ -960,6 +964,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     ///
     /// The module [`keysyms`] exposes definitions of all possible keysyms to be compared against.
     /// This includes non-character keysyms, such as XF86 special keys.
+    #[cfg(not(feature = "compositor_key_repeat"))]
     #[instrument(level = "trace", parent = &self.arc.span, skip(self, data, filter))]
     pub fn input<T, F>(
         &self,
@@ -982,84 +987,6 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
 
         self.input_forward(data, keycode, state, serial, time, mods_changed);
         None
-    }
-
-    /// Starts or stops key repeat for the given key event.
-    ///
-    /// Call this after [`KeyboardHandle::input`] for keys that were forwarded to the client.
-    /// On press: starts a repeat timer (if the key is repeatable and rate > 0).
-    /// On release: stops any ongoing repeat.
-    ///
-    /// Key repeat is handled internally: v10+ clients receive `wl_keyboard::key` with state
-    /// `repeated`, older clients receive simulated press+release pairs.
-    #[cfg(feature = "wayland_frontend")]
-    pub fn key_repeat(
-        &self,
-        data: &mut D,
-        get_handle: impl Fn(&D) -> &LoopHandle<'static, D>,
-        keycode: Keycode,
-        state: KeyState,
-        time: u32,
-    ) where
-        <D as SeatHandler>::KeyboardFocus: crate::wayland::seat::WaylandFocus,
-    {
-        // Stop any existing repeat
-
-        use std::time::Duration;
-        self.key_stop_repeat(data, &get_handle);
-
-        // Register repeating only for pressed keys
-        if state != KeyState::Pressed {
-            return;
-        }
-
-        let mut guard = self.arc.internal.lock().unwrap();
-        let delay = guard.repeat_delay;
-        let rate = guard.repeat_rate;
-        let mut time_ms = time;
-
-        if rate <= 0 {
-            return;
-        }
-
-        // Check if the key is repeatable
-        let repeats = guard.xkb.lock().unwrap().keymap.key_repeats(keycode);
-        if !repeats {
-            return;
-        }
-
-        let kbd = self.clone();
-        let rate_duration = Duration::from_millis(rate as _);
-        let mut first_fire = true;
-
-        let handle = get_handle(data);
-        let token = handle
-            .insert_source(
-                calloop::timer::Timer::from_duration(Duration::from_millis(delay as _)),
-                move |_, _, data| {
-                    if first_fire {
-                        time_ms += delay as u32;
-                        first_fire = false;
-                    } else {
-                        time_ms += rate as u32;
-                    }
-
-                    let seat = kbd.get_seat(data);
-                    kbd.send_repeat(&seat, time_ms, keycode);
-                    calloop::timer::TimeoutAction::ToDuration(rate_duration)
-                },
-            )
-            .unwrap();
-        guard.key_repeat_token = Some(token);
-    }
-
-    /// Cancels any ongoing key repeat
-    pub fn key_stop_repeat(&self, data: &mut D, get_handle: impl Fn(&D) -> &LoopHandle<'static, D>) {
-        let mut guard = self.arc.internal.lock().unwrap();
-        if let Some(token) = guard.key_repeat_token.take() {
-            let handle = get_handle(data);
-            handle.remove(token);
-        };
     }
 
     /// Update the state of the keyboard without forwarding the event to the focused client
@@ -1104,6 +1031,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Forward a key event to the focused client
     ///
     /// Useful in conjunction with [`KeyboardHandle::input_intercept`].
+    #[cfg(not(feature = "compositor_key_repeat"))]
     pub fn input_forward(
         &self,
         data: &mut D,
@@ -1278,7 +1206,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         *self.arc.last_enter.lock().unwrap()
     }
 
-    fn get_seat(&self, data: &mut D) -> Seat<D> {
+    pub(crate) fn get_seat(&self, data: &mut D) -> Seat<D> {
         let seat_state = data.seat_state();
         seat_state
             .seats
@@ -1514,4 +1442,75 @@ impl<D: SeatHandler + 'static> KeyboardGrab<D> for DefaultGrab {
     }
 
     fn unset(&mut self, _data: &mut D) {}
+}
+
+/// Compositor-side key repeat impl block (requires `WaylandFocus` bound for `manage_key_repeat`)
+#[cfg(feature = "compositor_key_repeat")]
+impl<D> KeyboardHandle<D>
+where
+    D: SeatHandler + 'static,
+    <D as SeatHandler>::KeyboardFocus: WaylandFocus,
+{
+    /// Process a key event and forward it to the focused client with compositor-side key repeat.
+    ///
+    /// The `filter` closure allows the compositor to intercept the event
+    /// as interpreted by the keymap before it is forwarded to the focused client.
+    #[instrument(level = "trace", parent = &self.arc.span, skip(self, data, filter))]
+    pub fn input<T, F>(
+        &self,
+        data: &mut D,
+        keycode: Keycode,
+        state: KeyState,
+        serial: Serial,
+        time: u32,
+        filter: F,
+    ) -> Option<T>
+    where
+        F: FnOnce(&mut D, &ModifiersState, KeysymHandle<'_>) -> FilterResult<T>,
+    {
+        let (filter_result, mods_changed) = self.input_intercept(data, keycode, state, filter);
+        if let FilterResult::Intercept(val) = filter_result {
+            trace!("Input was intercepted by filter");
+            return Some(val);
+        }
+
+        self.input_forward(data, keycode, state, serial, time, mods_changed);
+        None
+    }
+
+    /// Forward a key event to the focused client with compositor-side key repeat.
+    ///
+    /// Useful in conjunction with [`KeyboardHandle::input_intercept`].
+    pub fn input_forward(
+        &self,
+        data: &mut D,
+        keycode: Keycode,
+        state: KeyState,
+        serial: Serial,
+        time: u32,
+        mods_changed: bool,
+    ) {
+        let mut guard = self.arc.internal.lock().unwrap();
+        match state {
+            KeyState::Pressed => {
+                guard.forwarded_pressed_keys.insert(keycode);
+            }
+            KeyState::Released => {
+                guard.forwarded_pressed_keys.remove(&keycode);
+            }
+        };
+
+        let seat = self.get_seat(data);
+        let modifiers = mods_changed.then_some(guard.mods_state);
+        guard.with_grab(data, &seat, |data, handle, grab| {
+            grab.input(data, handle, keycode, state, modifiers, serial, time);
+        });
+        if guard.focus.is_some() {
+            trace!("Input forwarded to client");
+        } else {
+            trace!("No client currently focused");
+        }
+        drop(guard);
+        self.manage_key_repeat(data, keycode, state, time);
+    }
 }
