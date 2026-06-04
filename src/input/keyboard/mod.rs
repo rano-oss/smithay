@@ -2,7 +2,6 @@
 
 use crate::backend::input::KeyState;
 use crate::utils::{IsAlive, SERIAL_COUNTER, Serial};
-#[cfg(feature = "compositor_key_repeat")]
 use calloop::RegistrationToken;
 use downcast_rs::{Downcast, impl_downcast};
 use std::collections::HashSet;
@@ -223,7 +222,6 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     pub(crate) led_state: LedState,
     grab: GrabStatus<dyn KeyboardGrab<D>>,
     /// Holds the token to cancel key repeat.
-    #[cfg(feature = "compositor_key_repeat")]
     pub(crate) key_repeat_token: Option<RegistrationToken>,
 }
 
@@ -281,7 +279,6 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
             led_mapping,
             led_state,
             grab: GrabStatus::None,
-            #[cfg(feature = "compositor_key_repeat")]
             key_repeat_token: None,
         })
     }
@@ -1064,8 +1061,72 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             trace!("No client currently focused");
         }
         drop(guard);
-        #[cfg(feature = "compositor_key_repeat")]
         self.manage_key_repeat(data, keycode, state, time);
+    }
+
+    /// Start or stop compositor-side key repeat based on key state.
+    ///
+    /// Only active if the compositor provides a loop handle via [`SeatHandler::loop_handle`].
+    /// Stops any existing repeat timer, then starts a new one for pressed repeatable keys.
+    fn manage_key_repeat(&self, data: &mut D, keycode: Keycode, state: KeyState, time: u32) {
+        let Some(loop_handle) = data.loop_handle() else {
+            return;
+        };
+
+        let mut guard = self.arc.internal.lock().unwrap();
+
+        // Stop any existing repeat
+        if let Some(token) = guard.key_repeat_token.take() {
+            loop_handle.remove(token);
+        }
+
+        // Start repeat only for pressed keys
+        if state == KeyState::Pressed {
+            let rate = guard.repeat_rate;
+            let delay = guard.repeat_delay;
+
+            if rate > 0 {
+                let repeats = guard.xkb.lock().unwrap().keymap.key_repeats(keycode);
+                if repeats {
+                    use std::time::Duration;
+
+                    let kbd = self.clone();
+                    let rate_duration = Duration::from_millis(rate as _);
+                    let mut time_ms = time;
+                    let mut first_fire = true;
+
+                    let token = loop_handle
+                        .insert_source(
+                            calloop::timer::Timer::from_duration(Duration::from_millis(delay as _)),
+                            move |_, _, data| {
+                                if first_fire {
+                                    time_ms += delay as u32;
+                                    first_fire = false;
+                                } else {
+                                    time_ms += rate as u32;
+                                }
+
+                                let guard = kbd.arc.internal.lock().unwrap();
+                                // Only repeat if key is still forwarded
+                                if !guard.forwarded_pressed_keys.contains(&keycode) {
+                                    return calloop::timer::TimeoutAction::Drop;
+                                }
+                                let focus = guard.focus.as_ref().map(|(f, _)| f.clone());
+                                drop(guard);
+
+                                if let Some(focus) = focus {
+                                    let seat = kbd.get_seat(data);
+                                    let serial = SERIAL_COUNTER.next_serial();
+                                    focus.repeat(&seat, data, keycode, serial, time_ms);
+                                }
+                                calloop::timer::TimeoutAction::ToDuration(rate_duration)
+                            },
+                        )
+                        .unwrap();
+                    guard.key_repeat_token = Some(token);
+                }
+            }
+        }
     }
 
     /// Set the current focus of this keyboard

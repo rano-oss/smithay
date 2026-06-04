@@ -165,8 +165,13 @@ pub trait SeatHandler: Sized {
     fn led_state_changed(&mut self, _seat: &Seat<Self>, _led_state: LedState) {}
 
     /// Return the event loop handle for compositor-side key repeat.
-    #[cfg(feature = "compositor_key_repeat")]
-    fn loop_handle(&self) -> calloop::LoopHandle<'static, Self>;
+    ///
+    /// Override this to return `Some(loop_handle)` to enable compositor-side key repeat.
+    /// When enabled, the compositor manages repeat timers and sends repeat events
+    /// through [`KeyboardTarget::repeat`](keyboard::KeyboardTarget::repeat).
+    fn loop_handle(&self) -> Option<calloop::LoopHandle<'static, Self>> {
+        None
+    }
 }
 /// Delegate type for all [Seat] globals.
 ///
