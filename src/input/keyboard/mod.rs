@@ -7,6 +7,7 @@ use downcast_rs::{Downcast, impl_downcast};
 use std::collections::HashSet;
 #[cfg(feature = "wayland_frontend")]
 use std::sync::RwLock;
+use std::time::Duration;
 use std::{
     default::Default,
     fmt, io,
@@ -54,10 +55,7 @@ where
     );
     /// Hold modifiers were changed on a keyboard from a given seat
     fn modifiers(&self, seat: &Seat<D>, data: &mut D, modifiers: ModifiersState, serial: Serial);
-    /// A key repeat event for a given seat (compositor-side repeat)
-    ///
-    /// Default implementation does nothing. Wayland targets send protocol-appropriate
-    /// repeat events based on client version.
+    /// Compositor key repeat for a given seat, default to do nothing
     fn repeat(&self, _seat: &Seat<D>, _data: &mut D, _keycode: Keycode, _serial: Serial, _time: u32) {}
     /// Keyboard focus of a given seat moved from another handler to this handler
     fn replace(
@@ -215,13 +213,12 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     pub(crate) pressed_keys: HashSet<Keycode>,
     pub(crate) forwarded_pressed_keys: HashSet<Keycode>,
     pub(crate) mods_state: ModifiersState,
-    pub(crate) xkb: Arc<Mutex<Xkb>>,
+    xkb: Arc<Mutex<Xkb>>,
     pub(crate) repeat_rate: i32,
     pub(crate) repeat_delay: i32,
     led_mapping: LedMapping,
     pub(crate) led_state: LedState,
     grab: GrabStatus<dyn KeyboardGrab<D>>,
-    /// Holds the token to cancel key repeat.
     key_repeat_token: Option<RegistrationToken>,
 }
 
@@ -1072,29 +1069,21 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         let Some(loop_handle) = data.loop_handle() else {
             return;
         };
-
         let mut guard = self.arc.internal.lock().unwrap();
-
         // Stop any existing repeat
         if let Some(token) = guard.key_repeat_token.take() {
             loop_handle.remove(token);
         }
-
-        // Start repeat only for pressed keys
         if state == KeyState::Pressed {
             let rate = guard.repeat_rate;
             let delay = guard.repeat_delay;
-
             if rate > 0 {
                 let repeats = guard.xkb.lock().unwrap().keymap.key_repeats(keycode);
                 if repeats {
-                    use std::time::Duration;
-
                     let kbd = self.clone();
                     let rate_duration = Duration::from_millis(rate as _);
                     let mut time_ms = time;
                     let mut first_fire = true;
-
                     let token = loop_handle
                         .insert_source(
                             calloop::timer::Timer::from_duration(Duration::from_millis(delay as _)),
@@ -1105,7 +1094,6 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                                 } else {
                                     time_ms += rate as u32;
                                 }
-
                                 let guard = kbd.arc.internal.lock().unwrap();
                                 // Only repeat if key is still forwarded
                                 if !guard.forwarded_pressed_keys.contains(&keycode) {
@@ -1113,7 +1101,6 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                                 }
                                 let focus = guard.focus.as_ref().map(|(f, _)| f.clone());
                                 drop(guard);
-
                                 if let Some(focus) = focus {
                                     let seat = kbd.get_seat(data);
                                     let serial = SERIAL_COUNTER.next_serial();
