@@ -141,7 +141,7 @@ impl LedState {
 /// thread, but should not have additional ref-counts kept on one thread.
 pub struct Xkb {
     context: xkb::Context,
-    pub(crate) keymap: xkb::Keymap,
+    keymap: xkb::Keymap,
     state: xkb::State,
 }
 
@@ -222,7 +222,7 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     pub(crate) led_state: LedState,
     grab: GrabStatus<dyn KeyboardGrab<D>>,
     /// Holds the token to cancel key repeat.
-    pub(crate) key_repeat_token: Option<RegistrationToken>,
+    key_repeat_token: Option<RegistrationToken>,
 }
 
 // focus_hook does not implement debug, so we have to impl Debug manually
@@ -1271,7 +1271,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         *self.arc.last_enter.lock().unwrap()
     }
 
-    pub(crate) fn get_seat(&self, data: &mut D) -> Seat<D> {
+    fn get_seat(&self, data: &mut D) -> Seat<D> {
         let seat_state = data.seat_state();
         seat_state
             .seats
