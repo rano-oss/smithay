@@ -168,7 +168,7 @@ pub trait SeatHandler: Sized {
     ///
     /// Override this to return `Some(loop_handle)` to enable compositor-side key repeat.
     /// When enabled, the compositor manages repeat timers and sends repeat events
-    /// through [`KeyboardTarget::repeat`](keyboard::KeyboardTarget::repeat).
+    /// through [`KeyboardTarget::repeat`].
     fn loop_handle(&self) -> Option<calloop::LoopHandle<'static, Self>> {
         None
     }
