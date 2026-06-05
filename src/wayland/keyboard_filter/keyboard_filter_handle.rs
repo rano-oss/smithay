@@ -122,12 +122,6 @@ impl WlKeyboardApi for FilterInterceptor {
         });
         v.unwrap_or(Resource::version(&self.im_keyboard))
     }
-
-    fn repeat_key(&self, serial: u32, time: u32, key: u32) {
-        // Always send as Repeated to IME — single event, single filter response.
-        // The passthrough handler converts to press+release for <v10 clients.
-        self.key(serial, time, key, KeyState::Repeated);
-    }
 }
 
 /// Handle stored in the input method, used to activate/deactivate the interceptor.
@@ -275,13 +269,7 @@ where
                         if let Some(ref surface) = *focused {
                             let keyboards = data.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
                             KnownKbds::for_each_focused_kbd(&keyboards, surface, |kbd| {
-                                if event.state == KeyState::Repeated && kbd.version() < 10 {
-                                    // <v10 clients don't understand Repeated; send press+release
-                                    kbd.key(event.serial, event.time, event.key, KeyState::Pressed);
-                                    kbd.key(event.serial, event.time, event.key, KeyState::Released);
-                                } else {
-                                    kbd.key(event.serial, event.time, event.key, event.state);
-                                }
+                                kbd.key(event.serial, event.time, event.key, event.state);
                             });
                         } else {
                             tracing::warn!("Passthrough failed: no focused_surface!");

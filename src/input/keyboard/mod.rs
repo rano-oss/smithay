@@ -390,16 +390,6 @@ pub(crate) trait WlKeyboardApi {
     /// This means intercepting only at the input events entry doesn't work. There must be full low-level interception instead.
     fn repeat_info(&self, rate: i32, delay: i32);
     fn version(&self) -> u32;
-    /// Send a repeat event. Default sends `Repeated` to v10+, press+release to <v10.
-    /// Interceptor overrides to always send `Repeated` (single event for single filter response).
-    fn repeat_key(&self, serial: u32, time: u32, key: u32) {
-        if self.version() >= 10 {
-            self.key(serial, time, key, wl_keyboard::KeyState::Repeated);
-        } else {
-            self.key(serial, time, key, wl_keyboard::KeyState::Pressed);
-            self.key(serial, time, key, wl_keyboard::KeyState::Released);
-        }
-    }
 }
 
 impl WlKeyboardApi for wl_keyboard::WlKeyboard {
