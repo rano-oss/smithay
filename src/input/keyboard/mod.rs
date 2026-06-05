@@ -1239,11 +1239,6 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             let Ok(kbd) = kbd.upgrade() else {
                 continue;
             };
-            let rate = if kbd.version() >= 10 {
-                0 // Enables compositor-side key repeat. See wl_keyboard key event
-            } else {
-                rate
-            };
             if kbd.version() >= 4 {
                 kbd.repeat_info(rate, delay);
             }

@@ -2,27 +2,27 @@ use std::{cell::RefCell, fmt};
 
 use tracing::{instrument, trace, warn};
 use wayland_server::{
-    Client, DisplayHandle, Resource,
     backend::{ClientId, ObjectId},
     protocol::{
         wl_keyboard::{self, KeyState as WlKeyState, WlKeyboard},
         wl_surface::WlSurface,
     },
+    Client, DisplayHandle, Resource,
 };
 
 use super::WaylandFocus;
 use crate::{
     backend::input::{KeyState, Keycode},
     input::{
-        Seat, SeatHandler, WeakSeat,
         keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState},
+        Seat, SeatHandler, WeakSeat,
     },
-    utils::{HookId, Serial, iter::new_locked_obj_iter_from_vec},
+    utils::{iter::new_locked_obj_iter_from_vec, HookId, Serial},
     wayland::{
-        Dispatch2,
         compositor::{add_destruction_hook, remove_destruction_hook, with_states},
         input_method::InputMethodSeat,
         text_input::TextInputSeat,
+        Dispatch2,
     },
 };
 
@@ -72,13 +72,8 @@ where
         };
 
         let guard = self.arc.internal.lock().unwrap();
-        let rate = if kbd.version() >= 10 {
-            0 // Enables compositor-side key repeat. See wl_keyboard key event
-        } else {
-            guard.repeat_rate
-        };
         if kbd.version() >= 4 {
-            kbd.repeat_info(rate, guard.repeat_delay);
+            kbd.repeat_info(guard.repeat_rate, guard.repeat_delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {
             if focused.same_client_as(&kbd.id()) {
