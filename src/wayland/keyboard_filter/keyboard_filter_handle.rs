@@ -251,8 +251,9 @@ where
                         } else {
                             tracing::warn!("Passthrough failed: no focused_surface!");
                         }
+                    } else {
+                        // Consume: just drop the event
                     }
-                    // Consume: just drop the event
                 } else {
                     warn!("Filter response for unknown serial {serial}");
                     resource.post_error(
