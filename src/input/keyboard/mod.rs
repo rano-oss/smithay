@@ -2,10 +2,12 @@
 
 use crate::backend::input::KeyState;
 use crate::utils::{IsAlive, SERIAL_COUNTER, Serial};
+use calloop::RegistrationToken;
 use downcast_rs::{Downcast, impl_downcast};
 use std::collections::HashSet;
 #[cfg(feature = "wayland_frontend")]
 use std::sync::RwLock;
+use std::time::Duration;
 use std::{
     default::Default,
     fmt, io,
@@ -53,6 +55,8 @@ where
     );
     /// Hold modifiers were changed on a keyboard from a given seat
     fn modifiers(&self, seat: &Seat<D>, data: &mut D, modifiers: ModifiersState, serial: Serial);
+    /// Compositor key repeat for a given seat, default to do nothing
+    fn repeat(&self, _seat: &Seat<D>, _data: &mut D, _keycode: Keycode, _serial: Serial, _time: u32) {}
     /// Keyboard focus of a given seat moved from another handler to this handler
     fn replace(
         &self,
@@ -215,6 +219,7 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     led_mapping: LedMapping,
     pub(crate) led_state: LedState,
     grab: GrabStatus<dyn KeyboardGrab<D>>,
+    key_repeat_token: Option<RegistrationToken>,
 }
 
 // focus_hook does not implement debug, so we have to impl Debug manually
@@ -271,6 +276,7 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
             led_mapping,
             led_state,
             grab: GrabStatus::None,
+            key_repeat_token: None,
         })
     }
 
@@ -1050,6 +1056,63 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             trace!("Input forwarded to client");
         } else {
             trace!("No client currently focused");
+        }
+        drop(guard);
+        self.manage_key_repeat(data, keycode, state, time);
+    }
+
+    /// Start or stop compositor-side key repeat based on key state.
+    ///
+    /// Only active if the compositor provides a loop handle via [`SeatHandler::loop_handle`].
+    /// Stops any existing repeat timer, then starts a new one for pressed repeatable keys.
+    fn manage_key_repeat(&self, data: &mut D, keycode: Keycode, state: KeyState, time: u32) {
+        let Some(loop_handle) = data.loop_handle() else {
+            return;
+        };
+        let mut guard = self.arc.internal.lock().unwrap();
+        // Stop any existing repeat
+        if let Some(token) = guard.key_repeat_token.take() {
+            loop_handle.remove(token);
+        }
+        if state == KeyState::Pressed {
+            let rate = guard.repeat_rate;
+            let delay = guard.repeat_delay;
+            if rate > 0 {
+                let repeats = guard.xkb.lock().unwrap().keymap.key_repeats(keycode);
+                if repeats {
+                    let kbd = self.clone();
+                    let rate_duration = Duration::from_millis(rate as _);
+                    let mut time_ms = time;
+                    let mut first_fire = true;
+                    let token = loop_handle
+                        .insert_source(
+                            calloop::timer::Timer::from_duration(Duration::from_millis(delay as _)),
+                            move |_, _, data| {
+                                if first_fire {
+                                    time_ms += delay as u32;
+                                    first_fire = false;
+                                } else {
+                                    time_ms += rate as u32;
+                                }
+                                let guard = kbd.arc.internal.lock().unwrap();
+                                // Only repeat if key is still forwarded
+                                if !guard.forwarded_pressed_keys.contains(&keycode) {
+                                    return calloop::timer::TimeoutAction::Drop;
+                                }
+                                let focus = guard.focus.as_ref().map(|(f, _)| f.clone());
+                                drop(guard);
+                                if let Some(focus) = focus {
+                                    let seat = kbd.get_seat(data);
+                                    let serial = SERIAL_COUNTER.next_serial();
+                                    focus.repeat(&seat, data, keycode, serial, time_ms);
+                                }
+                                calloop::timer::TimeoutAction::ToDuration(rate_duration)
+                            },
+                        )
+                        .unwrap();
+                    guard.key_repeat_token = Some(token);
+                }
+            }
         }
     }
 

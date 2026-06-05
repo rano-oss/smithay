@@ -2,27 +2,27 @@ use std::{cell::RefCell, fmt};
 
 use tracing::{instrument, trace, warn};
 use wayland_server::{
-    Client, DisplayHandle, Resource,
     backend::{ClientId, ObjectId},
     protocol::{
         wl_keyboard::{self, KeyState as WlKeyState, WlKeyboard},
         wl_surface::WlSurface,
     },
+    Client, DisplayHandle, Resource,
 };
 
 use super::WaylandFocus;
 use crate::{
     backend::input::{KeyState, Keycode},
     input::{
-        Seat, SeatHandler, WeakSeat,
         keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState},
+        Seat, SeatHandler, WeakSeat,
     },
-    utils::{HookId, Serial, iter::new_locked_obj_iter_from_vec},
+    utils::{iter::new_locked_obj_iter_from_vec, HookId, Serial},
     wayland::{
-        Dispatch2,
         compositor::{add_destruction_hook, remove_destruction_hook, with_states},
         input_method::InputMethodSeat,
         text_input::TextInputSeat,
+        Dispatch2,
     },
 };
 
@@ -312,6 +312,18 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
                 modifiers.layout_effective,
             );
         })
+    }
+
+    fn repeat(&self, seat: &Seat<D>, _data: &mut D, keycode: Keycode, serial: Serial, time: u32) {
+        let raw_key = keycode.raw() - 8;
+        for_each_focused_kbds(seat, self, |kbd| {
+            if kbd.version() >= 10 {
+                kbd.key(serial.into(), time, raw_key, WlKeyState::Repeated);
+            } else {
+                kbd.key(serial.into(), time, raw_key, WlKeyState::Pressed);
+                kbd.key(serial.into(), time, raw_key, WlKeyState::Released);
+            }
+        });
     }
 }
 
