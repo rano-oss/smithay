@@ -390,6 +390,16 @@ pub(crate) trait WlKeyboardApi {
     /// This means intercepting only at the input events entry doesn't work. There must be full low-level interception instead.
     fn repeat_info(&self, rate: i32, delay: i32);
     fn version(&self) -> u32;
+    /// Send a repeat event. Default sends `Repeated` to v10+, press+release to <v10.
+    /// Interceptor overrides to always send `Repeated` (single event for single filter response).
+    fn repeat_key(&self, serial: u32, time: u32, key: u32) {
+        if self.version() >= 10 {
+            self.key(serial, time, key, wl_keyboard::KeyState::Repeated);
+        } else {
+            self.key(serial, time, key, wl_keyboard::KeyState::Pressed);
+            self.key(serial, time, key, wl_keyboard::KeyState::Released);
+        }
+    }
 }
 
 impl WlKeyboardApi for wl_keyboard::WlKeyboard {
@@ -1210,6 +1220,16 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         let Some(loop_handle) = data.loop_handle() else {
             return;
         };
+        // Only do compositor-side repeat when an interceptor (IME) is active
+        #[cfg(feature = "wayland_frontend")]
+        if self.arc.known_kbds.interceptor.lock().unwrap().is_none() {
+            // No interceptor: let clients handle their own repeat
+            let mut guard = self.arc.internal.lock().unwrap();
+            if let Some(token) = guard.key_repeat_token.take() {
+                loop_handle.remove(token);
+            }
+            return;
+        }
         let mut guard = self.arc.internal.lock().unwrap();
         // Stop any existing repeat
         if let Some(token) = guard.key_repeat_token.take() {

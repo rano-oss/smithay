@@ -338,12 +338,7 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
     fn repeat(&self, seat: &Seat<D>, _data: &mut D, keycode: Keycode, serial: Serial, time: u32) {
         let raw_key = keycode.raw() - 8;
         for_each_focused_kbds(seat, self, |kbd| {
-            if kbd.version() >= 10 {
-                kbd.key(serial.into(), time, raw_key, WlKeyState::Repeated);
-            } else {
-                kbd.key(serial.into(), time, raw_key, WlKeyState::Pressed);
-                kbd.key(serial.into(), time, raw_key, WlKeyState::Released);
-            }
+            kbd.repeat_key(serial.into(), time, raw_key);
         });
     }
 }

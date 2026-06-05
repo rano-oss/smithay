@@ -122,6 +122,12 @@ impl WlKeyboardApi for FilterInterceptor {
         });
         v.unwrap_or(Resource::version(&self.im_keyboard))
     }
+
+    fn repeat_key(&self, serial: u32, time: u32, key: u32) {
+        // Always send as Repeated to IME — single event, single filter response.
+        // The passthrough handler converts to press+release for <v10 clients.
+        self.key(serial, time, key, KeyState::Repeated);
+    }
 }
 
 /// Handle stored in the input method, used to activate/deactivate the interceptor.
@@ -156,6 +162,16 @@ impl Filter {
             pending_events: self.pending_events.clone(),
         };
 
+        // Send rate=0 to client keyboards: "compositor takes over repeat"
+        let guard = keyboard_handle.arc.internal.lock().unwrap();
+        let delay = guard.repeat_delay;
+        drop(guard);
+        let keyboards = keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
+        KnownKbds::for_each_focused_kbd(&keyboards, focused_surface, |kbd| {
+            kbd.repeat_info(0, delay);
+        });
+        drop(keyboards);
+
         let mut slot = keyboard_handle.arc.known_kbds.interceptor.lock().unwrap();
         *slot = Some(Box::new(interceptor));
     }
@@ -166,6 +182,19 @@ impl Filter {
         let mut pending = self.pending_events.lock().unwrap();
         pending.clear();
         keyboard_handle.arc.known_kbds.clear_interceptor();
+
+        // Restore real repeat rate to client keyboards
+        let guard = keyboard_handle.arc.internal.lock().unwrap();
+        let rate = guard.repeat_rate;
+        let delay = guard.repeat_delay;
+        drop(guard);
+        let focused = self.focused_surface.lock().unwrap();
+        if let Some(ref surface) = *focused {
+            let keyboards = keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
+            KnownKbds::for_each_focused_kbd(&keyboards, surface, |kbd| {
+                kbd.repeat_info(rate, delay);
+            });
+        }
     }
 }
 
@@ -246,7 +275,13 @@ where
                         if let Some(ref surface) = *focused {
                             let keyboards = data.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
                             KnownKbds::for_each_focused_kbd(&keyboards, surface, |kbd| {
-                                kbd.key(event.serial, event.time, event.key, event.state);
+                                if event.state == KeyState::Repeated && kbd.version() < 10 {
+                                    // <v10 clients don't understand Repeated; send press+release
+                                    kbd.key(event.serial, event.time, event.key, KeyState::Pressed);
+                                    kbd.key(event.serial, event.time, event.key, KeyState::Released);
+                                } else {
+                                    kbd.key(event.serial, event.time, event.key, event.state);
+                                }
                             });
                         } else {
                             tracing::warn!("Passthrough failed: no focused_surface!");
