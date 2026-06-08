@@ -269,7 +269,12 @@ where
                         if let Some(ref surface) = *focused {
                             let keyboards = data.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
                             KnownKbds::for_each_focused_kbd(&keyboards, surface, |kbd| {
-                                kbd.key(event.serial, event.time, event.key, event.state);
+                                if event.state == KeyState::Repeated && kbd.version() < 10 {
+                                    kbd.key(event.serial, event.time, event.key, KeyState::Pressed);
+                                    kbd.key(event.serial, event.time, event.key, KeyState::Released);
+                                } else {
+                                    kbd.key(event.serial, event.time, event.key, event.state);
+                                }
                             });
                         } else {
                             tracing::warn!("Passthrough failed: no focused_surface!");
