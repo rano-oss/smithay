@@ -5,20 +5,20 @@ use wayland_protocols_experimental::input_method::v1::server::xx_input_method_v1
 use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_surface_v2::{
     self, XxInputPopupSurfaceV2,
 };
-use wayland_server::{Resource, backend::ClientId, protocol::wl_surface::WlSurface};
+use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface, Resource};
 
 use crate::wayland::Dispatch2;
 
 use crate::input::SeatHandler;
 use crate::utils::{
-    Logical, Point, Rectangle, Serial,
     alive_tracker::{AliveTracker, IsAlive},
+    Logical, Point, Rectangle, Serial,
 };
 
 use super::{
-    InputMethodHandler, InputMethodUserData,
     configure_tracker::ConfigureTracker,
     positioner::{PositionerState, PositionerUserData},
+    InputMethodHandler, InputMethodUserData,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -298,14 +298,13 @@ where
         _dhandle: &wayland_server::DisplayHandle,
         _data_init: &mut wayland_server::DataInit<'_, D>,
     ) {
-        let data = self;
         use xx_input_popup_surface_v2::Request;
         match request {
             Request::AckConfigure { serial } => {
-                let surface = &data.surface;
+                let surface = &self.surface;
 
                 let serial = Serial::from(serial);
-                let client_state = data.configure_tracker.lock().unwrap().ack_serial(serial);
+                let client_state = self.configure_tracker.lock().unwrap().ack_serial(serial);
 
                 let client_state = match client_state {
                     Some(state) => state,
@@ -317,11 +316,11 @@ where
                         return;
                     }
                 };
-                *data.state.lock().unwrap() = client_state.clone();
+                *self.state.lock().unwrap() = client_state.clone();
                 state.popup_ack_configure(surface, serial, client_state);
             }
             Request::Reposition { positioner, token } => {
-                let im: &InputMethodUserData<D> = data.input_method.data().unwrap();
+                let im: &InputMethodUserData<D> = self.input_method.data().unwrap();
                 let popup = {
                     let positioner: &PositionerUserData = positioner.data().unwrap();
                     let positioner = *positioner.inner.lock().unwrap();
@@ -333,7 +332,7 @@ where
                         .iter_mut()
                         .find(|i| i.object.id() == active_id)
                         .unwrap();
-                    let cursor = data
+                    let cursor = self
                         .frozen_cursor_rectangle
                         .lock()
                         .unwrap()
@@ -345,7 +344,7 @@ where
                         .expect("This popup not tracked by its input method");
                     let parent_surface = popup.get_parent().surface.clone();
                     let popup_geometry = state.popup_geometry(&parent_surface, &cursor, &positioner);
-                    *data.positioner.lock().unwrap() = positioner;
+                    *self.positioner.lock().unwrap() = positioner;
 
                     popup.set_repositioned(token);
                     popup.set_position(ImPopupLocation {
@@ -361,19 +360,19 @@ where
             }
             Request::SetFrozen { frozen } => {
                 let is_frozen = frozen != 0;
-                *data.frozen.lock().unwrap() = is_frozen;
+                *self.frozen.lock().unwrap() = is_frozen;
                 if is_frozen {
                     // Snapshot the current cursor_rectangle so reposition while frozen
                     // uses the anchored position instead of the live (moving) cursor.
-                    let im: &InputMethodUserData<D> = data.input_method.data().unwrap();
+                    let im: &InputMethodUserData<D> = self.input_method.data().unwrap();
                     let inner = im.handle.inner.lock().unwrap();
                     if let Some(active_id) = &inner.active_input_method_id {
                         if let Some(instance) = inner.instances.iter().find(|i| i.object.id() == *active_id) {
-                            *data.frozen_cursor_rectangle.lock().unwrap() = Some(instance.cursor_rectangle);
+                            *self.frozen_cursor_rectangle.lock().unwrap() = Some(instance.cursor_rectangle);
                         }
                     }
                 } else {
-                    *data.frozen_cursor_rectangle.lock().unwrap() = None;
+                    *self.frozen_cursor_rectangle.lock().unwrap() = None;
                 }
             }
             Request::Destroy => {

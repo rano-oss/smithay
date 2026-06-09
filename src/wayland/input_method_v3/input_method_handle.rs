@@ -8,22 +8,22 @@ use wayland_protocols_experimental::input_method::v1::server::{
     xx_input_method_v1::{self, ProtocolCompat, XxInputMethodV1},
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
-use wayland_server::{Client, DataInit, DisplayHandle, Resource};
 use wayland_server::{
     backend::{ClientId, ObjectId},
     protocol::wl_surface::WlSurface,
 };
+use wayland_server::{Client, DataInit, DisplayHandle, Resource};
 
 use crate::{
-    input::{Seat, SeatHandler, keyboard::KeyboardHandle},
+    input::{keyboard::KeyboardHandle, Seat, SeatHandler},
     utils::{Logical, Rectangle},
-    wayland::{Dispatch2, compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle},
+    wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle, Dispatch2},
 };
 
 use super::{
-    INPUT_POPUP_SURFACE_ROLE, InputMethodHandler, InputMethodPopupSurfaceUserData,
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
     positioner::PositionerUserData,
+    InputMethodHandler, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
 /// Contains all input method instances and tracks which one is active.
@@ -292,11 +292,10 @@ where
         _dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
-        let data = self;
         use xx_input_method_v1::Request;
         match request {
             Request::CommitString { text } => {
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.commit_string(Some(text.clone()));
                 });
             }
@@ -305,7 +304,7 @@ where
                 cursor_begin,
                 cursor_end,
             } => {
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.preedit_string(Some(text.clone()), cursor_begin, cursor_end);
                 });
             }
@@ -313,14 +312,14 @@ where
                 before_length,
                 after_length,
             } => {
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.delete_surrounding_text(before_length, after_length);
                 });
             }
 
             Request::Commit { serial } => {
                 let current_serial = {
-                    let inner = data.handle.inner.lock().unwrap();
+                    let inner = self.handle.inner.lock().unwrap();
                     let active_id = inner.active_input_method_id.clone();
                     active_id
                         .and_then(|id| inner.instances.iter().find(|i| i.object.id() == id))
@@ -328,11 +327,11 @@ where
                         .unwrap_or(0)
                 };
                 let discard = serial != current_serial;
-                data.text_input_handle.done(discard);
+                self.text_input_handle.done(discard);
             }
             Request::PerformAction { action } => {
                 let serial = {
-                    let inner = data.handle.inner.lock().unwrap();
+                    let inner = self.handle.inner.lock().unwrap();
                     let active_id = inner.active_input_method_id.clone();
                     active_id
                         .and_then(|id| inner.instances.iter().find(|i| i.object.id() == id))
@@ -340,7 +339,7 @@ where
                         .unwrap_or(0)
                 };
                 let action = action.into_result().unwrap_or(Action::None);
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
                     if ti.version() >= 2 {
                         ti.action(action, serial);
                     }
@@ -354,7 +353,7 @@ where
                 surface,
                 positioner,
             } => {
-                let mut input_method = data.handle.inner.lock().unwrap();
+                let mut input_method = self.handle.inner.lock().unwrap();
                 let active_id = match &input_method.active_input_method_id {
                     Some(id) => id.clone(),
                     None => return,
@@ -388,7 +387,7 @@ where
                         return;
                     }
 
-                    let parent_surface = match data.text_input_handle.focus().clone() {
+                    let parent_surface = match self.text_input_handle.focus().clone() {
                         Some(parent) => parent,
                         None => {
                             // Race condition: focus may have been lost after client decided to create popup.
@@ -442,16 +441,15 @@ where
     }
 
     fn destroyed(&self, _state: &mut D, _client: ClientId, input_method: &XxInputMethodV1) {
-        let data = self;
         let destroyed_id = input_method.id();
-        let mut inner = data.handle.inner.lock().unwrap();
+        let mut inner = self.handle.inner.lock().unwrap();
         // Clear active ID if this was the active instance
         if inner.active_input_method_id.as_ref() == Some(&destroyed_id) {
             inner.active_input_method_id = None;
         }
         inner.instances.retain(|inst| inst.object.id() != destroyed_id);
-        let keyboards = &data.keyboard_handle.arc.known_kbds;
+        let keyboards = &self.keyboard_handle.arc.known_kbds;
         keyboards.clear_interceptor();
-        data.text_input_handle.leave();
+        self.text_input_handle.leave();
     }
 }

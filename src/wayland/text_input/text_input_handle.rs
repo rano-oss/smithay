@@ -214,24 +214,23 @@ where
         _dhandle: &wayland_server::DisplayHandle,
         _data_init: &mut wayland_server::DataInit<'_, D>,
     ) {
-        let data = self;
         // Always increment serial to not desync with clients.
         if matches!(request, zwp_text_input_v3::Request::Commit) {
-            data.handle.increment_serial(resource);
+            self.handle.increment_serial(resource);
         }
 
         // Discard requests without any active input method instance.
-        if !data.input_method_handle.has_instance() && !data.input_method_v3_handle.has_instance() {
+        if !self.input_method_handle.has_instance() && !self.input_method_v3_handle.has_instance() {
             debug!("discarding text-input request without IME running");
             return;
         }
 
-        if data.input_method_handle.has_instance() && data.input_method_v3_handle.has_instance() {
+        if self.input_method_handle.has_instance() && self.input_method_v3_handle.has_instance() {
             warn!("Two separate versions of input method registered for the seat. Expect conflicts.");
             // We'll try to drive both IM instances because it makes the code simpler. The results are going to be unexpected no matter what strategy is chosen now.
         }
 
-        let focus = match data.handle.focus() {
+        let focus = match self.handle.focus() {
             Some(focus) if focus.id().same_client_as(&resource.id()) => focus,
             Some(focus) => {
                 debug!(
@@ -247,7 +246,7 @@ where
             }
         };
 
-        let mut guard = data.handle.inner.lock().unwrap();
+        let mut guard = self.handle.inner.lock().unwrap();
         let pending_state = match guard.instances.iter_mut().find_map(|instance| {
             if instance.instance == *resource {
                 Some(&mut instance.pending_state)
@@ -298,13 +297,13 @@ where
                 match new_state.enable {
                     Some(true) => {
                         *active_text_input_id = Some(resource.id());
-                        data.input_method_handle.activate_input_method(state, &focus);
-                        data.input_method_v3_handle.activate_input_method(state, &focus);
+                        self.input_method_handle.activate_input_method(state, &focus);
+                        self.input_method_v3_handle.activate_input_method(state, &focus);
                     }
                     Some(false) => {
                         *active_text_input_id = None;
-                        data.input_method_handle.deactivate_input_method(state);
-                        data.input_method_v3_handle.deactivate_input_method(state);
+                        self.input_method_handle.deactivate_input_method(state);
+                        self.input_method_v3_handle.deactivate_input_method(state);
                         return;
                     }
                     None => {
@@ -316,10 +315,10 @@ where
                 }
                 drop(guard);
                 if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
-                    data.input_method_handle.with_instance(|input_method| {
+                    self.input_method_handle.with_instance(|input_method| {
                         input_method.object.surrounding_text(text.clone(), cursor, anchor)
                     });
-                    data.input_method_v3_handle.with_instance(move |input_method| {
+                    self.input_method_v3_handle.with_instance(move |input_method| {
                         input_method.object.surrounding_text(text, cursor, anchor)
                     });
                 }
@@ -330,41 +329,41 @@ where
                         ChangeCause::Other => zwp_text_input_v3::ChangeCause::Other,
                         _ => zwp_text_input_v3::ChangeCause::Other,
                     };
-                    data.input_method_handle.with_instance(move |input_method| {
+                    self.input_method_handle.with_instance(move |input_method| {
                         input_method.object.text_change_cause(cause);
                     });
-                    data.input_method_v3_handle.with_instance(move |input_method| {
+                    self.input_method_v3_handle.with_instance(move |input_method| {
                         input_method.object.text_change_cause(cause);
                     });
                 }
 
                 if let Some((hint, purpose)) = new_state.content_type.take() {
-                    data.input_method_handle.with_instance(move |input_method| {
+                    self.input_method_handle.with_instance(move |input_method| {
                         input_method.object.content_type(hint, purpose);
                     });
-                    data.input_method_v3_handle.with_instance(move |input_method| {
+                    self.input_method_v3_handle.with_instance(move |input_method| {
                         input_method.object.content_type(hint, purpose);
                     });
                 }
 
                 if let Some(actions) = new_state.available_actions.take() {
                     let action_bytes: Vec<u8> = actions.iter().flat_map(|a| a.to_ne_bytes()).collect();
-                    data.input_method_v3_handle.with_instance(move |input_method| {
+                    self.input_method_v3_handle.with_instance(move |input_method| {
                         input_method.object.set_available_actions(action_bytes);
                     });
                 }
 
                 let cursor_state = new_state.cursor_rectangle.take();
                 if let Some(rect) = cursor_state {
-                    data.input_method_handle
+                    self.input_method_handle
                         .set_text_input_rectangle::<D>(state, rect);
-                    data.input_method_v3_handle.set_cursor_rectangle::<D>(state, rect);
+                    self.input_method_v3_handle.set_cursor_rectangle::<D>(state, rect);
                 }
 
-                data.input_method_handle.with_instance(|input_method| {
+                self.input_method_handle.with_instance(|input_method| {
                     input_method.done();
                 });
-                data.input_method_v3_handle.done();
+                self.input_method_v3_handle.done();
             }
             zwp_text_input_v3::Request::SetAvailableActions { available_actions } => {
                 let actions: Vec<u32> = available_actions
@@ -387,10 +386,9 @@ where
     }
 
     fn destroyed(&self, state: &mut D, _client: ClientId, text_input: &ZwpTextInputV3) {
-        let data = self;
         let destroyed_id = text_input.id();
         let deactivate_im = {
-            let mut inner = data.handle.inner.lock().unwrap();
+            let mut inner = self.handle.inner.lock().unwrap();
             inner.instances.retain(|inst| inst.instance.id() != destroyed_id);
             let destroyed_focused = inner
                 .focus
@@ -408,8 +406,8 @@ where
         };
 
         if deactivate_im {
-            data.input_method_handle.deactivate_input_method(state);
-            data.input_method_v3_handle.deactivate_input_method(state);
+            self.input_method_handle.deactivate_input_method(state);
+            self.input_method_v3_handle.deactivate_input_method(state);
         }
     }
 }

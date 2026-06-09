@@ -11,16 +11,16 @@ use wayland_protocols_experimental::{
 };
 use wayland_server::WEnum;
 use wayland_server::{
-    Client, DataInit, DisplayHandle, Resource, Weak,
     protocol::{
         wl_keyboard::{KeyState, WlKeyboard},
         wl_surface::WlSurface,
     },
+    Client, DataInit, DisplayHandle, Resource, Weak,
 };
 
 use crate::input::{
-    Seat, SeatHandler,
     keyboard::{KeyboardHandle, KnownKbds, WlKeyboardApi},
+    Seat, SeatHandler,
 };
 
 use super::KeyboardFilterManagerUserDataInner;
@@ -240,11 +240,10 @@ where
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
-        let data = self;
         use xx_keyboard_filter_v1::Request;
         match request {
             Request::Unbind => {
-                data.teardown();
+                self.teardown();
             }
             Request::Filter { serial, action } => {
                 let action = match action {
@@ -260,15 +259,15 @@ where
                     }
                 };
 
-                let mut pending = data.pending_events.lock().unwrap();
+                let mut pending = self.pending_events.lock().unwrap();
                 // Find the event matching this serial (events are in reverse order, newest first)
                 if let Some(pos) = pending.iter().position(|e| e.serial == serial) {
                     let event = pending.remove(pos).unwrap();
                     if action {
                         // Passthrough: forward to real client
-                        let focused = data.focused_surface.lock().unwrap();
+                        let focused = self.focused_surface.lock().unwrap();
                         if let Some(ref surface) = *focused {
-                            let keyboards = data.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
+                            let keyboards = self.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
                             KnownKbds::send_key_to_focused(
                                 &keyboards,
                                 surface,
