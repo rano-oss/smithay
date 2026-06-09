@@ -35,6 +35,20 @@ pub(crate) struct InputMethodState {
     pub active_input_method_id: Option<ObjectId>,
 }
 
+impl InputMethodState {
+    /// Get a mutable reference to the active input method instance, if any.
+    pub fn active_instance_mut(&mut self) -> Option<&mut InputMethod> {
+        let id = self.active_input_method_id.as_ref()?;
+        self.instances.iter_mut().find(|i| i.object.id() == *id)
+    }
+
+    /// Get a reference to the active input method instance, if any.
+    pub fn active_instance(&self) -> Option<&InputMethod> {
+        let id = self.active_input_method_id.as_ref()?;
+        self.instances.iter().find(|i| i.object.id() == *id)
+    }
+}
+
 /// Contains input method state
 pub(crate) struct InputMethod {
     pub object: XxInputMethodV1,
@@ -109,11 +123,7 @@ impl InputMethodHandle {
         F: FnOnce(&mut InputMethod),
     {
         let mut inner = self.inner.lock().unwrap();
-        let active_id = match &inner.active_input_method_id {
-            Some(id) => id.clone(),
-            None => return,
-        };
-        if let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) {
+        if let Some(instance) = inner.active_instance_mut() {
             f(instance);
         }
     }
@@ -158,50 +168,43 @@ impl InputMethodHandle {
         cursor: Rectangle<i32, Logical>,
     ) {
         let mut inner = self.inner.lock().unwrap();
-        let active_id = match &inner.active_input_method_id {
-            Some(id) => id.clone(),
-            None => return,
+        let Some(instance) = inner.active_instance_mut() else {
+            return;
         };
-        if let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) {
-            instance.cursor_rectangle = cursor;
+        instance.cursor_rectangle = cursor;
 
-            // Reposition popup(s) unless frozen
-            let popups_to_reposition: Vec<_> = instance
-                .popup_handles
-                .iter_mut()
-                .filter(|popup| !popup.frozen())
-                .map(|popup| {
-                    let positioner = popup.positioner();
-                    let parent_surface = popup.get_parent().surface.clone();
-                    let popup_geometry = state.popup_geometry(&parent_surface, &cursor, &positioner);
-                    popup.set_position(ImPopupLocation {
-                        anchor: cursor,
-                        geometry: popup_geometry,
-                    });
-                    popup.clone()
-                })
-                .collect();
+        // Reposition popup(s) unless frozen
+        let popups_to_reposition: Vec<_> = instance
+            .popup_handles
+            .iter_mut()
+            .filter(|popup| !popup.frozen())
+            .map(|popup| {
+                let positioner = popup.positioner();
+                let parent_surface = popup.get_parent().surface.clone();
+                let popup_geometry = state.popup_geometry(&parent_surface, &cursor, &positioner);
+                popup.set_position(ImPopupLocation {
+                    anchor: cursor,
+                    geometry: popup_geometry,
+                });
+                popup.clone()
+            })
+            .collect();
 
-            for popup in popups_to_reposition {
-                state.popup_repositioned(popup);
-            }
+        for popup in popups_to_reposition {
+            state.popup_repositioned(popup);
         }
     }
 
     /// Send `done` to the active input method instance, incrementing its serial.
     pub fn done(&self) {
         let mut inner = self.inner.lock().unwrap();
-        let active_id = match &inner.active_input_method_id {
-            Some(id) => id.clone(),
-            None => return,
+        let Some(instance) = inner.active_instance_mut() else {
+            return;
         };
-
-        if let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) {
-            for popup_surface in &mut instance.popup_handles {
-                popup_surface.send_pending_configure();
-            }
-            instance.done();
+        for popup_surface in &mut instance.popup_handles {
+            popup_surface.send_pending_configure();
         }
+        instance.done();
     }
 
     /// Activate input method on the given surface.
@@ -318,26 +321,26 @@ where
             }
 
             Request::Commit { serial } => {
-                let current_serial = {
-                    let inner = self.handle.inner.lock().unwrap();
-                    let active_id = inner.active_input_method_id.clone();
-                    active_id
-                        .and_then(|id| inner.instances.iter().find(|i| i.object.id() == id))
-                        .map(|i| i.serial)
-                        .unwrap_or(0)
-                };
+                let current_serial = self
+                    .handle
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .active_instance()
+                    .map(|i| i.serial)
+                    .unwrap_or(0);
                 let discard = serial != current_serial;
                 self.text_input_handle.done(discard);
             }
             Request::PerformAction { action } => {
-                let serial = {
-                    let inner = self.handle.inner.lock().unwrap();
-                    let active_id = inner.active_input_method_id.clone();
-                    active_id
-                        .and_then(|id| inner.instances.iter().find(|i| i.object.id() == id))
-                        .map(|i| i.serial)
-                        .unwrap_or(0)
-                };
+                let serial = self
+                    .handle
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .active_instance()
+                    .map(|i| i.serial)
+                    .unwrap_or(0);
                 let action = action.into_result().unwrap_or(Action::None);
                 self.text_input_handle.with_active_text_input(|ti, _surface| {
                     if ti.version() >= 2 {
@@ -354,21 +357,12 @@ where
                 positioner,
             } => {
                 let mut input_method = self.handle.inner.lock().unwrap();
-                let active_id = match &input_method.active_input_method_id {
-                    Some(id) => id.clone(),
-                    None => return,
-                };
-                let instance = match input_method
-                    .instances
-                    .iter_mut()
-                    .find(|i| i.object.id() == active_id)
-                {
-                    Some(inst) => inst,
-                    None => return,
+                let Some(instance) = input_method.active_instance_mut() else {
+                    return;
                 };
 
                 // Only allow popup creation from the active instance
-                if im.id() != active_id {
+                if im.id() != instance.object.id() {
                     im.post_error(
                         xx_input_method_v1::Error::Inactive,
                         "Popup may only be created on the active input method.",
