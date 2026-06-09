@@ -1199,54 +1199,54 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         if let Some(token) = guard.key_repeat_token.take() {
             loop_handle.remove(token);
         }
-        if state == KeyState::Pressed {
-            let rate = guard.repeat_rate;
-            let delay = guard.repeat_delay;
-            if rate > 0 {
-                let repeats = guard.xkb.lock().unwrap().keymap.key_repeats(keycode);
-                if repeats {
-                    let kbd = self.clone();
-                    let rate_duration = Duration::from_millis(rate as _);
-                    let mut time_ms = time;
-                    let mut first_fire = true;
-                    let token = loop_handle
-                        .insert_source(
-                            calloop::timer::Timer::from_duration(Duration::from_millis(delay as _)),
-                            move |_, _, _data| {
-                                if first_fire {
-                                    time_ms += delay as u32;
-                                    first_fire = false;
-                                } else {
-                                    time_ms += rate as u32;
-                                }
-                                let guard = kbd.arc.internal.lock().unwrap();
-                                // Only repeat if key is still forwarded
-                                if !guard.forwarded_pressed_keys.contains(&keycode) {
-                                    return calloop::timer::TimeoutAction::Drop;
-                                }
-                                drop(guard);
-                                let interceptor_guard = kbd.arc.known_kbds.interceptor.lock().unwrap();
-                                if let Some(ref interceptor) = *interceptor_guard {
-                                    let serial = SERIAL_COUNTER.next_serial();
-                                    let raw_key = keycode.raw() - 8;
-                                    interceptor.key(
-                                        serial.into(),
-                                        time_ms,
-                                        raw_key,
-                                        wl_keyboard::KeyState::Repeated,
-                                    );
-                                    calloop::timer::TimeoutAction::ToDuration(rate_duration)
-                                } else {
-                                    // Interceptor deactivated while timer running — stop
-                                    calloop::timer::TimeoutAction::Drop
-                                }
-                            },
-                        )
-                        .unwrap();
-                    guard.key_repeat_token = Some(token);
-                }
-            }
+        if state != KeyState::Pressed {
+            return;
         }
+        let rate = guard.repeat_rate;
+        let delay = guard.repeat_delay;
+        if rate == 0 {
+            return;
+        }
+        if !guard.xkb.lock().unwrap().keymap.key_repeats(keycode) {
+            return;
+        }
+
+        let kbd = self.clone();
+        let rate_duration = Duration::from_millis(rate as _);
+        let mut time_ms = time;
+        let mut first_fire = true;
+        let token = loop_handle
+            .insert_source(
+                calloop::timer::Timer::from_duration(Duration::from_millis(delay as _)),
+                move |_, _, _data| {
+                    if first_fire {
+                        time_ms += delay as u32;
+                        first_fire = false;
+                    } else {
+                        time_ms += rate as u32;
+                    }
+                    let guard = kbd.arc.internal.lock().unwrap();
+                    if !guard.forwarded_pressed_keys.contains(&keycode) {
+                        return calloop::timer::TimeoutAction::Drop;
+                    }
+                    drop(guard);
+                    let interceptor_guard = kbd.arc.known_kbds.interceptor.lock().unwrap();
+                    let Some(ref interceptor) = *interceptor_guard else {
+                        return calloop::timer::TimeoutAction::Drop;
+                    };
+                    let serial = SERIAL_COUNTER.next_serial();
+                    let raw_key = keycode.raw() - 8;
+                    interceptor.key(
+                        serial.into(),
+                        time_ms,
+                        raw_key,
+                        wl_keyboard::KeyState::Repeated,
+                    );
+                    calloop::timer::TimeoutAction::ToDuration(rate_duration)
+                },
+            )
+            .unwrap();
+        guard.key_repeat_token = Some(token);
     }
 
     /// Set the current focus of this keyboard
