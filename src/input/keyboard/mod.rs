@@ -406,7 +406,7 @@ pub(crate) struct KnownKbds {
     pub(crate) keyboards: Arc<Mutex<Vec<Weak<wl_keyboard::WlKeyboard>>>>,
     /// If present, all events are directed to it rather than the keyboards.
     /// While this is used only by the input method, the implementation is hidden behind a trait to limit the knowledge of the input method by the keyboard.
-    pub(crate) interceptor: Arc<Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>>,
+    pub(crate) interceptor: Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>,
 }
 
 impl fmt::Debug for KnownKbds {
@@ -831,7 +831,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 #[cfg(feature = "wayland_frontend")]
                 known_kbds: KnownKbds {
                     keyboards: Arc::new(Mutex::new(Vec::new())),
-                    interceptor: Arc::new(Mutex::new(None)),
+                    interceptor: Mutex::new(None),
                 },
                 #[cfg(feature = "wayland_frontend")]
                 last_enter: Mutex::new(None),
