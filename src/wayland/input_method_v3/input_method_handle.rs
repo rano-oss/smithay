@@ -128,6 +128,16 @@ impl InputMethodHandle {
         }
     }
 
+    /// Returns the serial of the active instance, or 0 if none.
+    pub(crate) fn active_serial(&self) -> u32 {
+        self.inner
+            .lock()
+            .unwrap()
+            .active_instance()
+            .map(|i| i.serial)
+            .unwrap_or(0)
+    }
+
     /// Set which input method instance should be active by app_id.
     /// Returns true if an instance with the given app_id was found and set as active.
     pub fn set_active_instance(&self, app_id: &str) -> bool {
@@ -321,26 +331,11 @@ where
             }
 
             Request::Commit { serial } => {
-                let current_serial = self
-                    .handle
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .active_instance()
-                    .map(|i| i.serial)
-                    .unwrap_or(0);
-                let discard = serial != current_serial;
+                let discard = serial != self.handle.active_serial();
                 self.text_input_handle.done(discard);
             }
             Request::PerformAction { action } => {
-                let serial = self
-                    .handle
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .active_instance()
-                    .map(|i| i.serial)
-                    .unwrap_or(0);
+                let serial = self.handle.active_serial();
                 let action = action.into_result().unwrap_or(Action::None);
                 self.text_input_handle.with_active_text_input(|ti, _surface| {
                     if ti.version() >= 2 {

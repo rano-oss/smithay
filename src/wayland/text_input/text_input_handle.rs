@@ -347,8 +347,7 @@ where
                     });
                 }
 
-                let cursor_state = new_state.cursor_rectangle.take();
-                if let Some(rect) = cursor_state {
+                if let Some(rect) = new_state.cursor_rectangle.take() {
                     self.input_method_handle
                         .set_text_input_rectangle::<D>(state, rect);
                     self.input_method_v3_handle.set_cursor_rectangle::<D>(state, rect);
@@ -362,10 +361,7 @@ where
             zwp_text_input_v3::Request::SetAvailableActions { available_actions } => {
                 pending_state.available_actions = Some(available_actions);
             }
-            zwp_text_input_v3::Request::ShowInputPanel => {
-                // TODO: forward to IME when panel visibility is supported
-            }
-            zwp_text_input_v3::Request::HideInputPanel => {
+            zwp_text_input_v3::Request::ShowInputPanel | zwp_text_input_v3::Request::HideInputPanel => {
                 // TODO: forward to IME when panel visibility is supported
             }
             zwp_text_input_v3::Request::Destroy => {

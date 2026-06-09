@@ -179,11 +179,10 @@ impl Filter {
     /// Deactivate keyboard interception. Drop pending events, restore client repeat.
     pub fn deactivate_interceptor<D: SeatHandler + 'static>(&self, seat: &Seat<D>) {
         let keyboard_handle = seat.get_keyboard().unwrap();
-        let state = self.filter_state.lock().unwrap();
+        let mut state = self.filter_state.lock().unwrap();
         let focused_surface = state.focused_surface.clone();
+        state.pending_events.clear();
         drop(state);
-
-        self.filter_state.lock().unwrap().pending_events.clear();
         keyboard_handle.arc.known_kbds.clear_interceptor();
 
         // Restore real repeat rate to client keyboards
@@ -277,12 +276,8 @@ where
                 let passthrough = match action {
                     WEnum::Value(FilterAction::Passthrough) => true,
                     WEnum::Value(FilterAction::Consume) => false,
-                    WEnum::Value(unk) => {
-                        error!("Unsupported filter action {unk:?}");
-                        return;
-                    }
-                    WEnum::Unknown(unk) => {
-                        error!("Unsupported filter action {unk}");
+                    other => {
+                        error!("Unsupported filter action {other:?}");
                         return;
                     }
                 };

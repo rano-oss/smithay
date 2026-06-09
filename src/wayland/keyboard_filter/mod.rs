@@ -186,21 +186,15 @@ where
                     },
                 );
 
-                {
-                    let mut im_filter = imdata.keyboard_filter.lock().unwrap();
-                    *im_filter = Some(Filter {
-                        keyboard_filter,
-                        filter_state,
-                    });
-                }
+                *imdata.keyboard_filter.lock().unwrap() = Some(Filter {
+                    keyboard_filter,
+                    filter_state,
+                });
 
-                {
-                    let mut bind = self.inner.lock().unwrap();
-                    bind.bound_keyboards.insert(keyboard);
-                    bind.bound_ims.insert(input_method);
-                }
+                let mut bind = self.inner.lock().unwrap();
+                bind.bound_keyboards.insert(keyboard);
+                bind.bound_ims.insert(input_method);
             }
-            xx_keyboard_filter_manager_v1::Request::Destroy => {}
             _ => {}
         }
     }

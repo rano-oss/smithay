@@ -225,15 +225,10 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
 
     let text_input = seat.text_input();
     let input_method = seat.input_method();
-
-    if input_method.has_instance() {
-        input_method.deactivate_input_method(state);
-    }
+    input_method.deactivate_input_method(state);
 
     let input_method_v3 = seat.input_method_v3();
-    if input_method_v3.has_instance() {
-        input_method_v3.deactivate_input_method(state);
-    }
+    input_method_v3.deactivate_input_method(state);
 
     // NOTE: Always set focus regardless whether the client actually has the
     // text-input global bound due to clients doing lazy global binding.
@@ -264,15 +259,10 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
 
         let text_input = seat.text_input();
         let input_method = seat.input_method();
-
-        if input_method.has_instance() {
-            input_method.deactivate_input_method(state);
-        }
+        input_method.deactivate_input_method(state);
 
         let input_method_v3 = seat.input_method_v3();
-        if input_method_v3.has_instance() {
-            input_method_v3.deactivate_input_method(state);
-        }
+        input_method_v3.deactivate_input_method(state);
 
         if input_method.has_instance() || input_method_v3.has_instance() {
             text_input.leave();
