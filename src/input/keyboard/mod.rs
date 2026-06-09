@@ -85,19 +85,14 @@ pub struct LedMapping {
 impl LedMapping {
     /// Get the mapping from a keymap
     pub fn from_keymap(keymap: &xkb::Keymap) -> Self {
+        let get = |name| match keymap.led_get_index(name) {
+            xkb::LED_INVALID => None,
+            index => Some(index),
+        };
         Self {
-            num: match keymap.led_get_index(xkb::LED_NAME_NUM) {
-                xkb::LED_INVALID => None,
-                index => Some(index),
-            },
-            caps: match keymap.led_get_index(xkb::LED_NAME_CAPS) {
-                xkb::LED_INVALID => None,
-                index => Some(index),
-            },
-            scroll: match keymap.led_get_index(xkb::LED_NAME_SCROLL) {
-                xkb::LED_INVALID => None,
-                index => Some(index),
-            },
+            num: get(xkb::LED_NAME_NUM),
+            caps: get(xkb::LED_NAME_CAPS),
+            scroll: get(xkb::LED_NAME_SCROLL),
         }
     }
 }
@@ -477,6 +472,17 @@ impl<D: SeatHandler> KbdRc<D> {
             f(kbd.as_ref())
         } else {
             for_each_focused_kbd(&self.keyboards.lock().unwrap(), surface, f);
+        }
+    }
+
+    pub(crate) fn restore_repeat_rate(&self, surface: Option<&wl_surface::WlSurface>) {
+        let guard = self.internal.lock().unwrap();
+        let (rate, delay) = (guard.repeat_rate, guard.repeat_delay);
+        drop(guard);
+        if let Some(surface) = surface {
+            for_each_focused_kbd(&self.keyboards.lock().unwrap(), surface, |kbd| {
+                kbd.repeat_info(rate, delay);
+            });
         }
     }
 }

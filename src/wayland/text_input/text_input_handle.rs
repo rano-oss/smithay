@@ -41,14 +41,11 @@ impl TextInput {
     where
         F: FnMut(&ZwpTextInputV3, &WlSurface, u32),
     {
-        let active_id = match &self.active_text_input_id {
-            Some(active_text_input_id) => active_text_input_id,
-            None => return,
+        let Some(active_id) = &self.active_text_input_id else {
+            return;
         };
-
-        let surface = match self.focus.as_ref().filter(|surface| surface.is_alive()) {
-            Some(surface) => surface,
-            None => return,
+        let Some(surface) = self.focus.as_ref().filter(|s| s.is_alive()) else {
+            return;
         };
 
         let surface_id = surface.id();
@@ -247,19 +244,11 @@ where
         };
 
         let mut guard = self.handle.inner.lock().unwrap();
-        let pending_state = match guard.instances.iter_mut().find_map(|instance| {
-            if instance.instance == *resource {
-                Some(&mut instance.pending_state)
-            } else {
-                None
-            }
-        }) {
-            Some(value) => value,
-            None => {
-                debug!("got request for untracked text-input");
-                return;
-            }
+        let Some(inst) = guard.instances.iter_mut().find(|i| i.instance == *resource) else {
+            debug!("got request for untracked text-input");
+            return;
         };
+        let pending_state = &mut inst.pending_state;
 
         match request {
             zwp_text_input_v3::Request::Enable => {

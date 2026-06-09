@@ -137,20 +137,17 @@ impl PopupSurface {
     /// Set position information that should take effect when mapping.
     /// Updates pending state.
     pub fn set_position(&mut self, position: ImPopupLocation) {
-        let pending = &mut self.state_pending;
-        if pending.is_none() {
-            *pending = Some(self.state.lock().unwrap().clone());
-        }
-        pending.as_mut().unwrap().position = position;
+        self.ensure_pending().position = position;
     }
 
     /// Adds the repositioned token to pending state.
     pub fn set_repositioned(&mut self, token: u32) {
-        let pending = &mut self.state_pending;
-        if pending.is_none() {
-            *pending = Some(self.state.lock().unwrap().clone());
-        }
-        pending.as_mut().unwrap().repositioned = Some(token);
+        self.ensure_pending().repositioned = Some(token);
+    }
+
+    fn ensure_pending(&mut self) -> &mut PopupSurfaceState {
+        self.state_pending
+            .get_or_insert_with(|| self.state.lock().unwrap().clone())
     }
 
     /// Send a configure event to this popup surface to suggest it a new configuration
@@ -158,16 +155,11 @@ impl PopupSurface {
     /// The serial of this configure will be tracked waiting for the client to ACK it.
     /// Call this from input_method.done
     pub fn send_pending_configure(&mut self) {
-        let new_state = {
-            let state = &mut self.state_pending;
-            if let Some(state) = state.as_mut() {
-                state.configured = true;
-                state.clone()
-            } else {
-                // there's nothing to update
-                return;
-            }
+        let Some(pending) = self.state_pending.as_mut() else {
+            return;
         };
+        pending.configured = true;
+        let new_state = pending.clone();
 
         // TODO: there's too much locking here but too early to optimize...
         let sent_state = {

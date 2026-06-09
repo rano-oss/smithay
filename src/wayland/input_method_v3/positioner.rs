@@ -49,26 +49,22 @@ impl Default for PositionerState {
 impl PositionerState {
     pub(crate) fn anchor_has_edge(&self, edge: Anchor) -> bool {
         match edge {
-            Anchor::Top => {
-                self.anchor_edges == Anchor::Top
-                    || self.anchor_edges == Anchor::TopLeft
-                    || self.anchor_edges == Anchor::TopRight
-            }
-            Anchor::Bottom => {
-                self.anchor_edges == Anchor::Bottom
-                    || self.anchor_edges == Anchor::BottomLeft
-                    || self.anchor_edges == Anchor::BottomRight
-            }
-            Anchor::Left => {
-                self.anchor_edges == Anchor::Left
-                    || self.anchor_edges == Anchor::TopLeft
-                    || self.anchor_edges == Anchor::BottomLeft
-            }
-            Anchor::Right => {
-                self.anchor_edges == Anchor::Right
-                    || self.anchor_edges == Anchor::TopRight
-                    || self.anchor_edges == Anchor::BottomRight
-            }
+            Anchor::Top => matches!(
+                self.anchor_edges,
+                Anchor::Top | Anchor::TopLeft | Anchor::TopRight
+            ),
+            Anchor::Bottom => matches!(
+                self.anchor_edges,
+                Anchor::Bottom | Anchor::BottomLeft | Anchor::BottomRight
+            ),
+            Anchor::Left => matches!(
+                self.anchor_edges,
+                Anchor::Left | Anchor::TopLeft | Anchor::BottomLeft
+            ),
+            Anchor::Right => matches!(
+                self.anchor_edges,
+                Anchor::Right | Anchor::TopRight | Anchor::BottomRight
+            ),
             _ => unreachable!(),
         }
     }
@@ -101,26 +97,19 @@ impl PositionerState {
 
     pub(crate) fn gravity_has_edge(&self, edge: Gravity) -> bool {
         match edge {
-            Gravity::Top => {
-                self.gravity == Gravity::Top
-                    || self.gravity == Gravity::TopLeft
-                    || self.gravity == Gravity::TopRight
-            }
-            Gravity::Bottom => {
-                self.gravity == Gravity::Bottom
-                    || self.gravity == Gravity::BottomLeft
-                    || self.gravity == Gravity::BottomRight
-            }
-            Gravity::Left => {
-                self.gravity == Gravity::Left
-                    || self.gravity == Gravity::TopLeft
-                    || self.gravity == Gravity::BottomLeft
-            }
-            Gravity::Right => {
-                self.gravity == Gravity::Right
-                    || self.gravity == Gravity::TopRight
-                    || self.gravity == Gravity::BottomRight
-            }
+            Gravity::Top => matches!(self.gravity, Gravity::Top | Gravity::TopLeft | Gravity::TopRight),
+            Gravity::Bottom => matches!(
+                self.gravity,
+                Gravity::Bottom | Gravity::BottomLeft | Gravity::BottomRight
+            ),
+            Gravity::Left => matches!(
+                self.gravity,
+                Gravity::Left | Gravity::TopLeft | Gravity::BottomLeft
+            ),
+            Gravity::Right => matches!(
+                self.gravity,
+                Gravity::Right | Gravity::TopRight | Gravity::BottomRight
+            ),
             _ => unreachable!(),
         }
     }
@@ -307,15 +296,6 @@ impl PositionerState {
         }
 
         geo
-    }
-
-    /// Return the popup geometry computed based on the cursor anchor.
-    pub fn get_geometry_from_anchor(
-        &self,
-        cursor: Rectangle<i32, Logical>,
-        target: Rectangle<i32, Logical>,
-    ) -> Rectangle<i32, Logical> {
-        self.get_unconstrained_geometry(cursor, target)
     }
 }
 

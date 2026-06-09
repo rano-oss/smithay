@@ -26,12 +26,9 @@ use super::{
     InputMethodHandler, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
-/// Contains all input method instances and tracks which one is active.
 #[derive(Default, Debug)]
 pub(crate) struct InputMethodState {
-    /// All registered input method instances.
     pub instances: Vec<InputMethod>,
-    /// The object ID of the currently active input method instance.
     pub active_input_method_id: Option<ObjectId>,
 }
 
@@ -49,7 +46,7 @@ impl InputMethodState {
     }
 }
 
-/// Contains input method state
+#[derive(Debug)]
 pub(crate) struct InputMethod {
     pub object: XxInputMethodV1,
     pub serial: u32,
@@ -58,19 +55,6 @@ pub(crate) struct InputMethod {
     pub popup_handles: Vec<PopupSurface>,
     /// Relative to surface on which input method is enabled
     pub cursor_rectangle: Rectangle<i32, Logical>,
-}
-
-impl fmt::Debug for InputMethod {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("InputMethod")
-            .field("object", &self.object)
-            .field("serial", &self.serial)
-            .field("active", &self.active)
-            .field("app_id", &self.app_id)
-            .field("popup_handles", &self.popup_handles)
-            .field("cursor_rectangle", &self.cursor_rectangle)
-            .finish()
-    }
 }
 
 impl InputMethod {

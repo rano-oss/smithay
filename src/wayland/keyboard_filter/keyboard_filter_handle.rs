@@ -184,18 +184,7 @@ impl Filter {
         state.pending_events.clear();
         drop(state);
         keyboard_handle.arc.clear_interceptor();
-
-        // Restore real repeat rate to client keyboards
-        let guard = keyboard_handle.arc.internal.lock().unwrap();
-        let rate = guard.repeat_rate;
-        let delay = guard.repeat_delay;
-        drop(guard);
-        if let Some(ref surface) = focused_surface {
-            let keyboards = keyboard_handle.arc.keyboards.lock().unwrap();
-            keyboard::for_each_focused_kbd(&keyboards, surface, |kbd| {
-                kbd.repeat_info(rate, delay);
-            });
-        }
+        keyboard_handle.arc.restore_repeat_rate(focused_surface.as_ref());
     }
 }
 
@@ -234,18 +223,9 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
         drop(state);
 
         self.keyboard_handle.arc.clear_interceptor();
-
-        // Restore real repeat rate to client keyboards
-        let guard = self.keyboard_handle.arc.internal.lock().unwrap();
-        let rate = guard.repeat_rate;
-        let delay = guard.repeat_delay;
-        drop(guard);
-        if let Some(ref surface) = focused_surface {
-            let keyboards = self.keyboard_handle.arc.keyboards.lock().unwrap();
-            keyboard::for_each_focused_kbd(&keyboards, surface, |kbd| {
-                kbd.repeat_info(rate, delay);
-            });
-        }
+        self.keyboard_handle
+            .arc
+            .restore_repeat_rate(focused_surface.as_ref());
 
         let mut mgr = self.manager_data.lock().unwrap();
         mgr.bound_keyboards.remove(&self.bound_keyboard);
