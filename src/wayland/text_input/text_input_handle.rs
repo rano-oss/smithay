@@ -324,11 +324,6 @@ where
                 }
 
                 if let Some(cause) = new_state.text_change_cause.take() {
-                    let cause = match cause {
-                        ChangeCause::InputMethod => zwp_text_input_v3::ChangeCause::InputMethod,
-                        ChangeCause::Other => zwp_text_input_v3::ChangeCause::Other,
-                        _ => zwp_text_input_v3::ChangeCause::Other,
-                    };
                     self.input_method_handle.with_instance(move |input_method| {
                         input_method.object.text_change_cause(cause);
                     });
