@@ -5,14 +5,13 @@ use tracing::{debug, warn};
 
 use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3;
 use wayland_server::backend::{ClientId, ObjectId};
-use wayland_server::{Resource, protocol::wl_surface::WlSurface};
+use wayland_server::{protocol::wl_surface::WlSurface, Resource};
 
 use crate::wayland::Dispatch2;
 use zwp_text_input_v3::{ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::compositor::{self, HookId};
 use crate::wayland::input_method;
 use crate::wayland::input_method_v3;
 
@@ -118,13 +117,6 @@ impl TextInputHandle {
         inner.active_text_input_id = None;
         // NOTE: we implement it in a symmetrical way with `enter`.
         inner.with_focused_client_all_text_inputs(|text_input, focus, _| {
-            if text_input.version() >= 2 {
-                let data = text_input.data::<TextInputUserData>().unwrap();
-                let mut hook = data.surface_commit_hook.lock().unwrap();
-                if let Some(hook) = hook.take() {
-                    compositor::remove_post_commit_hook(focus, &hook);
-                }
-            }
             text_input.leave(focus);
         });
     }
@@ -205,12 +197,6 @@ pub struct TextInputUserData {
     pub(super) handle: TextInputHandle,
     pub(crate) input_method_handle: input_method::InputMethodHandle,
     pub(crate) input_method_v3_handle: input_method_v3::InputMethodHandle,
-    /// For version 2 and above, this associates the text-input to a surface.
-    /// wl_surface.commit triggers the text-input state update.
-    /// This holds the post-commit hook id that does the state update.
-    /// This `HookId` makes it possible to unregister the hook
-    /// and stop updates when text-input is disabled.
-    pub(super) surface_commit_hook: Mutex<Option<HookId>>,
 }
 
 impl<D> Dispatch2<ZwpTextInputV3, D> for TextInputUserData

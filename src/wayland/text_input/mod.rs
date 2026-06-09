@@ -44,12 +44,11 @@
 //! ```
 //!
 
-use std::sync::Mutex;
 use wayland_protocols::wp::text_input::zv3::server::{
     zwp_text_input_manager_v3::{self, ZwpTextInputManagerV3},
     zwp_text_input_v3::ZwpTextInputV3,
 };
-use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId};
+use wayland_server::{backend::GlobalId, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New};
 
 use crate::{
     input::{Seat, SeatHandler},
@@ -160,7 +159,6 @@ where
                         handle: handle.clone(),
                         input_method_handle: input_method_handle.clone(),
                         input_method_v3_handle: input_method_v3_handle.clone(),
-                        surface_commit_hook: Mutex::new(None),
                     },
                 );
                 handle.add_instance(&instance);
