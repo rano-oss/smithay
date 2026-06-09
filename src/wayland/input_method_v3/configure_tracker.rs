@@ -1,5 +1,5 @@
 /*! Tracks serial number assignment */
-use crate::utils::{SERIAL_COUNTER, Serial};
+use crate::utils::{Serial, SERIAL_COUNTER};
 
 /// Tracks states updated via configure sequences involving serials
 #[derive(Debug)]
@@ -10,17 +10,12 @@ pub struct ConfigureTracker<State> {
     /// layer_surface.ack_configure.
     /// The newest configure has the highest index.
     pending_configures: Vec<(State, Serial)>,
-
-    /// Holds the last server_pending state that has been acknowledged by the
-    /// client. This state should be cloned to the current during a commit.
-    last_acked: Option<State>,
 }
 
 impl<State> Default for ConfigureTracker<State> {
     fn default() -> Self {
         Self {
             pending_configures: Vec::new(),
-            last_acked: None,
         }
     }
 }
@@ -43,7 +38,6 @@ impl<State: Clone> ConfigureTracker<State> {
             .cloned()?;
 
         self.pending_configures.retain(|(_, c_serial)| *c_serial > serial);
-        self.last_acked = Some(state.clone());
         Some(state)
     }
 

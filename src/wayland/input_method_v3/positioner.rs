@@ -30,13 +30,6 @@ pub struct PositionerState {
     pub constraint_adjustment: ConstraintAdjustment,
     /// Offset placement relative to the anchor point
     pub offset: Point<i32, Logical>,
-    /// When set reactive, the surface is reconstrained if the conditions
-    /// used for constraining changed, e.g. the parent window moved.
-    ///
-    /// If the conditions changed and the popup was reconstrained,
-    /// an xdg_popup.configure event is sent with updated geometry,
-    /// followed by an xdg_surface.configure event.
-    pub reactive: bool,
 }
 
 impl Default for PositionerState {
@@ -47,7 +40,6 @@ impl Default for PositionerState {
             gravity: Gravity::None,
             offset: Default::default(),
             rect_size: Default::default(),
-            reactive: false,
         }
     }
 }
@@ -371,7 +363,9 @@ impl<D> Dispatch2<XxInputPopupPositionerV1, D> for PositionerUserData {
                 state.offset = (x, y).into();
             }
             Request::SetReactive => {
-                state.reactive = true;
+                // Intentionally ignored: IM popups are positioned by
+                // set_cursor_rectangle, not by parent movement. Collision
+                // avoidance (sliding) always applies regardless.
             }
             Request::Destroy => {
                 // handled by destructor
