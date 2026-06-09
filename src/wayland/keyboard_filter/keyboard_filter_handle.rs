@@ -77,8 +77,8 @@ impl WlKeyboardApi for FilterInterceptor {
     }
 
     fn enter(&self, serial: u32, surface: &WlSurface, keys: Vec<u8>) {
-        self.im_keyboard.enter(serial, &self.im_surface, keys.clone());
         self.forward_to_clients(|kbd| kbd.enter(serial, surface, keys.clone()));
+        self.im_keyboard.enter(serial, &self.im_surface, keys);
     }
 
     fn leave(&self, serial: u32, surface: &WlSurface) {

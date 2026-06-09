@@ -379,7 +379,7 @@ impl WlKeyboardApi for wl_keyboard::WlKeyboard {
     }
 
     fn enter(&self, serial: u32, surface: &wl_surface::WlSurface, keys: Vec<u8>) {
-        Self::enter(self, serial, surface, keys.clone())
+        Self::enter(self, serial, surface, keys)
     }
 
     fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
@@ -1354,11 +1354,6 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Get the current led state
     pub fn led_state(&self) -> LedState {
         self.arc.internal.lock().unwrap().led_state
-    }
-
-    /// Check if keyboard has focus
-    pub fn is_focused(&self) -> bool {
-        self.arc.internal.lock().unwrap().focus.is_some()
     }
 
     /// Change the repeat info configured for this keyboard

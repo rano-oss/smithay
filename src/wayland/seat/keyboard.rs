@@ -2,28 +2,28 @@ use std::{cell::RefCell, fmt};
 
 use tracing::{instrument, trace, warn};
 use wayland_server::{
-    Client, DisplayHandle, Resource,
     backend::{ClientId, ObjectId},
     protocol::{
         wl_keyboard::{self, KeyState as WlKeyState, WlKeyboard},
         wl_surface::WlSurface,
     },
+    Client, DisplayHandle, Resource,
 };
 
 use super::WaylandFocus;
 use crate::{
     backend::input::{KeyState, Keycode},
     input::{
-        Seat, SeatHandler, WeakSeat,
         keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
+        Seat, SeatHandler, WeakSeat,
     },
-    utils::{HookId, Serial, iter::new_locked_obj_iter_from_vec},
+    utils::{iter::new_locked_obj_iter_from_vec, HookId, Serial},
     wayland::{
-        Dispatch2,
         compositor::{add_destruction_hook, remove_destruction_hook, with_states},
         input_method::InputMethodSeat,
         input_method_v3::InputMethodSeat as _,
         text_input::TextInputSeat,
+        Dispatch2,
     },
 };
 
@@ -99,16 +99,6 @@ where
             .lock()
             .unwrap()
             .push(kbd.downgrade());
-    }
-}
-
-impl<D: SeatHandler + 'static> KeyboardHandle<D> {
-    /// Attempt to retrieve a [`KeyboardHandle`] from an existing resource
-    ///
-    /// May return `None` for a valid `WlKeyboard` that was created without
-    /// the keyboard capability.
-    pub fn from_resource(seat: &WlKeyboard) -> Option<Self> {
-        seat.data::<KeyboardUserData<D>>()?.handle.clone()
     }
 }
 
@@ -325,22 +315,6 @@ impl From<KeyState> for WlKeyState {
         match state {
             KeyState::Pressed => WlKeyState::Pressed,
             KeyState::Released => WlKeyState::Released,
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("Unknown KeyState {0:?}")]
-pub struct UnknownKeyState(WlKeyState);
-
-impl TryFrom<WlKeyState> for KeyState {
-    type Error = UnknownKeyState;
-    #[inline]
-    fn try_from(state: WlKeyState) -> Result<Self, Self::Error> {
-        match state {
-            WlKeyState::Pressed => Ok(KeyState::Pressed),
-            WlKeyState::Released => Ok(KeyState::Released),
-            x => Err(UnknownKeyState(x)),
         }
     }
 }
