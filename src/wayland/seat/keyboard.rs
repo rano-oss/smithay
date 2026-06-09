@@ -14,7 +14,7 @@ use super::WaylandFocus;
 use crate::{
     backend::input::{KeyState, Keycode},
     input::{
-        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, KnownKbds, ModifiersState, WlKeyboardApi},
+        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
         Seat, SeatHandler, WeakSeat,
     },
     utils::{iter::new_locked_obj_iter_from_vec, HookId, Serial},
@@ -337,29 +337,14 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
 
     fn repeat(&self, seat: &Seat<D>, _data: &mut D, keycode: Keycode, serial: Serial, time: u32) {
         let raw_key = keycode.raw() - 8;
-        let Some(keyboard) = seat.get_keyboard() else {
-            return;
-        };
-        let known_kbds = &keyboard.arc.known_kbds;
-        let interceptor_guard = known_kbds.interceptor.lock().unwrap();
-        if let Some(ref interceptor) = *interceptor_guard {
-            // IME active: send single Repeated event to interceptor.
-            // Interceptor buffers one event, IME sends one filter response.
-            // Passthrough handler converts to press+release for <v10 clients.
-            interceptor.key(serial.into(), time, raw_key, WlKeyState::Repeated);
-        } else {
-            drop(interceptor_guard);
-            // No IME: send directly to client keyboards
-            let keyboards = known_kbds.keyboards.lock().unwrap();
-            KnownKbds::for_each_focused_kbd(&keyboards, self, |kbd: &dyn WlKeyboardApi| {
-                if kbd.version() >= 10 {
-                    kbd.key(serial.into(), time, raw_key, WlKeyState::Repeated);
-                } else {
-                    kbd.key(serial.into(), time, raw_key, WlKeyState::Pressed);
-                    kbd.key(serial.into(), time, raw_key, WlKeyState::Released);
-                }
-            });
-        }
+        for_each_focused_kbds(seat, self, |kbd| {
+            if kbd.version() >= 10 {
+                kbd.key(serial.into(), time, raw_key, WlKeyState::Repeated);
+            } else {
+                kbd.key(serial.into(), time, raw_key, WlKeyState::Pressed);
+                kbd.key(serial.into(), time, raw_key, WlKeyState::Released);
+            }
+        });
     }
 }
 

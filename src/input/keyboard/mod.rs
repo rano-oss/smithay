@@ -1238,7 +1238,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                     let token = loop_handle
                         .insert_source(
                             calloop::timer::Timer::from_duration(Duration::from_millis(delay as _)),
-                            move |_, _, data| {
+                            move |_, _, _data| {
                                 if first_fire {
                                     time_ms += delay as u32;
                                     first_fire = false;
@@ -1250,14 +1250,17 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                                 if !guard.forwarded_pressed_keys.contains(&keycode) {
                                     return calloop::timer::TimeoutAction::Drop;
                                 }
-                                let focus = guard.focus.as_ref().map(|(f, _)| f.clone());
                                 drop(guard);
-                                if let Some(focus) = focus {
-                                    let seat = kbd.get_seat(data);
+                                let interceptor_guard = kbd.arc.known_kbds.interceptor.lock().unwrap();
+                                if let Some(ref interceptor) = *interceptor_guard {
                                     let serial = SERIAL_COUNTER.next_serial();
-                                    focus.repeat(&seat, data, keycode, serial, time_ms);
+                                    let raw_key = keycode.raw() - 8;
+                                    interceptor.key(serial.into(), time_ms, raw_key, wl_keyboard::KeyState::Repeated);
+                                    calloop::timer::TimeoutAction::ToDuration(rate_duration)
+                                } else {
+                                    // Interceptor deactivated while timer running — stop
+                                    calloop::timer::TimeoutAction::Drop
                                 }
-                                calloop::timer::TimeoutAction::ToDuration(rate_duration)
                             },
                         )
                         .unwrap();
