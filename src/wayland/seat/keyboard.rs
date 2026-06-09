@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cell::RefCell, fmt};
+use std::{cell::RefCell, fmt};
 
 use tracing::{instrument, trace, warn};
 use wayland_server::{
@@ -57,7 +57,7 @@ where
     ///
     /// This should be done first, before anything else is done with this keyboard.
     #[instrument(parent = &self.arc.span, skip(self))]
-    pub(crate) fn new_kbd(&self, kbd: &WlKeyboard, intercept_to: Option<&WlSurface>) {
+    pub(crate) fn new_kbd(&self, kbd: &WlKeyboard) {
         trace!("Sending keymap to client");
 
         // prepare a tempfile with the keymap, to send it to the client
@@ -77,25 +77,20 @@ where
             kbd.repeat_info(guard.repeat_rate, guard.repeat_delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {
-            let surface = if let Some(intercept_surface) = intercept_to {
-                Some(Cow::Borrowed(intercept_surface))
-            } else if focused.same_client_as(&kbd.id()) {
-                focused.wl_surface()
-            } else {
-                None
-            };
-            if let Some(surface) = surface {
-                let serialized = guard.mods_state.serialized;
-                let keys = serialize_pressed_keys(guard.pressed_keys.iter().copied());
-                kbd.enter((*serial).into(), &surface, keys);
-                // Modifiers must be send after enter event.
-                kbd.modifiers(
-                    (*serial).into(),
-                    serialized.depressed,
-                    serialized.latched,
-                    serialized.locked,
-                    serialized.layout_effective,
-                );
+            if focused.same_client_as(&kbd.id()) {
+                if let Some(surface) = focused.wl_surface() {
+                    let serialized = guard.mods_state.serialized;
+                    let keys = serialize_pressed_keys(guard.pressed_keys.iter().copied());
+                    kbd.enter((*serial).into(), &surface, keys);
+                    // Modifiers must be send after enter event.
+                    kbd.modifiers(
+                        (*serial).into(),
+                        serialized.depressed,
+                        serialized.latched,
+                        serialized.locked,
+                        serialized.layout_effective,
+                    );
+                }
             }
         }
         self.arc
@@ -321,11 +316,6 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
                 modifiers.layout_effective,
             );
         })
-    }
-
-    fn repeat(&self, _seat: &Seat<D>, _data: &mut D, _keycode: Keycode, _serial: Serial, _time: u32) {
-        // No-op: compositor repeat is routed through the interceptor directly
-        // by manage_key_repeat, never through KeyboardTarget::repeat().
     }
 }
 

@@ -65,7 +65,7 @@ pub(crate) struct KeyboardFilterManagerUserDataInner {
 /// State of the keyboard filter protocol.
 #[derive(Debug)]
 pub struct KeyboardFilterManagerState {
-    global: GlobalId,
+    _global: GlobalId,
 }
 
 impl KeyboardFilterManagerState {
@@ -84,12 +84,7 @@ impl KeyboardFilterManagerState {
             filter: Box::new(filter),
         };
         let global = display.create_global::<D, XxKeyboardFilterManagerV1, _>(MANAGER_VERSION, data);
-        Self { global }
-    }
-
-    /// Get the id of manager global.
-    pub fn global(&self) -> GlobalId {
-        self.global.clone()
+        Self { _global: global }
     }
 }
 

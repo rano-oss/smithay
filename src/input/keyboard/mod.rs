@@ -55,8 +55,6 @@ where
     );
     /// Hold modifiers were changed on a keyboard from a given seat
     fn modifiers(&self, seat: &Seat<D>, data: &mut D, modifiers: ModifiersState, serial: Serial);
-    /// Compositor key repeat for a given seat, default to do nothing
-    fn repeat(&self, _seat: &Seat<D>, _data: &mut D, _keycode: Keycode, _serial: Serial, _time: u32) {}
     /// Keyboard focus of a given seat moved from another handler to this handler
     fn replace(
         &self,
@@ -1147,7 +1145,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     ///
     /// Prefer using [`KeyboardHandle::input`] if this decision can be done synchronously
     /// in the `filter` closure.
-    pub fn input_intercept<T, F>(
+    pub(crate) fn input_intercept<T, F>(
         &self,
         data: &mut D,
         keycode: Keycode,
@@ -1182,7 +1180,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Forward a key event to the focused client
     ///
     /// Useful in conjunction with [`KeyboardHandle::input_intercept`].
-    pub fn input_forward(
+    pub(crate) fn input_forward(
         &self,
         data: &mut D,
         keycode: Keycode,

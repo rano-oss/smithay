@@ -273,7 +273,7 @@ where
                 );
 
                 if let Some(ref h) = inner.keyboard {
-                    h.new_kbd(&keyboard, None);
+                    h.new_kbd(&keyboard);
                 } else {
                     // same as pointer, should error but cannot
                 }
