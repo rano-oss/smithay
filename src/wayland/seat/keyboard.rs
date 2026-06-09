@@ -46,7 +46,7 @@ where
 
     /// Return all raw [`WlKeyboard`] instances for a particular [`Client`]
     pub fn client_keyboards<'a>(&'a self, client: &Client) -> impl Iterator<Item = WlKeyboard> + 'a {
-        let guard = self.arc.known_kbds.keyboards.lock().unwrap();
+        let guard = self.arc.keyboards.lock().unwrap();
 
         new_locked_obj_iter_from_vec(guard, client.id())
     }
@@ -93,12 +93,7 @@ where
                 }
             }
         }
-        self.arc
-            .known_kbds
-            .keyboards
-            .lock()
-            .unwrap()
-            .push(kbd.downgrade());
+        self.arc.keyboards.lock().unwrap().push(kbd.downgrade());
     }
 }
 
@@ -134,7 +129,6 @@ where
         if let Some(ref handle) = self.handle {
             handle
                 .arc
-                .known_kbds
                 .keyboards
                 .lock()
                 .unwrap()
@@ -149,8 +143,7 @@ pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
     f: impl FnMut(&dyn WlKeyboardApi),
 ) {
     if let Some(keyboard) = seat.get_keyboard() {
-        let inner = &keyboard.arc.known_kbds;
-        inner.for_each_focused(surface, f)
+        keyboard.arc.for_each_focused(surface, f)
     }
 }
 
@@ -210,7 +203,7 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     let seat_clone = seat.clone();
     let hook_id = add_destruction_hook::<D, _>(surface, move |_, surface| {
         let keyboard = seat_clone.get_keyboard().unwrap();
-        keyboard.arc.known_kbds.for_each_focused(surface, |kbd| {
+        keyboard.arc.for_each_focused(surface, |kbd| {
             kbd.leave(serial.into(), surface);
         });
     });

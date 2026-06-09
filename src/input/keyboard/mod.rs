@@ -400,25 +400,57 @@ impl WlKeyboardApi for wl_keyboard::WlKeyboard {
     }
 }
 
-pub(crate) struct KnownKbds {
-    /// The list of client keyboards
-    /// Contains Arc so that interceptor can forward events to them
+#[cfg(feature = "wayland_frontend")]
+pub(crate) fn for_each_focused_kbd(
+    keyboards: &[Weak<wl_keyboard::WlKeyboard>],
+    surface: &wl_surface::WlSurface,
+    mut f: impl FnMut(&dyn WlKeyboardApi),
+) {
+    keyboards
+        .iter()
+        .filter_map(|k| k.upgrade().ok())
+        .filter(|k| k.id().same_client_as(&surface.id()))
+        .for_each(|k| f(&k))
+}
+
+/// Send a key event to focused client keyboards with version-appropriate handling.
+/// For Repeated state: v10+ clients get Repeated, <v10 clients get press+release.
+#[cfg(feature = "wayland_frontend")]
+pub(crate) fn send_key_with_repeat_compat(
+    keyboards: &[Weak<wl_keyboard::WlKeyboard>],
+    surface: &wl_surface::WlSurface,
+    serial: u32,
+    time: u32,
+    key: u32,
+    state: wl_keyboard::KeyState,
+) {
+    for_each_focused_kbd(keyboards, surface, |kbd| {
+        if state == wl_keyboard::KeyState::Repeated && kbd.version() < 10 {
+            kbd.key(serial, time, key, wl_keyboard::KeyState::Pressed);
+            kbd.key(serial, time, key, wl_keyboard::KeyState::Released);
+        } else {
+            kbd.key(serial, time, key, state);
+        }
+    });
+}
+
+pub(crate) struct KbdRc<D: SeatHandler> {
+    pub(crate) internal: Mutex<KbdInternal<D>>,
+    #[cfg(feature = "wayland_frontend")]
+    pub(crate) keymap: Arc<Mutex<KeymapFile>>,
+    #[cfg(feature = "wayland_frontend")]
     pub(crate) keyboards: Arc<Mutex<Vec<Weak<wl_keyboard::WlKeyboard>>>>,
-    /// If present, all events are directed to it rather than the keyboards.
-    /// While this is used only by the input method, the implementation is hidden behind a trait to limit the knowledge of the input method by the keyboard.
+    #[cfg(feature = "wayland_frontend")]
     pub(crate) interceptor: Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>,
+    #[cfg(feature = "wayland_frontend")]
+    pub(crate) last_enter: Mutex<Option<Serial>>,
+    pub(crate) span: tracing::Span,
+    #[cfg(feature = "wayland_frontend")]
+    pub(crate) active_keymap: RwLock<KeymapFileId>,
 }
 
-impl fmt::Debug for KnownKbds {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("KnownKbds")
-            .field("keyboards", &self.keyboards)
-            //.field("interceptor", &self.interceptor)//.as_ref().map(|_| "dyn WlKeyboardApi"))
-            .finish()
-    }
-}
-
-impl KnownKbds {
+#[cfg(feature = "wayland_frontend")]
+impl<D: SeatHandler> KbdRc<D> {
     pub(crate) fn clear_interceptor(&self) {
         *self.interceptor.lock().unwrap() = None;
     }
@@ -444,54 +476,9 @@ impl KnownKbds {
         if let Some(kbd) = self.interceptor.lock().unwrap().as_ref() {
             f(kbd.as_ref())
         } else {
-            Self::for_each_focused_kbd(&self.keyboards.lock().unwrap(), surface, f);
+            for_each_focused_kbd(&self.keyboards.lock().unwrap(), surface, f);
         }
     }
-
-    pub(crate) fn for_each_focused_kbd(
-        keyboards: &[Weak<wl_keyboard::WlKeyboard>],
-        surface: &wl_surface::WlSurface,
-        mut f: impl FnMut(&dyn WlKeyboardApi),
-    ) {
-        keyboards
-            .iter()
-            .filter_map(|k| k.upgrade().ok())
-            .filter(|k| k.id().same_client_as(&surface.id()))
-            .for_each(|k| f(&k))
-    }
-
-    /// Send a key event to focused client keyboards with version-appropriate handling.
-    /// For Repeated state: v10+ clients get Repeated, <v10 clients get press+release.
-    pub(crate) fn send_key_with_repeat_compat(
-        keyboards: &[Weak<wl_keyboard::WlKeyboard>],
-        surface: &wl_surface::WlSurface,
-        serial: u32,
-        time: u32,
-        key: u32,
-        state: wl_keyboard::KeyState,
-    ) {
-        Self::for_each_focused_kbd(keyboards, surface, |kbd| {
-            if state == wl_keyboard::KeyState::Repeated && kbd.version() < 10 {
-                kbd.key(serial, time, key, wl_keyboard::KeyState::Pressed);
-                kbd.key(serial, time, key, wl_keyboard::KeyState::Released);
-            } else {
-                kbd.key(serial, time, key, state);
-            }
-        });
-    }
-}
-
-pub(crate) struct KbdRc<D: SeatHandler> {
-    pub(crate) internal: Mutex<KbdInternal<D>>,
-    #[cfg(feature = "wayland_frontend")]
-    pub(crate) keymap: Arc<Mutex<KeymapFile>>,
-    #[cfg(feature = "wayland_frontend")]
-    pub(crate) known_kbds: KnownKbds,
-    #[cfg(feature = "wayland_frontend")]
-    pub(crate) last_enter: Mutex<Option<Serial>>,
-    pub(crate) span: tracing::Span,
-    #[cfg(feature = "wayland_frontend")]
-    pub(crate) active_keymap: RwLock<KeymapFileId>,
 }
 
 #[cfg(not(feature = "wayland_frontend"))]
@@ -507,7 +494,7 @@ impl<D: SeatHandler> fmt::Debug for KbdRc<D> {
         f.debug_struct("KbdRc")
             .field("internal", &self.internal)
             .field("keymap", &self.keymap)
-            .field("known_kbds", &self.known_kbds)
+            .field("keyboards", &self.keyboards)
             .field("last_enter", &self.last_enter)
             .finish()
     }
@@ -829,10 +816,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 keymap: Arc::new(Mutex::new(keymap_file)),
                 internal: Mutex::new(internal),
                 #[cfg(feature = "wayland_frontend")]
-                known_kbds: KnownKbds {
-                    keyboards: Arc::new(Mutex::new(Vec::new())),
-                    interceptor: Mutex::new(None),
-                },
+                keyboards: Arc::new(Mutex::new(Vec::new())),
+                #[cfg(feature = "wayland_frontend")]
+                interceptor: Mutex::new(None),
                 #[cfg(feature = "wayland_frontend")]
                 last_enter: Mutex::new(None),
                 #[cfg(feature = "wayland_frontend")]
@@ -881,8 +867,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         *self.arc.active_keymap.write().unwrap() = new_id;
 
         // Update keymap for every wl_keyboard.
-        let known_kbds = &self.arc.known_kbds;
-        known_kbds.for_each_active(|kbd| {
+        self.arc.for_each_active(|kbd| {
             let res = keymap_file.with_fd(kbd.version() >= 7, |fd, size| {
                 kbd.keymap(KeymapFormat::XkbV1, fd.as_fd(), size as u32)
             });
@@ -1190,7 +1175,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         };
         // Only do compositor-side repeat when an interceptor (IME) is active
         #[cfg(feature = "wayland_frontend")]
-        if self.arc.known_kbds.interceptor.lock().unwrap().is_none() {
+        if self.arc.interceptor.lock().unwrap().is_none() {
             // No interceptor: clients handle their own repeat, nothing to do
             return;
         }
@@ -1231,7 +1216,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                         return calloop::timer::TimeoutAction::Drop;
                     }
                     drop(guard);
-                    let interceptor_guard = kbd.arc.known_kbds.interceptor.lock().unwrap();
+                    let interceptor_guard = kbd.arc.interceptor.lock().unwrap();
                     let Some(ref interceptor) = *interceptor_guard else {
                         return calloop::timer::TimeoutAction::Drop;
                     };
@@ -1367,10 +1352,10 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         {
             // Don't send to clients if interceptor is active — they're under rate=0 suppression.
             // The real rate will be restored when the interceptor is deactivated.
-            if self.arc.known_kbds.interceptor.lock().unwrap().is_some() {
+            if self.arc.interceptor.lock().unwrap().is_some() {
                 return;
             }
-            self.arc.known_kbds.for_each_active(|kbd| {
+            self.arc.for_each_active(|kbd| {
                 if kbd.version() >= 4 {
                     kbd.repeat_info(rate, delay);
                 }
