@@ -462,7 +462,7 @@ impl KnownKbds {
 
     /// Send a key event to focused client keyboards with version-appropriate handling.
     /// For Repeated state: v10+ clients get Repeated, <v10 clients get press+release.
-    pub(crate) fn send_key_to_focused(
+    pub(crate) fn send_key_with_repeat_compat(
         keyboards: &[Weak<wl_keyboard::WlKeyboard>],
         surface: &wl_surface::WlSurface,
         serial: u32,
@@ -1212,18 +1212,19 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         }
 
         let kbd = self.clone();
-        let rate_duration = Duration::from_millis(rate as _);
+        let interval_ms = 1000u32 / rate as u32;
+        let rate_duration = Duration::from_millis(interval_ms as u64);
         let mut time_ms = time;
         let mut first_fire = true;
         let token = loop_handle
             .insert_source(
-                calloop::timer::Timer::from_duration(Duration::from_millis(delay as _)),
+                calloop::timer::Timer::from_duration(Duration::from_millis(delay as u64)),
                 move |_, _, _data| {
                     if first_fire {
                         time_ms += delay as u32;
                         first_fire = false;
                     } else {
-                        time_ms += rate as u32;
+                        time_ms += interval_ms;
                     }
                     let guard = kbd.arc.internal.lock().unwrap();
                     if !guard.forwarded_pressed_keys.contains(&keycode) {

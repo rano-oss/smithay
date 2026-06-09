@@ -14,7 +14,7 @@ pub(crate) use keyboard_filter_handle::Filter;
 pub use keyboard_filter_handle::KeyboardFilterUserData;
 
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     sync::{Arc, Mutex},
 };
 
@@ -26,21 +26,20 @@ use wayland_protocols_experimental::{
     },
 };
 use wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
-    backend::GlobalId,
-    protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface},
+    backend::GlobalId, protocol::wl_keyboard::WlKeyboard, Client, DataInit, Dispatch, DisplayHandle,
+    GlobalDispatch, New, Resource,
 };
 
 use crate::{
     input::SeatHandler,
     wayland::{
-        Dispatch2, GlobalDispatch2,
         input_method_v3::InputMethodUserData,
         seat::{KeyboardUserData, WaylandFocus},
+        Dispatch2, GlobalDispatch2,
     },
 };
 
-use keyboard_filter_handle::BufferedEvent;
+use keyboard_filter_handle::FilterState;
 
 const MANAGER_VERSION: u32 = 1;
 
@@ -172,16 +171,13 @@ where
                     return;
                 }
 
-                let focused_surface: Arc<Mutex<Option<WlSurface>>> = Arc::new(Mutex::new(None));
-                let pending_events: Arc<Mutex<VecDeque<BufferedEvent>>> =
-                    Arc::new(Mutex::new(VecDeque::new()));
+                let filter_state = Arc::new(Mutex::new(FilterState::default()));
 
                 let keyboard_filter = data_init.init::<XxKeyboardFilterV1, _>(
                     extensions,
                     KeyboardFilterUserData {
                         keyboard_handle: kb_handle.clone(),
-                        pending_events: pending_events.clone(),
-                        focused_surface: focused_surface.clone(),
+                        filter_state: filter_state.clone(),
                         manager_data: self.inner.clone(),
                         bound_keyboard: keyboard.clone(),
                         bound_input_method: input_method.clone(),
@@ -194,8 +190,7 @@ where
                     let mut im_filter = imdata.keyboard_filter.lock().unwrap();
                     *im_filter = Some(Filter {
                         keyboard_filter,
-                        pending_events,
-                        focused_surface,
+                        filter_state,
                     });
                 }
 

@@ -363,10 +363,10 @@ where
                 pending_state.available_actions = Some(available_actions);
             }
             zwp_text_input_v3::Request::ShowInputPanel => {
-                pending_state.show_input_panel = true;
+                // TODO: forward to IME when panel visibility is supported
             }
             zwp_text_input_v3::Request::HideInputPanel => {
-                pending_state.hide_input_panel = true;
+                // TODO: forward to IME when panel visibility is supported
             }
             zwp_text_input_v3::Request::Destroy => {
                 // Nothing to do
@@ -419,8 +419,4 @@ struct TextInputState {
     text_change_cause: Option<ChangeCause>,
     /// Available actions (since v3.2). Raw bytes as received from client.
     available_actions: Option<Vec<u8>>,
-    /// Show input panel requested (since v3.2).
-    show_input_panel: bool,
-    /// Hide input panel requested (since v3.2).
-    hide_input_panel: bool,
 }

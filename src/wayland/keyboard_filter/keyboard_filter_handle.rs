@@ -35,6 +35,14 @@ pub(crate) struct BufferedEvent {
     pub(crate) state: KeyState,
 }
 
+/// Shared mutable state between Filter, FilterInterceptor, and KeyboardFilterUserData.
+/// Using a single lock ensures pending events and focused surface stay coherent.
+#[derive(Debug, Default)]
+pub(crate) struct FilterState {
+    pub(crate) pending_events: VecDeque<BufferedEvent>,
+    pub(crate) focused_surface: Option<WlSurface>,
+}
+
 /// The interceptor installed in `KnownKbds.interceptor`.
 ///
 /// It forwards all events to both:
@@ -53,8 +61,8 @@ struct FilterInterceptor {
     client_keyboards: Arc<Mutex<Vec<Weak<WlKeyboard>>>>,
     /// Surface the client keyboards are focused on
     focused_surface: WlSurface,
-    /// Key events buffered waiting for filter decision
-    pending_events: Arc<Mutex<VecDeque<BufferedEvent>>>,
+    /// Shared filter state (for buffering key events)
+    filter_state: Arc<Mutex<FilterState>>,
 }
 
 impl FilterInterceptor {
@@ -88,12 +96,16 @@ impl WlKeyboardApi for FilterInterceptor {
 
     fn key(&self, serial: u32, time: u32, key: u32, state: KeyState) {
         self.im_keyboard.key(serial, time, key, state);
-        self.pending_events.lock().unwrap().push_front(BufferedEvent {
-            serial,
-            time,
-            key,
-            state,
-        });
+        self.filter_state
+            .lock()
+            .unwrap()
+            .pending_events
+            .push_front(BufferedEvent {
+                serial,
+                time,
+                key,
+                state,
+            });
     }
 
     fn modifiers(&self, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) {
@@ -105,8 +117,11 @@ impl WlKeyboardApi for FilterInterceptor {
     }
 
     fn repeat_info(&self, rate: i32, delay: i32) {
+        // IM keyboard gets the real rate (it may use it internally)
         self.im_keyboard.repeat_info(rate, delay);
-        self.forward_to_clients(|kbd| kbd.repeat_info(rate, delay));
+        // Clients stay suppressed (rate=0) while interceptor is active;
+        // compositor handles repeat and routes through the interceptor.
+        self.forward_to_clients(|kbd| kbd.repeat_info(0, delay));
     }
 
     fn version(&self) -> u32 {
@@ -120,8 +135,7 @@ impl WlKeyboardApi for FilterInterceptor {
 #[derive(Debug, Clone)]
 pub(crate) struct Filter {
     pub(crate) keyboard_filter: XxKeyboardFilterV1,
-    pub(crate) pending_events: Arc<Mutex<VecDeque<BufferedEvent>>>,
-    pub(crate) focused_surface: Arc<Mutex<Option<WlSurface>>>,
+    pub(crate) filter_state: Arc<Mutex<FilterState>>,
 }
 
 impl Filter {
@@ -138,14 +152,14 @@ impl Filter {
         let keyboard_handle = seat.get_keyboard().unwrap();
         let filter_data = self.keyboard_filter.data::<KeyboardFilterUserData<D>>().unwrap();
 
-        *self.focused_surface.lock().unwrap() = Some(focused_surface.clone());
+        self.filter_state.lock().unwrap().focused_surface = Some(focused_surface.clone());
 
         let interceptor = FilterInterceptor {
             im_keyboard: filter_data.im_keyboard.clone(),
             im_surface: filter_data.im_surface.clone(),
             client_keyboards: keyboard_handle.arc.known_kbds.keyboards.clone(),
             focused_surface: focused_surface.clone(),
-            pending_events: self.pending_events.clone(),
+            filter_state: self.filter_state.clone(),
         };
 
         // Send rate=0 to client keyboards: "compositor takes over repeat"
@@ -165,8 +179,7 @@ impl Filter {
     /// Deactivate keyboard interception. Flush all pending events as passthrough.
     pub fn deactivate_interceptor<D: SeatHandler + 'static>(&self, seat: &Seat<D>) {
         let keyboard_handle = seat.get_keyboard().unwrap();
-        let mut pending = self.pending_events.lock().unwrap();
-        pending.clear();
+        self.filter_state.lock().unwrap().pending_events.clear();
         keyboard_handle.arc.known_kbds.clear_interceptor();
 
         // Restore real repeat rate to client keyboards
@@ -174,8 +187,8 @@ impl Filter {
         let rate = guard.repeat_rate;
         let delay = guard.repeat_delay;
         drop(guard);
-        let focused = self.focused_surface.lock().unwrap();
-        if let Some(ref surface) = *focused {
+        let state = self.filter_state.lock().unwrap();
+        if let Some(ref surface) = state.focused_surface {
             let keyboards = keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
             KnownKbds::for_each_focused_kbd(&keyboards, surface, |kbd| {
                 kbd.repeat_info(rate, delay);
@@ -188,8 +201,7 @@ impl Filter {
 #[derive(Debug)]
 pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) keyboard_handle: KeyboardHandle<D>,
-    pub(crate) pending_events: Arc<Mutex<VecDeque<BufferedEvent>>>,
-    pub(crate) focused_surface: Arc<Mutex<Option<WlSurface>>>,
+    pub(crate) filter_state: Arc<Mutex<FilterState>>,
     pub(crate) manager_data: Arc<Mutex<KeyboardFilterManagerUserDataInner>>,
     pub(crate) bound_keyboard: WlKeyboard,
     pub(crate) bound_input_method: XxInputMethodV1,
@@ -200,13 +212,13 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
 impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
     /// Flush pending events as passthrough, remove interceptor, clean up bindings.
     fn teardown(&self) {
-        let mut pending = self.pending_events.lock().unwrap();
-        if let Some(ref surface) = *self.focused_surface.lock().unwrap() {
+        let mut state = self.filter_state.lock().unwrap();
+        if let Some(surface) = state.focused_surface.clone() {
             let keyboards = self.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
-            for event in pending.drain(..) {
-                KnownKbds::send_key_to_focused(
+            for event in state.pending_events.drain(..) {
+                KnownKbds::send_key_with_repeat_compat(
                     &keyboards,
-                    surface,
+                    &surface,
                     event.serial,
                     event.time,
                     event.key,
@@ -214,9 +226,9 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
                 );
             }
         } else {
-            pending.clear();
+            state.pending_events.clear();
         }
-        drop(pending);
+        drop(state);
 
         self.keyboard_handle.arc.known_kbds.clear_interceptor();
 
@@ -246,7 +258,7 @@ where
                 self.teardown();
             }
             Request::Filter { serial, action } => {
-                let action = match action {
+                let passthrough = match action {
                     WEnum::Value(FilterAction::Passthrough) => true,
                     WEnum::Value(FilterAction::Consume) => false,
                     WEnum::Value(unk) => {
@@ -259,16 +271,14 @@ where
                     }
                 };
 
-                let mut pending = self.pending_events.lock().unwrap();
+                let mut state = self.filter_state.lock().unwrap();
                 // Find the event matching this serial (events are in reverse order, newest first)
-                if let Some(pos) = pending.iter().position(|e| e.serial == serial) {
-                    let event = pending.remove(pos).unwrap();
-                    if action {
-                        // Passthrough: forward to real client
-                        let focused = self.focused_surface.lock().unwrap();
-                        if let Some(ref surface) = *focused {
+                if let Some(pos) = state.pending_events.iter().position(|e| e.serial == serial) {
+                    let event = state.pending_events.remove(pos).unwrap();
+                    if passthrough {
+                        if let Some(ref surface) = state.focused_surface {
                             let keyboards = self.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
-                            KnownKbds::send_key_to_focused(
+                            KnownKbds::send_key_with_repeat_compat(
                                 &keyboards,
                                 surface,
                                 event.serial,
@@ -279,9 +289,8 @@ where
                         } else {
                             tracing::warn!("Passthrough failed: no focused_surface!");
                         }
-                    } else {
-                        // Consume: just drop the event
                     }
+                    // Consume: event is simply dropped
                 } else {
                     warn!("Filter response for unknown serial {serial}");
                     resource.post_error(
