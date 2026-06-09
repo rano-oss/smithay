@@ -1,8 +1,7 @@
-use std::sync::{Arc, Mutex, atomic::Ordering};
+use std::sync::{atomic::Ordering, Arc, Mutex};
 
 use atomic_float::AtomicF64;
 use wayland_server::{
-    Client, DisplayHandle, Resource, Weak,
     backend::{ClientId, ObjectId},
     protocol::{
         wl_pointer::{
@@ -11,21 +10,22 @@ use wayland_server::{
         },
         wl_surface::WlSurface,
     },
+    Client, DisplayHandle, Resource, Weak,
 };
 
 use crate::{
     backend::input::{Axis, AxisSource, ButtonState},
     input::{
-        Seat,
         pointer::{
             AxisFrame, ButtonEvent, CursorImageAttributes, CursorImageStatus, GestureHoldBeginEvent,
             GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
             GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent,
             PointerHandle, PointerTarget, RelativeMotionEvent,
         },
+        Seat,
     },
-    utils::{Client as ClientCoords, Point, Serial, iter::new_locked_obj_iter_from_vec},
-    wayland::{Dispatch2, compositor, pointer_constraints::with_pointer_constraint},
+    utils::{iter::new_locked_obj_iter_from_vec, Client as ClientCoords, Point, Serial},
+    wayland::{compositor, pointer_constraints::with_pointer_constraint, Dispatch2},
 };
 
 use super::{SeatHandler, WaylandFocus};

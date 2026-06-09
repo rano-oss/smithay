@@ -1,17 +1,17 @@
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::{atomic::Ordering, Arc};
 
 use atomic_float::AtomicF64;
 use wayland_server::{
-    DisplayHandle, Resource,
     backend::ClientId,
     protocol::wl_touch::{self, WlTouch},
+    DisplayHandle, Resource,
 };
 
 use super::SeatHandler;
 use crate::input::touch::TouchTarget;
 use crate::input::{
-    Seat,
     touch::{MotionEvent, OrientationEvent, ShapeEvent, UpEvent},
+    Seat,
 };
 use crate::wayland::Dispatch2;
 use crate::{input::touch::DownEvent, wayland::seat::wl_surface::WlSurface};

@@ -75,12 +75,11 @@ use crate::wayland::{Dispatch2, GlobalDispatch2};
 
 pub use self::{
     keyboard::KeyboardUserData,
-    pointer::{CURSOR_IMAGE_ROLE, PointerUserData},
+    pointer::{PointerUserData, CURSOR_IMAGE_ROLE},
     touch::TouchUserData,
 };
 
 use wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
     backend::{ClientId, GlobalId, ObjectId},
     protocol::{
         wl_keyboard::WlKeyboard,
@@ -89,6 +88,7 @@ use wayland_server::{
         wl_surface,
         wl_touch::WlTouch,
     },
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 
 use super::compositor::CompositorHandler;
@@ -273,7 +273,7 @@ where
                 );
 
                 if let Some(ref h) = inner.keyboard {
-                    h.new_kbd(keyboard);
+                    h.new_kbd(&keyboard, None);
                 } else {
                     // same as pointer, should error but cannot
                 }

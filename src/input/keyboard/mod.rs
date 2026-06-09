@@ -459,11 +459,16 @@ impl KnownKbds {
         *self.interceptor.lock().unwrap() = None;
     }
 
-    pub(crate) fn for_each_active(&self, f: impl Fn(&dyn WlKeyboardApi)) {
+    pub(crate) fn for_each_active(&self, mut f: impl FnMut(&dyn WlKeyboardApi)) {
         if let Some(kbd) = self.interceptor.lock().unwrap().as_ref() {
             f(kbd.as_ref())
         } else {
-            Self::for_each_active_kbd(&self.keyboards.lock().unwrap(), f);
+            self.keyboards
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|k| k.upgrade().ok())
+                .for_each(|k| f(&k))
         }
     }
 
@@ -479,19 +484,8 @@ impl KnownKbds {
         }
     }
 
-    /// Direct access to the keyboards. For use by the interceptor
-    pub(crate) fn for_each_active_kbd(
-        keyboards: &Vec<Weak<wl_keyboard::WlKeyboard>>,
-        mut f: impl FnMut(&dyn WlKeyboardApi),
-    ) {
-        keyboards
-            .iter()
-            .filter_map(|k| k.upgrade().ok())
-            .for_each(|k| f(&k))
-    }
-
     pub(crate) fn for_each_focused_kbd(
-        keyboards: &Vec<Weak<wl_keyboard::WlKeyboard>>,
+        keyboards: &[Weak<wl_keyboard::WlKeyboard>],
         surface: &wl_surface::WlSurface,
         mut f: impl FnMut(&dyn WlKeyboardApi),
     ) {
@@ -505,7 +499,7 @@ impl KnownKbds {
     /// Send a key event to focused client keyboards with version-appropriate handling.
     /// For Repeated state: v10+ clients get Repeated, <v10 clients get press+release.
     pub(crate) fn send_key_to_focused(
-        keyboards: &Vec<Weak<wl_keyboard::WlKeyboard>>,
+        keyboards: &[Weak<wl_keyboard::WlKeyboard>],
         surface: &wl_surface::WlSurface,
         serial: u32,
         time: u32,
@@ -1233,11 +1227,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         // Only do compositor-side repeat when an interceptor (IME) is active
         #[cfg(feature = "wayland_frontend")]
         if self.arc.known_kbds.interceptor.lock().unwrap().is_none() {
-            // No interceptor: let clients handle their own repeat
-            let mut guard = self.arc.internal.lock().unwrap();
-            if let Some(token) = guard.key_repeat_token.take() {
-                loop_handle.remove(token);
-            }
+            // No interceptor: clients handle their own repeat, nothing to do
             return;
         }
         let mut guard = self.arc.internal.lock().unwrap();
@@ -1409,11 +1399,18 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         guard.repeat_delay = delay;
         guard.repeat_rate = rate;
         #[cfg(feature = "wayland_frontend")]
-        self.arc.known_kbds.for_each_active(|kbd| {
-            if kbd.version() >= 4 {
-                kbd.repeat_info(rate, delay);
+        {
+            // Don't send to clients if interceptor is active — they're under rate=0 suppression.
+            // The real rate will be restored when the interceptor is deactivated.
+            if self.arc.known_kbds.interceptor.lock().unwrap().is_some() {
+                return;
             }
-        })
+            self.arc.known_kbds.for_each_active(|kbd| {
+                if kbd.version() >= 4 {
+                    kbd.repeat_info(rate, delay);
+                }
+            })
+        }
     }
 
     /// Access the [`Serial`] of the last `keyboard_enter` event, if that focus is still active.

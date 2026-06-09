@@ -57,10 +57,7 @@ where
     ///
     /// This should be done first, before anything else is done with this keyboard.
     #[instrument(parent = &self.arc.span, skip(self))]
-    pub(crate) fn new_kbd(&self, kbd: WlKeyboard) {
-        self.register_kbd(&kbd, None);
-    }
-    pub(crate) fn register_kbd(&self, kbd: &WlKeyboard, intercept_to: Option<&WlSurface>) {
+    pub(crate) fn new_kbd(&self, kbd: &WlKeyboard, intercept_to: Option<&WlSurface>) {
         trace!("Sending keymap to client");
 
         // prepare a tempfile with the keymap, to send it to the client
@@ -227,19 +224,10 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
 
     let seat_clone = seat.clone();
     let hook_id = add_destruction_hook::<D, _>(surface, move |_, surface| {
-        if let Some(client) = surface.client() {
-            let keyboard = seat_clone.get_keyboard().unwrap();
-            let inner = keyboard.arc.known_kbds.keyboards.lock().unwrap();
-            for kbd in &*inner {
-                let Ok(kbd) = kbd.upgrade() else {
-                    continue;
-                };
-
-                if kbd.client().is_some_and(|c| c == client) {
-                    kbd.leave(serial.into(), surface);
-                }
-            }
-        }
+        let keyboard = seat_clone.get_keyboard().unwrap();
+        keyboard.arc.known_kbds.for_each_focused(surface, |kbd| {
+            kbd.leave(serial.into(), surface);
+        });
     });
     if let Some(old_hook_id) = with_states(surface, |states| {
         states
