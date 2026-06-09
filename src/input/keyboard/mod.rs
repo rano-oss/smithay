@@ -501,6 +501,26 @@ impl KnownKbds {
             .filter(|k| k.id().same_client_as(&surface.id()))
             .for_each(|k| f(&k))
     }
+
+    /// Send a key event to focused client keyboards with version-appropriate handling.
+    /// For Repeated state: v10+ clients get Repeated, <v10 clients get press+release.
+    pub(crate) fn send_key_to_focused(
+        keyboards: &Vec<Weak<wl_keyboard::WlKeyboard>>,
+        surface: &wl_surface::WlSurface,
+        serial: u32,
+        time: u32,
+        key: u32,
+        state: wl_keyboard::KeyState,
+    ) {
+        Self::for_each_focused_kbd(keyboards, surface, |kbd| {
+            if state == wl_keyboard::KeyState::Repeated && kbd.version() < 10 {
+                kbd.key(serial, time, key, wl_keyboard::KeyState::Pressed);
+                kbd.key(serial, time, key, wl_keyboard::KeyState::Released);
+            } else {
+                kbd.key(serial, time, key, state);
+            }
+        });
+    }
 }
 
 pub(crate) struct KbdRc<D: SeatHandler> {
