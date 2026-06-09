@@ -176,9 +176,13 @@ impl Filter {
         *slot = Some(Box::new(interceptor));
     }
 
-    /// Deactivate keyboard interception. Flush all pending events as passthrough.
+    /// Deactivate keyboard interception. Drop pending events, restore client repeat.
     pub fn deactivate_interceptor<D: SeatHandler + 'static>(&self, seat: &Seat<D>) {
         let keyboard_handle = seat.get_keyboard().unwrap();
+        let state = self.filter_state.lock().unwrap();
+        let focused_surface = state.focused_surface.clone();
+        drop(state);
+
         self.filter_state.lock().unwrap().pending_events.clear();
         keyboard_handle.arc.known_kbds.clear_interceptor();
 
@@ -187,8 +191,7 @@ impl Filter {
         let rate = guard.repeat_rate;
         let delay = guard.repeat_delay;
         drop(guard);
-        let state = self.filter_state.lock().unwrap();
-        if let Some(ref surface) = state.focused_surface {
+        if let Some(ref surface) = focused_surface {
             let keyboards = keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
             KnownKbds::for_each_focused_kbd(&keyboards, surface, |kbd| {
                 kbd.repeat_info(rate, delay);
@@ -210,15 +213,16 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
 }
 
 impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
-    /// Flush pending events as passthrough, remove interceptor, clean up bindings.
+    /// Forward pending events as passthrough, remove interceptor, restore repeat, clean up bindings.
     fn teardown(&self) {
         let mut state = self.filter_state.lock().unwrap();
-        if let Some(surface) = state.focused_surface.clone() {
+        let focused_surface = state.focused_surface.clone();
+        if let Some(ref surface) = focused_surface {
             let keyboards = self.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
             for event in state.pending_events.drain(..) {
                 KnownKbds::send_key_with_repeat_compat(
                     &keyboards,
-                    &surface,
+                    surface,
                     event.serial,
                     event.time,
                     event.key,
@@ -231,6 +235,18 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
         drop(state);
 
         self.keyboard_handle.arc.known_kbds.clear_interceptor();
+
+        // Restore real repeat rate to client keyboards
+        let guard = self.keyboard_handle.arc.internal.lock().unwrap();
+        let rate = guard.repeat_rate;
+        let delay = guard.repeat_delay;
+        drop(guard);
+        if let Some(ref surface) = focused_surface {
+            let keyboards = self.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
+            KnownKbds::for_each_focused_kbd(&keyboards, surface, |kbd| {
+                kbd.repeat_info(rate, delay);
+            });
+        }
 
         let mut mgr = self.manager_data.lock().unwrap();
         mgr.bound_keyboards.remove(&self.bound_keyboard);
