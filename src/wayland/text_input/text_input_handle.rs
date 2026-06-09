@@ -342,9 +342,8 @@ where
                 }
 
                 if let Some(actions) = new_state.available_actions.take() {
-                    let action_bytes: Vec<u8> = actions.iter().flat_map(|a| a.to_ne_bytes()).collect();
                     self.input_method_v3_handle.with_instance(move |input_method| {
-                        input_method.object.set_available_actions(action_bytes);
+                        input_method.object.set_available_actions(actions);
                     });
                 }
 
@@ -361,11 +360,7 @@ where
                 self.input_method_v3_handle.done();
             }
             zwp_text_input_v3::Request::SetAvailableActions { available_actions } => {
-                let actions: Vec<u32> = available_actions
-                    .chunks_exact(4)
-                    .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                    .collect();
-                pending_state.available_actions = Some(actions);
+                pending_state.available_actions = Some(available_actions);
             }
             zwp_text_input_v3::Request::ShowInputPanel => {
                 pending_state.show_input_panel = true;
@@ -422,8 +417,8 @@ struct TextInputState {
     content_type: Option<(ContentHint, ContentPurpose)>,
     cursor_rectangle: Option<Rectangle<i32, Logical>>,
     text_change_cause: Option<ChangeCause>,
-    /// Available actions (since v3.2). Each u32 is an action enum value.
-    available_actions: Option<Vec<u32>>,
+    /// Available actions (since v3.2). Raw bytes as received from client.
+    available_actions: Option<Vec<u8>>,
     /// Show input panel requested (since v3.2).
     show_input_panel: bool,
     /// Hide input panel requested (since v3.2).
