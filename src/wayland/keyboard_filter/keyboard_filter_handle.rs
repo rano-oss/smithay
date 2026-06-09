@@ -11,16 +11,16 @@ use wayland_protocols_experimental::{
 };
 use wayland_server::WEnum;
 use wayland_server::{
+    Client, DataInit, DisplayHandle, Resource, Weak,
     protocol::{
         wl_keyboard::{KeyState, WlKeyboard},
         wl_surface::WlSurface,
     },
-    Client, DataInit, DisplayHandle, Resource, Weak,
 };
 
 use crate::input::{
-    keyboard::{KeyboardHandle, KnownKbds, WlKeyboardApi},
     Seat, SeatHandler,
+    keyboard::{KeyboardHandle, KnownKbds, WlKeyboardApi},
 };
 
 use super::KeyboardFilterManagerUserDataInner;

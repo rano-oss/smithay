@@ -8,22 +8,22 @@ use wayland_protocols_experimental::input_method::v1::server::{
     xx_input_method_v1::{self, ProtocolCompat, XxInputMethodV1},
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
+use wayland_server::{Client, DataInit, DisplayHandle, Resource};
 use wayland_server::{
     backend::{ClientId, ObjectId},
     protocol::wl_surface::WlSurface,
 };
-use wayland_server::{Client, DataInit, DisplayHandle, Resource};
 
 use crate::{
-    input::{keyboard::KeyboardHandle, Seat, SeatHandler},
+    input::{Seat, SeatHandler, keyboard::KeyboardHandle},
     utils::{Logical, Rectangle},
-    wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle, Dispatch2},
+    wayland::{Dispatch2, compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle},
 };
 
 use super::{
+    INPUT_POPUP_SURFACE_ROLE, InputMethodHandler, InputMethodPopupSurfaceUserData,
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
     positioner::PositionerUserData,
-    InputMethodHandler, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
 /// Contains all input method instances and tracks which one is active.

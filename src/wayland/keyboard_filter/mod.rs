@@ -26,17 +26,17 @@ use wayland_protocols_experimental::{
     },
 };
 use wayland_server::{
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
     backend::GlobalId,
     protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface},
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 
 use crate::{
     input::SeatHandler,
     wayland::{
+        Dispatch2, GlobalDispatch2,
         input_method_v3::InputMethodUserData,
         seat::{KeyboardUserData, WaylandFocus},
-        Dispatch2, GlobalDispatch2,
     },
 };
 

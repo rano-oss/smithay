@@ -71,8 +71,8 @@
 //! ```
 
 use wayland_server::{
-    backend::GlobalId, protocol::wl_surface::WlSurface, Client, DataInit, Dispatch, DisplayHandle,
-    GlobalDispatch, New,
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId,
+    protocol::wl_surface::WlSurface,
 };
 
 use crate::wayland::{Dispatch2, GlobalDispatch2};
@@ -272,7 +272,9 @@ where
                 let app_id = match state.input_method_app_id(client, dh) {
                     Some(id) => id,
                     None => {
-                        tracing::warn!("Input method client has no app_id (no security context?), rejecting registration");
+                        tracing::warn!(
+                            "Input method client has no app_id (no security context?), rejecting registration"
+                        );
                         // Must still init the resource to avoid panic, then send unavailable
                         let instance = data_init.init(input_method, im_user_data);
                         instance.unavailable();

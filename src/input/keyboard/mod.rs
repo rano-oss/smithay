@@ -362,28 +362,11 @@ pub enum Error {
 use wayland_server::protocol::{wl_keyboard, wl_surface};
 
 pub(crate) trait WlKeyboardApi {
-    fn keymap(
-        &self,
-        format: wl_keyboard::KeymapFormat,
-        fd: ::std::os::unix::io::BorrowedFd<'_>,
-        size: u32,
-    );
-    fn enter(
-        &self,
-        serial: u32,
-        surface: &wl_surface::WlSurface,
-        keys: Vec<u8>,
-    );
+    fn keymap(&self, format: wl_keyboard::KeymapFormat, fd: ::std::os::unix::io::BorrowedFd<'_>, size: u32);
+    fn enter(&self, serial: u32, surface: &wl_surface::WlSurface, keys: Vec<u8>);
     fn leave(&self, serial: u32, surface: &wl_surface::WlSurface);
     fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState);
-    fn modifiers(
-        &self,
-        serial: u32,
-        mods_depressed: u32,
-        mods_latched: u32,
-        mods_locked: u32,
-        group: u32,
-    );
+    fn modifiers(&self, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32);
     /// Repeat info cannot be derived from input events, but must be forwarded from the intercepted to the intercepting keyboard instance.
     /// This means intercepting only at the input events entry doesn't work. There must be full low-level interception instead.
     fn repeat_info(&self, rate: i32, delay: i32);
@@ -391,39 +374,22 @@ pub(crate) trait WlKeyboardApi {
 }
 
 impl WlKeyboardApi for wl_keyboard::WlKeyboard {
-    fn keymap(
-        &self,
-        format: wl_keyboard::KeymapFormat,
-        fd: ::std::os::unix::io::BorrowedFd<'_>,
-        size: u32,
-    ) {
+    fn keymap(&self, format: wl_keyboard::KeymapFormat, fd: ::std::os::unix::io::BorrowedFd<'_>, size: u32) {
         Self::keymap(self, format, fd, size)
     }
 
-    fn enter(
-        &self,
-        serial: u32,
-        surface: &wl_surface::WlSurface,
-        keys: Vec<u8>,
-    ) {
+    fn enter(&self, serial: u32, surface: &wl_surface::WlSurface, keys: Vec<u8>) {
         Self::enter(self, serial, surface, keys.clone())
     }
 
     fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
         Self::leave(self, serial, surface)
     }
-    
+
     fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
         Self::key(self, serial, time, key, state)
     }
-    fn modifiers(
-        &self,
-        serial: u32,
-        mods_depressed: u32,
-        mods_latched: u32,
-        mods_locked: u32,
-        group: u32,
-    ) {
+    fn modifiers(&self, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) {
         Self::modifiers(self, serial, mods_depressed, mods_latched, mods_locked, group)
     }
     fn repeat_info(&self, rate: i32, delay: i32) {
@@ -1263,7 +1229,12 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                                 if let Some(ref interceptor) = *interceptor_guard {
                                     let serial = SERIAL_COUNTER.next_serial();
                                     let raw_key = keycode.raw() - 8;
-                                    interceptor.key(serial.into(), time_ms, raw_key, wl_keyboard::KeyState::Repeated);
+                                    interceptor.key(
+                                        serial.into(),
+                                        time_ms,
+                                        raw_key,
+                                        wl_keyboard::KeyState::Repeated,
+                                    );
                                     calloop::timer::TimeoutAction::ToDuration(rate_duration)
                                 } else {
                                     // Interceptor deactivated while timer running — stop

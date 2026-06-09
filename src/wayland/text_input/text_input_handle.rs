@@ -5,7 +5,7 @@ use tracing::{debug, warn};
 
 use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3;
 use wayland_server::backend::{ClientId, ObjectId};
-use wayland_server::{protocol::wl_surface::WlSurface, Resource};
+use wayland_server::{Resource, protocol::wl_surface::WlSurface};
 
 use crate::wayland::Dispatch2;
 use zwp_text_input_v3::{ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3};
@@ -122,7 +122,7 @@ impl TextInputHandle {
                 let data = text_input.data::<TextInputUserData>().unwrap();
                 let mut hook = data.surface_commit_hook.lock().unwrap();
                 if let Some(hook) = hook.take() {
-                    compositor::remove_post_commit_hook(&focus, &hook);
+                    compositor::remove_post_commit_hook(focus, &hook);
                 }
             }
             text_input.leave(focus);

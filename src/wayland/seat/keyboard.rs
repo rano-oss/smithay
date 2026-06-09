@@ -2,28 +2,28 @@ use std::{cell::RefCell, fmt};
 
 use tracing::{instrument, trace, warn};
 use wayland_server::{
+    Client, DisplayHandle, Resource,
     backend::{ClientId, ObjectId},
     protocol::{
         wl_keyboard::{self, KeyState as WlKeyState, WlKeyboard},
         wl_surface::WlSurface,
     },
-    Client, DisplayHandle, Resource,
 };
 
 use super::WaylandFocus;
 use crate::{
     backend::input::{KeyState, Keycode},
     input::{
-        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
         Seat, SeatHandler, WeakSeat,
+        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
     },
-    utils::{iter::new_locked_obj_iter_from_vec, HookId, Serial},
+    utils::{HookId, Serial, iter::new_locked_obj_iter_from_vec},
     wayland::{
+        Dispatch2,
         compositor::{add_destruction_hook, remove_destruction_hook, with_states},
         input_method::InputMethodSeat,
         input_method_v3::InputMethodSeat as _,
         text_input::TextInputSeat,
-        Dispatch2,
     },
 };
 
@@ -62,7 +62,7 @@ where
 
         // prepare a tempfile with the keymap, to send it to the client
         let keymap_file = self.arc.keymap.lock().unwrap();
-        let ret = keymap_file.send(&kbd);
+        let ret = keymap_file.send(kbd);
 
         if let Err(e) = ret {
             warn!(

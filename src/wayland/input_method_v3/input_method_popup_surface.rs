@@ -5,20 +5,20 @@ use wayland_protocols_experimental::input_method::v1::server::xx_input_method_v1
 use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_surface_v2::{
     self, XxInputPopupSurfaceV2,
 };
-use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface, Resource};
+use wayland_server::{Resource, backend::ClientId, protocol::wl_surface::WlSurface};
 
 use crate::wayland::Dispatch2;
 
 use crate::input::SeatHandler;
 use crate::utils::{
-    alive_tracker::{AliveTracker, IsAlive},
     Logical, Point, Rectangle, Serial,
+    alive_tracker::{AliveTracker, IsAlive},
 };
 
 use super::{
+    InputMethodHandler, InputMethodUserData,
     configure_tracker::ConfigureTracker,
     positioner::{PositionerState, PositionerUserData},
-    InputMethodHandler, InputMethodUserData,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

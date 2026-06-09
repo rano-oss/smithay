@@ -1,5 +1,5 @@
 /*! Tracks serial number assignment */
-use crate::utils::{Serial, SERIAL_COUNTER};
+use crate::utils::{SERIAL_COUNTER, Serial};
 
 /// Tracks states updated via configure sequences involving serials
 #[derive(Debug)]
