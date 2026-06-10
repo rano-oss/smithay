@@ -85,14 +85,19 @@ pub struct LedMapping {
 impl LedMapping {
     /// Get the mapping from a keymap
     pub fn from_keymap(keymap: &xkb::Keymap) -> Self {
-        let get = |name| match keymap.led_get_index(name) {
-            xkb::LED_INVALID => None,
-            index => Some(index),
-        };
         Self {
-            num: get(xkb::LED_NAME_NUM),
-            caps: get(xkb::LED_NAME_CAPS),
-            scroll: get(xkb::LED_NAME_SCROLL),
+            num: match keymap.led_get_index(xkb::LED_NAME_NUM) {
+                xkb::LED_INVALID => None,
+                index => Some(index),
+            },
+            caps: match keymap.led_get_index(xkb::LED_NAME_CAPS) {
+                xkb::LED_INVALID => None,
+                index => Some(index),
+            },
+            scroll: match keymap.led_get_index(xkb::LED_NAME_SCROLL) {
+                xkb::LED_INVALID => None,
+                index => Some(index),
+            },
         }
     }
 }
@@ -434,7 +439,7 @@ pub(crate) struct KbdRc<D: SeatHandler> {
     #[cfg(feature = "wayland_frontend")]
     pub(crate) keymap: Arc<Mutex<KeymapFile>>,
     #[cfg(feature = "wayland_frontend")]
-    pub(crate) keyboards: Arc<Mutex<Vec<Weak<wl_keyboard::WlKeyboard>>>>,
+    pub(crate) known_kbds: Arc<Mutex<Vec<Weak<wl_keyboard::WlKeyboard>>>>,
     #[cfg(feature = "wayland_frontend")]
     pub(crate) interceptor: Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>,
     #[cfg(feature = "wayland_frontend")]
@@ -454,7 +459,7 @@ impl<D: SeatHandler> KbdRc<D> {
         if let Some(kbd) = self.interceptor.lock().unwrap().as_ref() {
             f(kbd.as_ref())
         } else {
-            self.keyboards
+            self.known_kbds
                 .lock()
                 .unwrap()
                 .iter()
@@ -471,7 +476,7 @@ impl<D: SeatHandler> KbdRc<D> {
         if let Some(kbd) = self.interceptor.lock().unwrap().as_ref() {
             f(kbd.as_ref())
         } else {
-            for_each_focused_kbd(&self.keyboards.lock().unwrap(), surface, f);
+            for_each_focused_kbd(&self.known_kbds.lock().unwrap(), surface, f);
         }
     }
 
@@ -480,7 +485,7 @@ impl<D: SeatHandler> KbdRc<D> {
         let (rate, delay) = (guard.repeat_rate, guard.repeat_delay);
         drop(guard);
         if let Some(surface) = surface {
-            for_each_focused_kbd(&self.keyboards.lock().unwrap(), surface, |kbd| {
+            for_each_focused_kbd(&self.known_kbds.lock().unwrap(), surface, |kbd| {
                 kbd.repeat_info(rate, delay);
             });
         }
@@ -500,7 +505,7 @@ impl<D: SeatHandler> fmt::Debug for KbdRc<D> {
         f.debug_struct("KbdRc")
             .field("internal", &self.internal)
             .field("keymap", &self.keymap)
-            .field("keyboards", &self.keyboards)
+            .field("keyboards", &self.known_kbds)
             .field("last_enter", &self.last_enter)
             .finish()
     }
@@ -822,7 +827,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 keymap: Arc::new(Mutex::new(keymap_file)),
                 internal: Mutex::new(internal),
                 #[cfg(feature = "wayland_frontend")]
-                keyboards: Arc::new(Mutex::new(Vec::new())),
+                known_kbds: Arc::new(Mutex::new(Vec::new())),
                 #[cfg(feature = "wayland_frontend")]
                 interceptor: Mutex::new(None),
                 #[cfg(feature = "wayland_frontend")]
@@ -1102,7 +1107,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     ///
     /// Prefer using [`KeyboardHandle::input`] if this decision can be done synchronously
     /// in the `filter` closure.
-    pub(crate) fn input_intercept<T, F>(
+    pub fn input_intercept<T, F>(
         &self,
         data: &mut D,
         keycode: Keycode,
@@ -1137,7 +1142,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Forward a key event to the focused client
     ///
     /// Useful in conjunction with [`KeyboardHandle::input_intercept`].
-    pub(crate) fn input_forward(
+    pub fn input_forward(
         &self,
         data: &mut D,
         keycode: Keycode,
@@ -1228,12 +1233,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                     };
                     let serial = SERIAL_COUNTER.next_serial();
                     let raw_key = keycode.raw() - 8;
-                    interceptor.key(
-                        serial.into(),
-                        time_ms,
-                        raw_key,
-                        wl_keyboard::KeyState::Repeated,
-                    );
+                    interceptor.key(serial.into(), time_ms, raw_key, wl_keyboard::KeyState::Repeated);
                     calloop::timer::TimeoutAction::ToDuration(rate_duration)
                 },
             )
@@ -1346,6 +1346,11 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Get the current led state
     pub fn led_state(&self) -> LedState {
         self.arc.internal.lock().unwrap().led_state
+    }
+
+    /// Check if keyboard has focus
+    pub fn is_focused(&self) -> bool {
+        self.arc.internal.lock().unwrap().focus.is_some()
     }
 
     /// Change the repeat info configured for this keyboard

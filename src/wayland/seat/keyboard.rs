@@ -2,28 +2,28 @@ use std::{cell::RefCell, fmt};
 
 use tracing::{instrument, trace, warn};
 use wayland_server::{
+    Client, DisplayHandle, Resource,
     backend::{ClientId, ObjectId},
     protocol::{
         wl_keyboard::{self, KeyState as WlKeyState, WlKeyboard},
         wl_surface::WlSurface,
     },
-    Client, DisplayHandle, Resource,
 };
 
 use super::WaylandFocus;
 use crate::{
     backend::input::{KeyState, Keycode},
     input::{
-        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
         Seat, SeatHandler, WeakSeat,
+        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
     },
-    utils::{iter::new_locked_obj_iter_from_vec, HookId, Serial},
+    utils::{HookId, Serial, iter::new_locked_obj_iter_from_vec},
     wayland::{
+        Dispatch2,
         compositor::{add_destruction_hook, remove_destruction_hook, with_states},
         input_method::InputMethodSeat,
         input_method_v3::InputMethodSeat as _,
         text_input::TextInputSeat,
-        Dispatch2,
     },
 };
 
@@ -46,7 +46,7 @@ where
 
     /// Return all raw [`WlKeyboard`] instances for a particular [`Client`]
     pub fn client_keyboards<'a>(&'a self, client: &Client) -> impl Iterator<Item = WlKeyboard> + 'a {
-        let guard = self.arc.keyboards.lock().unwrap();
+        let guard = self.arc.known_kbds.lock().unwrap();
 
         new_locked_obj_iter_from_vec(guard, client.id())
     }
@@ -93,7 +93,7 @@ where
                 }
             }
         }
-        self.arc.keyboards.lock().unwrap().push(kbd.downgrade());
+        self.arc.known_kbds.lock().unwrap().push(kbd.downgrade());
     }
 }
 
@@ -129,7 +129,7 @@ where
         if let Some(ref handle) = self.handle {
             handle
                 .arc
-                .keyboards
+                .known_kbds
                 .lock()
                 .unwrap()
                 .retain(|k| k.id() != keyboard.id())
