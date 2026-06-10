@@ -21,7 +21,7 @@ use super::{
     InputMethodHandler, InputMethodUserData,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct ImPopupLocation {
     /// Area for the positioner, relative to parent
     pub anchor: Rectangle<i32, Logical>,
@@ -32,17 +32,15 @@ pub struct ImPopupLocation {
 /// A handle to an input method popup surface
 #[derive(Debug, Clone)]
 pub struct PopupSurface {
-    /// The surface role for the input method popup
+    /// The popup surface role object.
     pub surface_role: XxInputPopupSurfaceV2,
-    /// Surface containing the popup
     surface: WlSurface,
-    /// Surface containing the text input. This surface doesn't change within the lifetime of the popup.
+    /// Parent surface (text input surface). Doesn't change within popup lifetime.
     parent: PopupParent,
-    /// Tracks configures and serials
     configure_tracker: Arc<Mutex<ConfigureTracker<PopupSurfaceState>>>,
-    /// The compositor-assigned state acknowledged by client.
+    /// Compositor-assigned state acknowledged by client.
     state: Arc<Mutex<PopupSurfaceState>>,
-    /// The compositor-assigned state, not sent to client yet
+    /// Compositor-assigned state, not sent to client yet
     state_pending: Option<PopupSurfaceState>,
 }
 
@@ -59,7 +57,7 @@ impl PopupSurface {
         positioner_data: PositionerState,
     ) -> Self {
         let configure_tracker = Arc::new(Mutex::new(Default::default()));
-        let state = Arc::new(Mutex::new(PopupSurfaceState::new_uninit()));
+        let state = Arc::new(Mutex::new(PopupSurfaceState::default()));
 
         let instance = InputMethodPopupSurfaceUserData::new(
             input_method.clone(),
@@ -99,7 +97,6 @@ impl PopupSurface {
     /// Is the input method popup surface referred by this handle still alive?
     #[inline]
     pub fn alive(&self) -> bool {
-        // TODO other things to check? This may not sufice.
         let role_data: &InputMethodPopupSurfaceUserData = self.surface_role.data().unwrap();
         self.surface.alive() && role_data.alive_tracker.alive()
     }
@@ -110,32 +107,28 @@ impl PopupSurface {
         &self.surface
     }
 
-    /// Access to the parent surface associated with this popup
+    /// Get the parent surface info.
     pub fn get_parent(&self) -> &PopupParent {
         &self.parent
     }
 
-    /// Access the input method using this popup
+    /// Get the input method controlling this popup.
     pub fn input_method(&self) -> &XxInputMethodV1 {
         let role_data: &InputMethodPopupSurfaceUserData = self.surface_role.data().unwrap();
         &role_data.input_method
     }
 
-    /// Used to access the location of an input popup surface relative to the parent
+    /// Location of the popup relative to parent surface.
     pub fn location(&self) -> Point<i32, Logical> {
         self.state.lock().unwrap().position.geometry.loc
     }
 
-    /// `true` if the surface sent a
-    /// configure sequence since creating the popup object.
-    ///
-    /// Calls [`compositor::with_states`] internally.
+    /// `true` if an initial configure has been sent.
     pub fn is_initial_configure_sent(&self) -> bool {
         self.state.lock().unwrap().configured
     }
 
-    /// Set position information that should take effect when mapping.
-    /// Updates pending state.
+    /// Set position information for pending configure.
     pub fn set_position(&mut self, position: ImPopupLocation) {
         self.ensure_pending().position = position;
     }
@@ -150,10 +143,9 @@ impl PopupSurface {
             .get_or_insert_with(|| self.state.lock().unwrap().clone())
     }
 
-    /// Send a configure event to this popup surface to suggest it a new configuration
+    /// Send a configure event to this popup surface.
     ///
     /// The serial of this configure will be tracked waiting for the client to ACK it.
-    /// Call this from input_method.done
     pub fn send_pending_configure(&mut self) {
         let Some(pending) = self.state_pending.as_mut() else {
             return;
@@ -161,14 +153,12 @@ impl PopupSurface {
         pending.configured = true;
         let new_state = pending.clone();
 
-        // TODO: there's too much locking here but too early to optimize...
         let sent_state = {
             let tracker = self.configure_tracker.lock().unwrap();
             tracker.last_pending_state().cloned()
         }
         .unwrap_or_else(|| self.state.lock().unwrap().clone());
 
-        // start_configure should be sent on any server-side change. Other events should follow with more granularity.
         if new_state != sent_state {
             let mut tracker = self.configure_tracker.lock().unwrap();
             let serial = tracker.assign_serial(new_state.clone());
@@ -202,7 +192,7 @@ impl PartialEq for PopupSurface {
 }
 
 /// Compositor-defined state
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct PopupSurfaceState {
     /// Positioning information
     position: ImPopupLocation,
@@ -214,45 +204,25 @@ pub struct PopupSurfaceState {
     configured: bool,
 }
 
-impl PopupSurfaceState {
-    /// Creates an initial state with uninitialized values. The values are never read in normal protocol usage.
-    fn new_uninit() -> Self {
-        PopupSurfaceState {
-            position: ImPopupLocation {
-                anchor: Default::default(),
-                geometry: Default::default(),
-            },
-            configured: false,
-            repositioned: None,
-        }
-    }
-}
-
 /// Parent surface and location for the IME popup.
 #[derive(Debug, Clone)]
 pub struct PopupParent {
     /// The surface over which the IME popup is shown.
     pub surface: WlSurface,
-    /// The location of the parent surface relative to TODO.
+    /// The location of the parent surface.
     pub location: Rectangle<i32, Logical>,
 }
 
 /// Data accessible from XxInputPopupSurfaceV2 object
 #[derive(Debug)]
 pub struct InputMethodPopupSurfaceUserData {
-    /// Input method controlling this popup
     input_method: XxInputMethodV1,
     pub(super) alive_tracker: AliveTracker,
     pub(super) surface: WlSurface,
     pub(super) configure_tracker: Arc<Mutex<ConfigureTracker<PopupSurfaceState>>>,
-    /// State acknowledged by client.
     pub(super) state: Arc<Mutex<PopupSurfaceState>>,
-    // State supplied by client.
-    /// Computes the position of the popup according to provided rules
     pub(super) positioner: Mutex<PositionerState>,
-    /// Whether the popup position is frozen (not updated on cursor_rectangle changes)
     pub(super) frozen: Mutex<bool>,
-    /// Snapshot of cursor_rectangle at the time freeze was set
     pub(super) frozen_cursor_rectangle: Mutex<Option<Rectangle<i32, Logical>>>,
 }
 
@@ -296,17 +266,12 @@ where
                 let surface = &self.surface;
 
                 let serial = Serial::from(serial);
-                let client_state = self.configure_tracker.lock().unwrap().ack_serial(serial);
-
-                let client_state = match client_state {
-                    Some(state) => state,
-                    None => {
-                        popup.post_error(
-                            xx_input_popup_surface_v2::Error::InvalidSerial,
-                            format!("Serial {} is not awaiting ack", <u32>::from(serial)),
-                        );
-                        return;
-                    }
+                let Some(client_state) = self.configure_tracker.lock().unwrap().ack_serial(serial) else {
+                    popup.post_error(
+                        xx_input_popup_surface_v2::Error::InvalidSerial,
+                        format!("Serial {} is not awaiting ack", <u32>::from(serial)),
+                    );
+                    return;
                 };
                 *self.state.lock().unwrap() = client_state.clone();
                 state.popup_ack_configure(surface, serial, client_state);
@@ -317,7 +282,6 @@ where
                     let positioner: &PositionerUserData = positioner.data().unwrap();
                     let positioner = *positioner.inner.lock().unwrap();
                     let mut inner = im.handle.inner.lock().unwrap();
-                    // This request comes to an input_method object, so an empty instance is a bug.
                     let active_id = inner.active_input_method_id.clone().unwrap();
                     let instance = inner
                         .instances
@@ -337,7 +301,6 @@ where
                     let parent_surface = popup.get_parent().surface.clone();
                     let popup_geometry = state.popup_geometry(&parent_surface, &cursor, &positioner);
                     *self.positioner.lock().unwrap() = positioner;
-
                     popup.set_repositioned(token);
                     popup.set_position(ImPopupLocation {
                         anchor: cursor,
@@ -345,17 +308,13 @@ where
                     });
                     popup.clone()
                 };
-
                 state.popup_repositioned(popup);
-
                 im.handle.done();
             }
             Request::SetFrozen { frozen } => {
                 let is_frozen = frozen != 0;
                 *self.frozen.lock().unwrap() = is_frozen;
                 if is_frozen {
-                    // Snapshot the current cursor_rectangle so reposition while frozen
-                    // uses the anchored position instead of the live (moving) cursor.
                     let im: &InputMethodUserData<D> = self.input_method.data().unwrap();
                     let inner = im.handle.inner.lock().unwrap();
                     if let Some(active_id) = &inner.active_input_method_id {
@@ -367,9 +326,7 @@ where
                     *self.frozen_cursor_rectangle.lock().unwrap() = None;
                 }
             }
-            Request::Destroy => {
-                // Nothing to do
-            }
+            Request::Destroy => {}
             _ => unreachable!(),
         }
     }

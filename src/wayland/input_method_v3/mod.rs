@@ -71,8 +71,8 @@
 //! ```
 
 use wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId,
-    protocol::wl_surface::WlSurface,
+    backend::GlobalId, protocol::wl_surface::WlSurface, Client, DataInit, Dispatch, DisplayHandle,
+    GlobalDispatch, New,
 };
 
 use crate::wayland::{Dispatch2, GlobalDispatch2};
@@ -121,8 +121,7 @@ pub trait InputMethodHandler {
     /// This gets called after calculating and applying the new geometry but before input_method.done is sent.
     fn popup_repositioned(&mut self, surface: PopupSurface);
 
-    /// Returns the position of the popup, given the cursor rectangle expressed in position relative to surface.
-    /// This may be called while locks on some input-method objects are held.
+    /// Returns the position of the popup, given the cursor rectangle relative to parent surface.
     fn popup_geometry(
         &self,
         parent: &WlSurface,
@@ -130,29 +129,23 @@ pub trait InputMethodHandler {
         positioner: &PositionerState,
     ) -> Rectangle<i32, Logical>;
 
-    /// Sets the parent location so the popup surface can be placed correctly
+    /// Sets the parent location so the popup can be placed correctly
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, Logical>;
 
-    /// Returns the app_id for an input method client.
-    ///
-    /// Typically resolved from the client's security context.
-    /// If `None` is returned, the input method instance will not be registered.
+    /// Returns the app_id for an input method client (typically from security context).
+    /// If `None`, the input method instance will not be registered.
     fn input_method_app_id(&self, client: &Client, dh: &DisplayHandle) -> Option<String>;
 
-    /// Called when a new input method instance registers with the compositor.
-    ///
-    /// This allows the compositor to sync state (e.g. activate the correct IME for the current layout).
+    /// Called when a new input method instance registers.
     fn input_method_instance_registered(&mut self) {}
 
-    /// Copied from wl_layer_surface.
-    /// What is this for? What arguments make sense?
+    /// Called on popup ack_configure.
     fn popup_ack_configure(
         &mut self,
         _surface: &WlSurface,
         _serial: Serial,
         _client_state: PopupSurfaceState,
     ) {
-        // the compositor doesn't need to implement this if it doesn't have a use for it
     }
 }
 
@@ -170,7 +163,7 @@ impl<D: SeatHandler + 'static> InputMethodSeat for Seat<D> {
     }
 }
 
-/// Data associated with a InputMethodManager global.
+/// Global data for the input method manager.
 #[allow(missing_debug_implementations)]
 pub struct InputMethodManagerGlobalData {
     filter: Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
@@ -230,7 +223,7 @@ where
     }
 }
 
-/// User data for the input method manager resource.
+/// User data for the manager resource.
 #[derive(Debug)]
 pub struct ManagerUserData;
 

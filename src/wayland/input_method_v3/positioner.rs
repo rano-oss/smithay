@@ -7,7 +7,7 @@ use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_pos
 };
 use wayland_server::{Resource, WEnum};
 
-/// Not sure what to write here. I just copied the pattern of UserData without analyzing it.
+/// User data for the positioner protocol object.
 #[derive(Default, Debug)]
 pub struct PositionerUserData {
     pub(crate) inner: Mutex<PositionerState>,
@@ -44,8 +44,6 @@ impl Default for PositionerState {
     }
 }
 
-// This mostly but not completely copied from xdg positioner.
-// Converted to stateless: PositionerState doesn't store any state.
 impl PositionerState {
     pub(crate) fn anchor_has_edge(&self, edge: Anchor) -> bool {
         match edge {
@@ -70,9 +68,6 @@ impl PositionerState {
     }
 
     /// Get the anchor point for a popup as defined by this positioner.
-    ///
-    /// Defined by `xdg_positioner.set_anchor_rect` and
-    /// `xdg_positioner.set_anchor`.
     pub fn get_anchor_point(&self, anchor_rect: Rectangle<i32, Logical>) -> Point<i32, Logical> {
         let y = anchor_rect.loc.y
             + if self.anchor_has_edge(Anchor::Top) {
@@ -114,47 +109,13 @@ impl PositionerState {
         }
     }
 
-    /// Get the geometry without taking surface or display size into account.
-    ///
-    /// `Rectangle::width` and `Rectangle::height` corresponds to the
-    /// size set by `xdg_positioner.set_size`.
-    ///
-    /// `Rectangle::x` and `Rectangle::y` define the position of the
-    /// popup relative to its parent surface's `window_geometry`.
-    /// The position is calculated according to the rules defined
-    /// in the `xdg_shell` protocol.
-    /// The `constraint_adjustment` will not be considered by this
-    /// implementation and the position and size should be re-calculated
-    /// in the compositor if the compositor implements `constraint_adjustment`
-    ///
-    /// [`PositionerState::get_unconstrained_geometry`] does take `constraint_adjustment` into account.
+    /// Get initial popup geometry from anchor_rect, before constraint adjustment.
     fn get_geometry(&self, anchor_rect: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
-        // From the `xdg_shell` prococol specification:
-        //
-        // set_offset:
-        //
-        //  Specify the surface position offset relative to the position of the
-        //  anchor on the anchor rectangle and the anchor on the surface. For
-        //  example if the anchor of the anchor rectangle is at (x, y), the surface
-        //  has the gravity bottom|right, and the offset is (ox, oy), the calculated
-        //  surface position will be (x + ox, y + oy)
         let mut loc = self.offset;
         let size = self.rect_size;
 
-        // Defines the anchor point for the anchor rectangle. The specified anchor
-        // is used derive an anchor point that the child surface will be
-        // positioned relative to. If a corner anchor is set (e.g. 'top_left' or
-        // 'bottom_right'), the anchor point will be at the specified corner;
-        // otherwise, the derived anchor point will be centered on the specified
-        // edge, or in the center of the anchor rectangle if no edge is specified.
         loc += self.get_anchor_point(anchor_rect);
 
-        // Defines in what direction a surface should be positioned, relative to
-        // the anchor point of the parent surface. If a corner gravity is
-        // specified (e.g. 'bottom_right' or 'top_left'), then the child surface
-        // will be placed towards the specified gravity; otherwise, the child
-        // surface will be centered over the anchor point on any axis that had no
-        // gravity specified.
         loc.y = if self.gravity_has_edge(Gravity::Top) {
             loc.y.saturating_sub_unsigned(size.h)
         } else if !self.gravity_has_edge(Gravity::Bottom) {
@@ -180,30 +141,13 @@ impl PositionerState {
         Rectangle { loc, size }
     }
 
-    /// Get the geometry for a popup as defined by this positioner, after trying to fit the popup into the
-    /// target rectangle.
-    ///
-    /// `Rectangle::width` and `Rectangle::height` corresponds to the size set by `xdg_positioner.set_size`.
-    ///
-    /// `Rectangle::x` and `Rectangle::y` define the position of the popup relative to its parent surface's
-    /// `window_geometry`. The position is calculated according to the rules defined in the `xdg_shell`
-    /// protocol.
-    ///
-    /// This method does consider `constrain_adjustment` by trying to fit the popup into the provided target
-    /// rectangle. The target rectangle is in the same coordinate system as the rectangle returned by this
-    /// method. So, it is relative to the parent surface's geometry.
+    /// Get popup geometry after applying constraint adjustments to fit within `target`.
     pub fn get_unconstrained_geometry(
         mut self,
         anchor_rect: Rectangle<i32, Logical>,
         target: Rectangle<i32, Logical>,
     ) -> Rectangle<i32, Logical> {
-        // The protocol defines the following order for adjustments: flip, slide, resize. If the flip fails
-        // to remove the constraints, it is reverted.
-        //
-        // The adjustments are applied individually between axes. We can do that reasonably safely, given
-        // that both our target and our popup are simple rectangles. The code is grouped per adjustment for
-        // easier copy-paste checking, and because flips replace the geometry entirely, while further
-        // adjustments change individual fields.
+        // Adjustment order: flip, slide, resize. Flips are reverted if they don't help.
         let mut geo = self.get_geometry(anchor_rect);
         let (mut off_left, mut off_right, mut off_top, mut off_bottom) = compute_offsets(target, geo);
 
@@ -216,13 +160,11 @@ impl PositionerState {
             let new_geo = new.get_geometry(anchor_rect);
             let (new_off_left, new_off_right, _, _) = compute_offsets(target, new_geo);
 
-            // Apply flip only if it removed the constraint.
             if new_off_left <= 0 && new_off_right <= 0 {
                 self = new;
                 geo = new_geo;
                 off_left = 0;
                 off_right = 0;
-                // off_top and off_bottom are unchanged since we're using rectangles.
             }
         }
 
@@ -235,13 +177,11 @@ impl PositionerState {
             let new_geo = new.get_geometry(anchor_rect);
             let (_, _, new_off_top, new_off_bottom) = compute_offsets(target, new_geo);
 
-            // Apply flip only if it removed the constraint.
             if new_off_top <= 0 && new_off_bottom <= 0 {
                 self = new;
                 geo = new_geo;
                 off_top = 0;
                 off_bottom = 0;
-                // off_left and off_right are unchanged since we're using rectangles.
             }
         }
 
@@ -249,36 +189,27 @@ impl PositionerState {
         if (off_left > 0 || off_right > 0)
             && self.constraint_adjustment.contains(ConstraintAdjustment::SlideX)
         {
-            // Prefer to show the top-left corner of the popup so that we can easily do a resize
-            // adjustment next.
             if off_left > 0 {
                 geo.loc.x += off_left;
             } else if off_right > 0 {
                 geo.loc.x -= min(off_right, -off_left);
             }
-
             (_, off_right, _, _) = compute_offsets(target, geo);
-            // off_top and off_bottom are the same since we're using rectangles.
         }
 
         // Try to slide vertically.
         if (off_top > 0 || off_bottom > 0)
             && self.constraint_adjustment.contains(ConstraintAdjustment::SlideY)
         {
-            // Prefer to show the top-left corner of the popup so that we can easily do a resize
-            // adjustment next.
             if off_top > 0 {
                 geo.loc.y += off_top;
             } else if off_bottom > 0 {
                 geo.loc.y -= min(off_bottom, -off_top);
             }
-
             (_, _, _, off_bottom) = compute_offsets(target, geo);
-            // off_left and off_right are the same since we're using rectangles.
         }
 
-        // Try to resize horizontally. This makes sense only if the popup is at least partially to the left
-        // of the right target edge, which is the same as checking that the offset is smaller than the width.
+        // Try to resize horizontally.
         if off_right > 0
             && off_right < geo.size.w
             && self.constraint_adjustment.contains(ConstraintAdjustment::ResizeX)
@@ -286,8 +217,7 @@ impl PositionerState {
             geo.size.w -= off_right;
         }
 
-        // Try to resize vertically. This makes sense only if the popup is at least partially to the top of
-        // the bottom target edge, which is the same as checking that the offset is smaller than the height.
+        // Try to resize vertically.
         if off_bottom > 0
             && off_bottom < geo.size.h
             && self.constraint_adjustment.contains(ConstraintAdjustment::ResizeY)
@@ -342,14 +272,8 @@ impl<D> Dispatch2<XxInputPopupPositionerV1, D> for PositionerUserData {
             Request::SetOffset { x, y } => {
                 state.offset = (x, y).into();
             }
-            Request::SetReactive => {
-                // Intentionally ignored: IM popups are positioned by
-                // set_cursor_rectangle, not by parent movement. Collision
-                // avoidance (sliding) always applies regardless.
-            }
-            Request::Destroy => {
-                // handled by destructor
-            }
+            Request::SetReactive => {} // IM popups positioned by cursor_rectangle, not parent movement
+            Request::Destroy => {}
             _ => unreachable!(),
         }
     }

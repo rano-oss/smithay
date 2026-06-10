@@ -1,12 +1,5 @@
-//! Filtering key presses
-//!
-//! This Wayland protocol allows an application to register itself as a filter
-//! for key presses destined for another application.
-//!
-//! The current implementation supports filtering for input method purposes.
-//! When active, keyboard events are intercepted and forwarded to the input method
-//! client. The client then responds with a filter action (passthrough or consume)
-//! for each key event.
+//! Keyboard filter protocol: allows an input method to intercept key events
+//! and decide whether to pass them through or consume them.
 
 mod keyboard_filter_handle;
 

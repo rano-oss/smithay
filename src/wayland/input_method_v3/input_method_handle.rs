@@ -85,12 +85,11 @@ impl InputMethodHandle {
         });
     }
 
-    /// Whether there's any registered input method instance available.
     pub(crate) fn has_instance(&self) -> bool {
         !self.inner.lock().unwrap().instances.is_empty()
     }
 
-    /// List all registered input method app_ids.
+    /// List registered input method app_ids.
     pub fn list_instances(&self) -> Vec<String> {
         self.inner
             .lock()
@@ -101,7 +100,6 @@ impl InputMethodHandle {
             .collect()
     }
 
-    /// Callback function to access the active input method instance.
     pub(crate) fn with_instance<F>(&self, f: F)
     where
         F: FnOnce(&mut InputMethod),
@@ -149,7 +147,7 @@ impl InputMethodHandle {
         }
     }
 
-    /// Clear the active input method instance.
+    /// Clear the active instance and deactivate.
     pub fn clear_active_instance<D: SeatHandler + 'static>(&self, state: &mut D) {
         self.deactivate_input_method(state);
         let mut inner = self.inner.lock().unwrap();
@@ -204,11 +202,7 @@ impl InputMethodHandle {
     /// Activate input method on the given surface.
     pub fn activate_input_method<D: SeatHandler + 'static>(&self, _state: &mut D, surface: &WlSurface) {
         self.with_instance(|im| {
-            tracing::debug!(
-                app_id = %im.app_id,
-                serial = im.serial,
-                "activate_input_method: activating IM and installing keyboard filter interceptor"
-            );
+            tracing::debug!(app_id = %im.app_id, "activate_input_method");
             im.object.activate();
             im.object.announce_protocol_compat(ProtocolCompat::TextInputV3);
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
@@ -220,22 +214,16 @@ impl InputMethodHandle {
         });
     }
 
-    /// Deactivate the active input method.
-    ///
-    /// This includes a complete sequence including .done.
-    /// Also clears any active preedit on the text-input client so the app
-    /// doesn't keep showing stale preedit text after the IM is gone.
+    /// Deactivate the active input method, clear preedit, dismiss popups, remove interceptor.
     pub fn deactivate_input_method<D: SeatHandler + 'static>(&self, state: &mut D) {
         self.with_instance(|im| {
             im.object.deactivate();
             im.done();
             im.active = false;
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
-            // Clear preedit on the text-input client so the app stops showing it.
             data.text_input_handle.with_active_text_input(|ti, _surface| {
                 ti.preedit_string(None, -1, -1);
             });
-            // Send done so the client applies the cleared preedit.
             data.text_input_handle.done(false);
 
             for popup in im.popup_handles.drain(..) {
@@ -255,11 +243,10 @@ pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) seat: Seat<D>,
     pub(super) handle: InputMethodHandle,
     pub(crate) text_input_handle: TextInputHandle,
-    /// Handle to main keyboard for registering sub-keyboards
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     /// Currently bound keyboard filter, set by the keyboard_filter protocol.
     pub(crate) keyboard_filter: Arc<Mutex<Option<keyboard_filter::Filter>>>,
-    /// This is just a copy from InputMethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup.
+    /// Copy from InputMethodHandler; breaks the D: InputMethodHandler requirement on dismiss_popup callers.
     pub(crate) dismiss_popup: fn(&mut D, PopupSurface),
 }
 
@@ -360,15 +347,9 @@ where
                         return;
                     }
 
-                    let parent_surface = match self.text_input_handle.focus().clone() {
-                        Some(parent) => parent,
-                        None => {
-                            // Race condition: focus may have been lost after client decided to create popup.
-                            tracing::warn!(
-                                "Ignoring popup creation: no surface in text input focus (likely race)"
-                            );
-                            return;
-                        }
+                    let Some(parent_surface) = self.text_input_handle.focus().clone() else {
+                        tracing::warn!("Ignoring popup creation: no text input focus (likely race)");
+                        return;
                     };
 
                     let location = state.parent_geometry(&parent_surface);
@@ -399,16 +380,10 @@ where
                     instance.popup_handles.push(popup.clone());
                     state.new_popup(popup);
                 } else {
-                    // Race condition: client may have sent this before receiving our deactivate.
-                    // Silently ignore rather than killing the client with a fatal protocol error.
-                    tracing::warn!(
-                        "Ignoring popup creation on inactive input method (likely race with deactivate)"
-                    );
+                    tracing::warn!("Ignoring popup creation on inactive input method (likely race)");
                 }
             }
-            Request::Destroy => {
-                // Nothing to do
-            }
+            Request::Destroy => {}
             _ => unreachable!(),
         }
     }

@@ -44,29 +44,18 @@ pub(crate) struct FilterState {
 }
 
 /// The interceptor installed in `KbdRc.interceptor`.
-///
-/// It forwards all events to both:
-/// - The IM client's keyboard (so the IM sees the events)
-/// - A buffer (for key events only, awaiting filter decisions)
-///
-/// Non-key events (enter, leave, modifiers, keymap, repeat_info) are also
-/// forwarded to the real client keyboards immediately.
+/// Forwards events to IM keyboard + a buffer awaiting filter decisions.
+/// Non-key events also go to real client keyboards immediately.
 #[derive(Debug)]
 struct FilterInterceptor {
-    /// IM client's keyboard to forward events to
     im_keyboard: WlKeyboard,
-    /// IM client's surface for enter/leave
     im_surface: WlSurface,
-    /// Real client keyboards to forward filtered events to
     client_keyboards: Arc<Mutex<Vec<Weak<WlKeyboard>>>>,
-    /// Surface the client keyboards are focused on
     focused_surface: WlSurface,
-    /// Shared filter state (for buffering key events)
     filter_state: Arc<Mutex<FilterState>>,
 }
 
 impl FilterInterceptor {
-    /// Forward a call to all focused client keyboards.
     fn forward_to_clients(&self, f: impl FnMut(&dyn WlKeyboardApi)) {
         let keyboards = self.client_keyboards.lock().unwrap();
         keyboard::for_each_focused_kbd(&keyboards, &self.focused_surface, f);
@@ -117,10 +106,8 @@ impl WlKeyboardApi for FilterInterceptor {
     }
 
     fn repeat_info(&self, rate: i32, delay: i32) {
-        // IM keyboard gets the real rate (it may use it internally)
         self.im_keyboard.repeat_info(rate, delay);
-        // Clients stay suppressed (rate=0) while interceptor is active;
-        // compositor handles repeat and routes through the interceptor.
+        // Clients stay suppressed (rate=0) while interceptor is active
         self.forward_to_clients(|kbd| kbd.repeat_info(0, delay));
     }
 
@@ -131,7 +118,7 @@ impl WlKeyboardApi for FilterInterceptor {
     }
 }
 
-/// Handle stored in the input method, used to activate/deactivate the interceptor.
+/// Handle stored in the input method for activating/deactivating the interceptor.
 #[derive(Debug, Clone)]
 pub(crate) struct Filter {
     pub(crate) keyboard_filter: XxKeyboardFilterV1,
@@ -139,11 +126,7 @@ pub(crate) struct Filter {
 }
 
 impl Filter {
-    /// Activate keyboard interception. Events will be forwarded to the IM keyboard
-    /// and buffered for filter decisions.
-    ///
-    /// `focused_surface` is the surface currently receiving text input (i.e. the app's surface).
-    /// Passthrough events will be forwarded to client keyboards focused on this surface.
+    /// Activate keyboard interception on the given focused surface.
     pub fn activate_interceptor<D: SeatHandler + 'static>(
         &self,
         seat: &Seat<D>,
