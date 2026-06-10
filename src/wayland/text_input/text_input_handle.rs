@@ -1,16 +1,19 @@
 use std::mem;
 use std::sync::{Arc, Mutex};
 
-use tracing::debug;
-use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::{
-    self, ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3,
-};
+use tracing::{debug, warn};
+
+use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3;
 use wayland_server::backend::{ClientId, ObjectId};
-use wayland_server::{Resource, protocol::wl_surface::WlSurface};
+use wayland_server::{protocol::wl_surface::WlSurface, Resource};
+
+use crate::wayland::Dispatch2;
+use zwp_text_input_v3::{ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::{Dispatch2, input_method::InputMethodHandle};
+use crate::wayland::input_method;
+use crate::wayland::input_method_v3;
 
 #[derive(Default, Debug)]
 pub(crate) struct TextInput {
@@ -38,14 +41,11 @@ impl TextInput {
     where
         F: FnMut(&ZwpTextInputV3, &WlSurface, u32),
     {
-        let active_id = match &self.active_text_input_id {
-            Some(active_text_input_id) => active_text_input_id,
-            None => return,
+        let Some(active_id) = &self.active_text_input_id else {
+            return;
         };
-
-        let surface = match self.focus.as_ref().filter(|surface| surface.is_alive()) {
-            Some(surface) => surface,
-            None => return,
+        let Some(surface) = self.focus.as_ref().filter(|s| s.is_alive()) else {
+            return;
         };
 
         let surface_id = surface.id();
@@ -94,6 +94,11 @@ impl TextInputHandle {
         self.inner.lock().unwrap().focus.clone()
     }
 
+    /// Returns true if a text input client has enabled text input (sent enable+commit).
+    pub fn has_active_text_input(&self) -> bool {
+        self.inner.lock().unwrap().active_text_input_id.is_some()
+    }
+
     /// Advance the focus for the client to `surface`.
     ///
     /// This doesn't send any 'enter' or 'leave' events.
@@ -126,8 +131,10 @@ impl TextInputHandle {
 
     /// The `discard_state` is used when the input-method signaled that
     /// the state should be discarded and wrong serial sent.
-    pub fn done(&self, discard_state: bool) {
+    /// Returns `true` if event was sent
+    pub fn done(&self, discard_state: bool) -> bool {
         let mut inner = self.inner.lock().unwrap();
+        let mut sent = false;
         inner.with_active_text_input(|text_input, _, serial| {
             if discard_state {
                 debug!("discarding text-input state due to serial");
@@ -135,8 +142,10 @@ impl TextInputHandle {
                 text_input.done(0);
             } else {
                 text_input.done(serial);
-            }
+            };
+            sent = true;
         });
+        sent
     }
 
     /// Access the text-input instances for the currently focused surface.
@@ -183,12 +192,14 @@ impl TextInputHandle {
 #[derive(Debug)]
 pub struct TextInputUserData {
     pub(super) handle: TextInputHandle,
-    pub(crate) input_method_handle: InputMethodHandle,
+    pub(crate) input_method_handle: input_method::InputMethodHandle,
+    pub(crate) input_method_v3_handle: input_method_v3::InputMethodHandle,
 }
 
 impl<D> Dispatch2<ZwpTextInputV3, D> for TextInputUserData
 where
     D: SeatHandler,
+    D: input_method_v3::InputMethodHandler,
     D: 'static,
 {
     fn request(
@@ -206,33 +217,38 @@ where
         }
 
         // Discard requests without any active input method instance.
-        if !self.input_method_handle.has_instance() {
+        if !self.input_method_handle.has_instance() && !self.input_method_v3_handle.has_instance() {
             debug!("discarding text-input request without IME running");
             return;
         }
 
+        if self.input_method_handle.has_instance() && self.input_method_v3_handle.has_instance() {
+            warn!("Two separate versions of input method registered for the seat. Expect conflicts.");
+            // We'll try to drive both IM instances because it makes the code simpler. The results are going to be unexpected no matter what strategy is chosen now.
+        }
+
         let focus = match self.handle.focus() {
             Some(focus) if focus.id().same_client_as(&resource.id()) => focus,
-            _ => {
-                debug!("discarding text-input request for unfocused client");
+            Some(focus) => {
+                debug!(
+                    "discarding text-input request for unfocused client: focus={:?} resource={:?}",
+                    focus.id(),
+                    resource.id()
+                );
+                return;
+            }
+            None => {
+                debug!("discarding text-input request: no focus set");
                 return;
             }
         };
 
         let mut guard = self.handle.inner.lock().unwrap();
-        let pending_state = match guard.instances.iter_mut().find_map(|instance| {
-            if instance.instance == *resource {
-                Some(&mut instance.pending_state)
-            } else {
-                None
-            }
-        }) {
-            Some(pending_state) => pending_state,
-            None => {
-                debug!("got request for untracked text-input");
-                return;
-            }
+        let Some(inst) = guard.instances.iter_mut().find(|i| i.instance == *resource) else {
+            debug!("got request for untracked text-input");
+            return;
         };
+        let pending_state = &mut inst.pending_state;
 
         match request {
             zwp_text_input_v3::Request::Enable => {
@@ -260,7 +276,6 @@ where
             }
             zwp_text_input_v3::Request::Commit => {
                 let mut new_state = mem::take(pending_state);
-                let _ = pending_state;
                 let active_text_input_id = &mut guard.active_text_input_id;
 
                 if active_text_input_id.is_some() && *active_text_input_id != Some(resource.id()) {
@@ -271,15 +286,13 @@ where
                 match new_state.enable {
                     Some(true) => {
                         *active_text_input_id = Some(resource.id());
-                        // Drop the guard before calling to other subsystem.
-                        drop(guard);
                         self.input_method_handle.activate_input_method(state, &focus);
+                        self.input_method_v3_handle.activate_input_method(state, &focus);
                     }
                     Some(false) => {
                         *active_text_input_id = None;
-                        // Drop the guard before calling to other subsystem.
-                        drop(guard);
                         self.input_method_handle.deactivate_input_method(state);
+                        self.input_method_v3_handle.deactivate_input_method(state);
                         return;
                     }
                     None => {
@@ -287,14 +300,14 @@ where
                             debug!("discarding text_input requests before enabling it");
                             return;
                         }
-
-                        // Drop the guard before calling to other subsystems later on.
-                        drop(guard);
                     }
                 }
-
+                drop(guard);
                 if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
-                    self.input_method_handle.with_instance(move |input_method| {
+                    self.input_method_handle.with_instance(|input_method| {
+                        input_method.object.surrounding_text(text.clone(), cursor, anchor)
+                    });
+                    self.input_method_v3_handle.with_instance(move |input_method| {
                         input_method.object.surrounding_text(text, cursor, anchor)
                     });
                 }
@@ -303,22 +316,42 @@ where
                     self.input_method_handle.with_instance(move |input_method| {
                         input_method.object.text_change_cause(cause);
                     });
+                    self.input_method_v3_handle.with_instance(move |input_method| {
+                        input_method.object.text_change_cause(cause);
+                    });
                 }
 
                 if let Some((hint, purpose)) = new_state.content_type.take() {
                     self.input_method_handle.with_instance(move |input_method| {
                         input_method.object.content_type(hint, purpose);
                     });
+                    self.input_method_v3_handle.with_instance(move |input_method| {
+                        input_method.object.content_type(hint, purpose);
+                    });
+                }
+
+                if let Some(actions) = new_state.available_actions.take() {
+                    self.input_method_v3_handle.with_instance(move |input_method| {
+                        input_method.object.set_available_actions(actions);
+                    });
                 }
 
                 if let Some(rect) = new_state.cursor_rectangle.take() {
                     self.input_method_handle
                         .set_text_input_rectangle::<D>(state, rect);
+                    self.input_method_v3_handle.set_cursor_rectangle::<D>(state, rect);
                 }
 
                 self.input_method_handle.with_instance(|input_method| {
                     input_method.done();
                 });
+                self.input_method_v3_handle.done();
+            }
+            zwp_text_input_v3::Request::SetAvailableActions { available_actions } => {
+                pending_state.available_actions = Some(available_actions);
+            }
+            zwp_text_input_v3::Request::ShowInputPanel | zwp_text_input_v3::Request::HideInputPanel => {
+                // TODO: forward to IME when panel visibility is supported
             }
             zwp_text_input_v3::Request::Destroy => {
                 // Nothing to do
@@ -349,6 +382,7 @@ where
 
         if deactivate_im {
             self.input_method_handle.deactivate_input_method(state);
+            self.input_method_v3_handle.deactivate_input_method(state);
         }
     }
 }
@@ -360,11 +394,14 @@ struct Instance {
     pending_state: TextInputState,
 }
 
-#[derive(Debug, Default)]
+/// State of the text_input object set on text-input.commit
+#[derive(Debug, Default, Clone)]
 struct TextInputState {
     enable: Option<bool>,
     surrounding_text: Option<(String, u32, u32)>,
     content_type: Option<(ContentHint, ContentPurpose)>,
     cursor_rectangle: Option<Rectangle<i32, Logical>>,
     text_change_cause: Option<ChangeCause>,
+    /// Available actions (since v3.2). Raw bytes as received from client.
+    available_actions: Option<Vec<u8>>,
 }

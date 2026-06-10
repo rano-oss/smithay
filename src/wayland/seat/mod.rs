@@ -172,7 +172,7 @@ impl<D: SeatHandler + 'static> SeatState<D> {
     {
         let Seat { arc } = self.new_seat(name);
 
-        let global_id = display.create_global::<D, _, _>(9, SeatGlobalData { arc: arc.clone() });
+        let global_id = display.create_global::<D, _, _>(10, SeatGlobalData { arc: arc.clone() });
         arc.inner.lock().unwrap().global = Some(global_id);
 
         Seat { arc }
@@ -273,7 +273,7 @@ where
                 );
 
                 if let Some(ref h) = inner.keyboard {
-                    h.new_kbd(keyboard);
+                    h.new_kbd(&keyboard);
                 } else {
                     // same as pointer, should error but cannot
                 }

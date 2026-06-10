@@ -15,13 +15,14 @@ use crate::{
     backend::input::{KeyState, Keycode},
     input::{
         Seat, SeatHandler, WeakSeat,
-        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState},
+        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
     },
     utils::{HookId, Serial, iter::new_locked_obj_iter_from_vec},
     wayland::{
         Dispatch2,
         compositor::{add_destruction_hook, remove_destruction_hook, with_states},
         input_method::InputMethodSeat,
+        input_method_v3::InputMethodSeat as _,
         text_input::TextInputSeat,
     },
 };
@@ -56,12 +57,12 @@ where
     ///
     /// This should be done first, before anything else is done with this keyboard.
     #[instrument(parent = &self.arc.span, skip(self))]
-    pub(crate) fn new_kbd(&self, kbd: WlKeyboard) {
+    pub(crate) fn new_kbd(&self, kbd: &WlKeyboard) {
         trace!("Sending keymap to client");
 
         // prepare a tempfile with the keymap, to send it to the client
         let keymap_file = self.arc.keymap.lock().unwrap();
-        let ret = keymap_file.send(&kbd);
+        let ret = keymap_file.send(kbd);
 
         if let Err(e) = ret {
             warn!(
@@ -72,35 +73,27 @@ where
         };
 
         let guard = self.arc.internal.lock().unwrap();
-        if kbd.version() >= 4 {
+        if Resource::version(kbd) >= 4 {
             kbd.repeat_info(guard.repeat_rate, guard.repeat_delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {
             if focused.same_client_as(&kbd.id()) {
-                let serialized = guard.mods_state.serialized;
-                let keys = serialize_pressed_keys(guard.pressed_keys.iter().copied());
-                kbd.enter((*serial).into(), &focused.wl_surface().unwrap(), keys);
-                // Modifiers must be send after enter event.
-                kbd.modifiers(
-                    (*serial).into(),
-                    serialized.depressed,
-                    serialized.latched,
-                    serialized.locked,
-                    serialized.layout_effective,
-                );
+                if let Some(surface) = focused.wl_surface() {
+                    let serialized = guard.mods_state.serialized;
+                    let keys = serialize_pressed_keys(guard.pressed_keys.iter().copied());
+                    kbd.enter((*serial).into(), &surface, keys);
+                    // Modifiers must be send after enter event.
+                    kbd.modifiers(
+                        (*serial).into(),
+                        serialized.depressed,
+                        serialized.latched,
+                        serialized.locked,
+                        serialized.layout_effective,
+                    );
+                }
             }
         }
         self.arc.known_kbds.lock().unwrap().push(kbd.downgrade());
-    }
-}
-
-impl<D: SeatHandler + 'static> KeyboardHandle<D> {
-    /// Attempt to retrieve a [`KeyboardHandle`] from an existing resource
-    ///
-    /// May return `None` for a valid `WlKeyboard` that was created without
-    /// the keyboard capability.
-    pub fn from_resource(seat: &WlKeyboard) -> Option<Self> {
-        seat.data::<KeyboardUserData<D>>()?.handle.clone()
     }
 }
 
@@ -119,8 +112,7 @@ impl<D: SeatHandler> fmt::Debug for KeyboardUserData<D> {
 
 impl<D> Dispatch2<WlKeyboard, D> for KeyboardUserData<D>
 where
-    D: 'static,
-    D: SeatHandler,
+    D: SeatHandler + 'static,
 {
     fn request(
         &self,
@@ -148,19 +140,10 @@ where
 pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
     seat: &Seat<D>,
     surface: &WlSurface,
-    mut f: impl FnMut(WlKeyboard),
+    f: impl FnMut(&dyn WlKeyboardApi),
 ) {
     if let Some(keyboard) = seat.get_keyboard() {
-        let inner = keyboard.arc.known_kbds.lock().unwrap();
-        for kbd in &*inner {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
-
-            if kbd.id().same_client_as(&surface.id()) {
-                f(kbd.clone())
-            }
-        }
+        keyboard.arc.for_each_focused(surface, f)
     }
 }
 
@@ -219,19 +202,10 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
 
     let seat_clone = seat.clone();
     let hook_id = add_destruction_hook::<D, _>(surface, move |_, surface| {
-        if let Some(client) = surface.client() {
-            let keyboard = seat_clone.get_keyboard().unwrap();
-            let inner = keyboard.arc.known_kbds.lock().unwrap();
-            for kbd in &*inner {
-                let Ok(kbd) = kbd.upgrade() else {
-                    continue;
-                };
-
-                if kbd.client().is_some_and(|c| c == client) {
-                    kbd.leave(serial.into(), surface);
-                }
-            }
-        }
+        let keyboard = seat_clone.get_keyboard().unwrap();
+        keyboard.arc.for_each_focused(surface, |kbd| {
+            kbd.leave(serial.into(), surface);
+        });
     });
     if let Some(old_hook_id) = with_states(surface, |states| {
         states
@@ -244,17 +218,17 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
 
     let text_input = seat.text_input();
     let input_method = seat.input_method();
+    input_method.deactivate_input_method(state);
 
-    if input_method.has_instance() {
-        input_method.deactivate_input_method(state);
-    }
+    let input_method_v3 = seat.input_method_v3();
+    input_method_v3.deactivate_input_method(state);
 
     // NOTE: Always set focus regardless whether the client actually has the
     // text-input global bound due to clients doing lazy global binding.
     text_input.set_focus(Some(surface.clone()));
 
     // Only notify on `enter` once we have an actual IME.
-    if input_method.has_instance() {
+    if input_method.has_instance() || input_method_v3.has_instance() {
         text_input.enter();
     }
 }
@@ -278,9 +252,12 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
 
         let text_input = seat.text_input();
         let input_method = seat.input_method();
+        input_method.deactivate_input_method(state);
 
-        if input_method.has_instance() {
-            input_method.deactivate_input_method(state);
+        let input_method_v3 = seat.input_method_v3();
+        input_method_v3.deactivate_input_method(state);
+
+        if input_method.has_instance() || input_method_v3.has_instance() {
             text_input.leave();
         }
 
@@ -292,12 +269,12 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
         seat: &Seat<D>,
         _data: &mut D,
         key: KeysymHandle<'_>,
-        state: KeyState,
+        event: KeyState,
         serial: Serial,
         time: u32,
     ) {
         for_each_focused_kbds(seat, self, |kbd| {
-            kbd.key(serial.into(), time, key.raw_code().raw() - 8, state.into())
+            kbd.key(serial.into(), time, key.raw_code().raw() - 8, event.into())
         })
     }
 
@@ -321,22 +298,6 @@ impl From<KeyState> for WlKeyState {
         match state {
             KeyState::Pressed => WlKeyState::Pressed,
             KeyState::Released => WlKeyState::Released,
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("Unknown KeyState {0:?}")]
-pub struct UnknownKeyState(WlKeyState);
-
-impl TryFrom<WlKeyState> for KeyState {
-    type Error = UnknownKeyState;
-    #[inline]
-    fn try_from(state: WlKeyState) -> Result<Self, Self::Error> {
-        match state {
-            WlKeyState::Pressed => Ok(KeyState::Pressed),
-            WlKeyState::Released => Ok(KeyState::Released),
-            x => Err(UnknownKeyState(x)),
         }
     }
 }

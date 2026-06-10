@@ -59,6 +59,7 @@ use smithay::{
             BufferConstraints, Frame, ImageCopyCaptureHandler, ImageCopyCaptureState, Session, SessionRef,
         },
         input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface},
+        input_method_v3,
         keyboard_shortcuts_inhibit::{
             KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
         },
@@ -321,6 +322,10 @@ impl<BackendData: Backend> SeatHandler for AnvilState<BackendData> {
     fn led_state_changed(&mut self, _seat: &Seat<Self>, led_state: LedState) {
         self.backend_data.update_led_state(led_state)
     }
+
+    fn loop_handle(&self) -> Option<smithay::reexports::calloop::LoopHandle<'static, Self>> {
+        Some(self.handle.clone())
+    }
 }
 
 impl<BackendData: Backend> TabletSeatHandler for AnvilState<BackendData> {
@@ -350,6 +355,50 @@ impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
             .elements()
             .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
             .unwrap_or_default()
+    }
+}
+
+impl<BackendData: Backend> input_method_v3::InputMethodHandler for AnvilState<BackendData> {
+    fn new_popup(&mut self, surface: input_method_v3::PopupSurface) {
+        if let Err(err) = self.popups.track_popup(PopupKind::from(surface)) {
+            warn!("Failed to track popup: {}", err);
+        }
+    }
+
+    fn popup_repositioned(&mut self, _: input_method_v3::PopupSurface) {}
+
+    fn dismiss_popup(&mut self, surface: input_method_v3::PopupSurface) {
+        let parent = surface.get_parent().surface.clone();
+        let _ = PopupManager::dismiss_popup(&parent, &PopupKind::from(surface));
+    }
+
+    fn popup_geometry(
+        &self,
+        _parent: &WlSurface,
+        cursor: &Rectangle<i32, smithay::utils::Logical>,
+        _positioner: &input_method_v3::PositionerState,
+    ) -> Rectangle<i32, smithay::utils::Logical> {
+        // Simple positioning: place popup below cursor rectangle
+        Rectangle::from_loc_and_size(
+            (cursor.loc.x, cursor.loc.y + cursor.size.h),
+            (cursor.size.w.max(200), cursor.size.h.max(50)),
+        )
+    }
+
+    fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
+        self.space
+            .elements()
+            .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
+            .unwrap_or_default()
+    }
+
+    fn input_method_app_id(
+        &self,
+        _client: &smithay::reexports::wayland_server::Client,
+        _dh: &smithay::reexports::wayland_server::DisplayHandle,
+    ) -> Option<String> {
+        // Accept all input methods in anvil
+        Some("anvil-im".to_string())
     }
 }
 

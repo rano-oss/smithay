@@ -1,0 +1,288 @@
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
+
+use tracing::{error, warn};
+
+use wayland_protocols_experimental::{
+    input_method::v1::server::xx_input_method_v1::XxInputMethodV1,
+    keyboard_filter::v3::server::xx_keyboard_filter_v1::{self, FilterAction, XxKeyboardFilterV1},
+};
+use wayland_server::WEnum;
+use wayland_server::{
+    Client, DataInit, DisplayHandle, Resource, Weak,
+    protocol::{
+        wl_keyboard::{KeyState, WlKeyboard},
+        wl_surface::WlSurface,
+    },
+};
+
+use crate::input::{
+    Seat, SeatHandler,
+    keyboard::{self, KeyboardHandle, WlKeyboardApi},
+};
+
+use super::KeyboardFilterManagerUserDataInner;
+
+use crate::wayland::Dispatch2;
+
+#[derive(Debug)]
+pub(crate) struct BufferedEvent {
+    pub(crate) serial: u32,
+    pub(crate) time: u32,
+    pub(crate) key: u32,
+    pub(crate) state: KeyState,
+}
+
+/// Shared mutable state between Filter, FilterInterceptor, and KeyboardFilterUserData.
+/// Using a single lock ensures pending events and focused surface stay coherent.
+#[derive(Debug, Default)]
+pub(crate) struct FilterState {
+    pub(crate) pending_events: VecDeque<BufferedEvent>,
+    pub(crate) focused_surface: Option<WlSurface>,
+}
+
+/// The interceptor installed in `KbdRc.interceptor`.
+/// Forwards events to IM keyboard + a buffer awaiting filter decisions.
+/// Non-key events also go to real client keyboards immediately.
+#[derive(Debug)]
+struct FilterInterceptor {
+    im_keyboard: WlKeyboard,
+    im_surface: WlSurface,
+    client_keyboards: Arc<Mutex<Vec<Weak<WlKeyboard>>>>,
+    focused_surface: WlSurface,
+    filter_state: Arc<Mutex<FilterState>>,
+}
+
+impl FilterInterceptor {
+    fn forward_to_clients(&self, f: impl FnMut(&dyn WlKeyboardApi)) {
+        let keyboards = self.client_keyboards.lock().unwrap();
+        keyboard::for_each_focused_kbd(&keyboards, &self.focused_surface, f);
+    }
+}
+
+impl WlKeyboardApi for FilterInterceptor {
+    fn keymap(
+        &self,
+        format: wayland_server::protocol::wl_keyboard::KeymapFormat,
+        fd: std::os::unix::io::BorrowedFd<'_>,
+        size: u32,
+    ) {
+        self.im_keyboard.keymap(format, fd, size);
+        self.forward_to_clients(|kbd| kbd.keymap(format, fd, size));
+    }
+
+    fn enter(&self, serial: u32, surface: &WlSurface, keys: Vec<u8>) {
+        self.forward_to_clients(|kbd| kbd.enter(serial, surface, keys.clone()));
+        self.im_keyboard.enter(serial, &self.im_surface, keys);
+    }
+
+    fn leave(&self, serial: u32, surface: &WlSurface) {
+        self.im_keyboard.leave(serial, &self.im_surface);
+        self.forward_to_clients(|kbd| kbd.leave(serial, surface));
+    }
+
+    fn key(&self, serial: u32, time: u32, key: u32, state: KeyState) {
+        self.im_keyboard.key(serial, time, key, state);
+        self.filter_state
+            .lock()
+            .unwrap()
+            .pending_events
+            .push_front(BufferedEvent {
+                serial,
+                time,
+                key,
+                state,
+            });
+    }
+
+    fn modifiers(&self, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) {
+        self.im_keyboard
+            .modifiers(serial, mods_depressed, mods_latched, mods_locked, group);
+        self.forward_to_clients(|kbd| {
+            kbd.modifiers(serial, mods_depressed, mods_latched, mods_locked, group)
+        });
+    }
+
+    fn repeat_info(&self, rate: i32, delay: i32) {
+        self.im_keyboard.repeat_info(rate, delay);
+        // Clients stay suppressed (rate=0) while interceptor is active
+        self.forward_to_clients(|kbd| kbd.repeat_info(0, delay));
+    }
+
+    fn version(&self) -> u32 {
+        let mut v = None;
+        self.forward_to_clients(|kbd| v = Some(kbd.version()));
+        v.unwrap_or(Resource::version(&self.im_keyboard))
+    }
+}
+
+/// Handle stored in the input method for activating/deactivating the interceptor.
+#[derive(Debug, Clone)]
+pub(crate) struct Filter {
+    pub(crate) keyboard_filter: XxKeyboardFilterV1,
+    pub(crate) filter_state: Arc<Mutex<FilterState>>,
+}
+
+impl Filter {
+    /// Activate keyboard interception on the given focused surface.
+    pub fn activate_interceptor<D: SeatHandler + 'static>(
+        &self,
+        seat: &Seat<D>,
+        focused_surface: &WlSurface,
+    ) {
+        let keyboard_handle = seat.get_keyboard().unwrap();
+        let filter_data = self.keyboard_filter.data::<KeyboardFilterUserData<D>>().unwrap();
+
+        self.filter_state.lock().unwrap().focused_surface = Some(focused_surface.clone());
+
+        let interceptor = FilterInterceptor {
+            im_keyboard: filter_data.im_keyboard.clone(),
+            im_surface: filter_data.im_surface.clone(),
+            client_keyboards: keyboard_handle.arc.known_kbds.clone(),
+            focused_surface: focused_surface.clone(),
+            filter_state: self.filter_state.clone(),
+        };
+
+        // Send rate=0 to client keyboards: "compositor takes over repeat"
+        let guard = keyboard_handle.arc.internal.lock().unwrap();
+        let delay = guard.repeat_delay;
+        drop(guard);
+        let keyboards = keyboard_handle.arc.known_kbds.lock().unwrap();
+        keyboard::for_each_focused_kbd(&keyboards, focused_surface, |kbd| {
+            kbd.repeat_info(0, delay);
+        });
+        drop(keyboards);
+
+        let mut slot = keyboard_handle.arc.interceptor.lock().unwrap();
+        *slot = Some(Box::new(interceptor));
+    }
+
+    /// Deactivate keyboard interception. Drop pending events, restore client repeat.
+    pub fn deactivate_interceptor<D: SeatHandler + 'static>(&self, seat: &Seat<D>) {
+        let keyboard_handle = seat.get_keyboard().unwrap();
+        let mut state = self.filter_state.lock().unwrap();
+        let focused_surface = state.focused_surface.clone();
+        state.pending_events.clear();
+        drop(state);
+        keyboard_handle.arc.clear_interceptor();
+        keyboard_handle.arc.restore_repeat_rate(focused_surface.as_ref());
+    }
+}
+
+/// Data accessible from the XxKeyboardFilterV1 object.
+#[derive(Debug)]
+pub struct KeyboardFilterUserData<D: SeatHandler> {
+    pub(crate) keyboard_handle: KeyboardHandle<D>,
+    pub(crate) filter_state: Arc<Mutex<FilterState>>,
+    pub(crate) manager_data: Arc<Mutex<KeyboardFilterManagerUserDataInner>>,
+    pub(crate) bound_keyboard: WlKeyboard,
+    pub(crate) bound_input_method: XxInputMethodV1,
+    pub(crate) im_keyboard: WlKeyboard,
+    pub(crate) im_surface: WlSurface,
+}
+
+impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
+    /// Forward pending events as passthrough, remove interceptor, restore repeat, clean up bindings.
+    fn teardown(&self) {
+        let mut state = self.filter_state.lock().unwrap();
+        let focused_surface = state.focused_surface.clone();
+        if let Some(ref surface) = focused_surface {
+            let keyboards = self.keyboard_handle.arc.known_kbds.lock().unwrap();
+            for event in state.pending_events.drain(..) {
+                keyboard::send_key_with_repeat_compat(
+                    &keyboards,
+                    surface,
+                    event.serial,
+                    event.time,
+                    event.key,
+                    event.state,
+                );
+            }
+        } else {
+            state.pending_events.clear();
+        }
+        drop(state);
+
+        self.keyboard_handle.arc.clear_interceptor();
+        self.keyboard_handle
+            .arc
+            .restore_repeat_rate(focused_surface.as_ref());
+
+        let mut mgr = self.manager_data.lock().unwrap();
+        mgr.bound_keyboards.remove(&self.bound_keyboard);
+        mgr.bound_ims.remove(&self.bound_input_method);
+    }
+}
+
+impl<D> Dispatch2<XxKeyboardFilterV1, D> for KeyboardFilterUserData<D>
+where
+    D: SeatHandler,
+    D: 'static,
+{
+    fn request(
+        &self,
+        _state: &mut D,
+        _client: &Client,
+        resource: &XxKeyboardFilterV1,
+        request: <XxKeyboardFilterV1 as Resource>::Request,
+        _dhandle: &DisplayHandle,
+        _data_init: &mut DataInit<'_, D>,
+    ) {
+        use xx_keyboard_filter_v1::Request;
+        match request {
+            Request::Unbind => {
+                self.teardown();
+            }
+            Request::Filter { serial, action } => {
+                let passthrough = match action {
+                    WEnum::Value(FilterAction::Passthrough) => true,
+                    WEnum::Value(FilterAction::Consume) => false,
+                    other => {
+                        error!("Unsupported filter action {other:?}");
+                        return;
+                    }
+                };
+
+                let mut state = self.filter_state.lock().unwrap();
+                // Find the event matching this serial (events are in reverse order, newest first)
+                if let Some(pos) = state.pending_events.iter().position(|e| e.serial == serial) {
+                    let event = state.pending_events.remove(pos).unwrap();
+                    if passthrough {
+                        if let Some(ref surface) = state.focused_surface {
+                            let keyboards = self.keyboard_handle.arc.known_kbds.lock().unwrap();
+                            keyboard::send_key_with_repeat_compat(
+                                &keyboards,
+                                surface,
+                                event.serial,
+                                event.time,
+                                event.key,
+                                event.state,
+                            );
+                        } else {
+                            tracing::warn!("Passthrough failed: no focused_surface!");
+                        }
+                    }
+                    // Consume: event is simply dropped
+                } else {
+                    warn!("Filter response for unknown serial {serial}");
+                    resource.post_error(
+                        xx_keyboard_filter_v1::Error::InvalidSerial,
+                        format!("No pending event with serial {serial}"),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn destroyed(
+        &self,
+        _state: &mut D,
+        _client: wayland_server::backend::ClientId,
+        _resource: &XxKeyboardFilterV1,
+    ) {
+        self.teardown();
+    }
+}
