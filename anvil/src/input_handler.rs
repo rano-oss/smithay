@@ -173,12 +173,12 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
         let action = keyboard
             .input(self, keycode, state, serial, time, |_, modifiers, handle| {
-                let keysym = handle.modified_sym();
+                let keysym = handle.named_key();
 
                 debug!(
                     ?state,
                     mods = ?modifiers,
-                    keysym = ::xkbcommon::xkb::keysym_get_name(keysym),
+                    keysym = ?keysym,
                     "keysym"
                 );
 

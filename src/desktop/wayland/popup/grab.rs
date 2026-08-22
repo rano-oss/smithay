@@ -6,12 +6,11 @@ use std::{
 use wayland_server::{Resource, protocol::wl_surface::WlSurface};
 
 use crate::{
-    backend::input::{ButtonState, KeyState, Keycode},
+    backend::input::{ButtonState, KeyState},
     input::{
         SeatHandler,
         keyboard::{
-            GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle,
-            ModifiersState,
+            EvdevCode, GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle, ModifiersState
         },
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
@@ -442,7 +441,7 @@ where
         &mut self,
         data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
-        keycode: Keycode,
+        keycode: EvdevCode,
         state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,
