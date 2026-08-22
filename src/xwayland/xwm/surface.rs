@@ -2,7 +2,7 @@ use crate::{
     backend::{input::KeyState, renderer::utils::RendererSurfaceStateUserData},
     input::{
         Seat, SeatHandler,
-        keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
+        keyboard::{EvdevCode, KeyboardTarget, KeysymHandle, ModifiersState},
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
             GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
@@ -41,7 +41,6 @@ use std::{
 };
 use tracing::warn;
 use wayland_server::protocol::wl_surface::WlSurface;
-use xkbcommon::xkb::Keycode;
 
 use x11rb::{
     connection::Connection as _,
@@ -169,7 +168,7 @@ pub(crate) struct SharedSurfaceState {
     frame_extents: FrameExtents<i32, Physical>,
     pending_enter: Option<(
         Box<dyn std::any::Any + Send + 'static>,
-        Vec<Keycode>,
+        Vec<EvdevCode>,
         Option<ModifiersState>,
         Serial,
     )>,
@@ -2185,7 +2184,7 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for X11Surface {
         } else {
             state.pending_enter = Some((
                 Box::new(seat.clone()) as Box<dyn std::any::Any + Send>,
-                keys.iter().map(|x| x.raw_code()).collect(),
+                keys.iter().map(|x| x.evdev_code()).collect(),
                 None,
                 serial,
             ));
@@ -2221,7 +2220,7 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for X11Surface {
         if let Some(surface) = xstate.wl_surface.as_ref() {
             KeyboardTarget::key(surface, seat, data, key, state, serial, time)
         } else if let Some((_, keys, _, pending_serial)) = xstate.pending_enter.as_mut() {
-            let raw = key.raw_code();
+            let raw = key.evdev_code();
             if state == KeyState::Released {
                 keys.retain(|c| *c != raw);
             } else {

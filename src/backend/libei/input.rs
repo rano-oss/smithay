@@ -6,7 +6,7 @@ use reis::{
 };
 use std::path::PathBuf;
 
-use crate::backend::input::{self, InputBackend};
+use crate::{backend::input::{self, InputBackend}, input::keyboard::EvdevCode};
 
 use super::EiInput;
 
@@ -105,8 +105,8 @@ impl<T: request::DeviceEvent + request::EventTime> input::Event<EiInput> for T {
 impl input::TouchFrameEvent<EiInput> for request::Frame {}
 
 impl input::KeyboardKeyEvent<EiInput> for request::KeyboardKey {
-    fn key_code(&self) -> input::Keycode {
-        input::Keycode::from(self.key + 8)
+    fn key_code(&self) -> EvdevCode {
+        self.key
     }
 
     fn state(&self) -> input::KeyState {

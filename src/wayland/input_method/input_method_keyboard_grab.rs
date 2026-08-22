@@ -11,13 +11,12 @@ use wayland_server::backend::ClientId;
 use crate::input::{
     SeatHandler,
     keyboard::{
-        GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle,
-        ModifiersState,
+        EvdevCode, GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle, ModifiersState
     },
 };
 use crate::wayland::text_input::TextInputHandle;
 use crate::{
-    backend::input::{KeyState, Keycode},
+    backend::input::KeyState,
     utils::Serial,
     wayland::Dispatch2,
 };
@@ -42,7 +41,7 @@ where
         &mut self,
         _data: &mut D,
         _handle: &mut KeyboardInnerHandle<'_, D>,
-        keycode: Keycode,
+        keycode: EvdevCode,
         key_state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,
@@ -53,7 +52,7 @@ where
         inner
             .text_input_handle
             .active_text_input_serial_or_default(serial.0, |serial| {
-                keyboard.key(serial, time, keycode.raw() - 8, key_state.into());
+                keyboard.key(serial, time, keycode, key_state.into());
                 if let Some(serialized) = modifiers.map(|m| m.serialized) {
                     keyboard.modifiers(
                         serial,

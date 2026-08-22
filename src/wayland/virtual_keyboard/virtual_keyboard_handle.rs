@@ -1,3 +1,5 @@
+use std::fs::File;
+use std::os::unix::fs::FileExt;
 use std::os::unix::io::OwnedFd;
 use std::{
     fmt,
@@ -13,8 +15,7 @@ use wayland_server::{
     Client, DataInit, DisplayHandle, Resource,
     protocol::wl_keyboard::{KeyState, KeymapFormat},
 };
-use xkbcommon::xkb;
-
+use wkb::WKB;
 use crate::input::keyboard::{KeyboardTarget, KeymapFile, ModifiersState};
 use crate::{
     input::{Seat, SeatHandler},
@@ -33,7 +34,7 @@ pub(crate) struct VirtualKeyboard {
 struct VirtualKeyboardState {
     keymap: KeymapFile,
     mods: ModifiersState,
-    state: xkb::State,
+    wkb: WKB,
 }
 
 impl fmt::Debug for VirtualKeyboardState {
@@ -41,7 +42,7 @@ impl fmt::Debug for VirtualKeyboardState {
         f.debug_struct("VirtualKeyboardState")
             .field("keymap", &self.keymap)
             .field("mods", &self.mods)
-            .field("state", &self.state.get_raw_ptr())
+            .field("wkb", &self.wkb)
             .finish()
     }
 }
@@ -137,10 +138,8 @@ where
                 };
 
                 // Update virtual keyboard's modifier state.
-                state
-                    .state
-                    .update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
-                state.mods.update_with(&state.state);
+                state.wkb.update_modifiers(mods_depressed, mods_latched, mods_locked, group);
+                state.mods.update_with(&state.wkb);
 
                 // Ensure virtual keyboard's keymap is active.
                 let keyboard_handle = self.seat.get_keyboard().unwrap();
@@ -176,35 +175,24 @@ where
         debug!("Unsupported keymap format: {format:?}");
         return;
     }
-
-    let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-    // SAFETY: we can map the keymap into the memory.
-    let new_keymap = match unsafe {
-        xkb::Keymap::new_from_fd(
-            &context,
-            fd,
-            size,
-            xkb::KEYMAP_FORMAT_TEXT_V1,
-            xkb::KEYMAP_COMPILE_NO_FLAGS,
-        )
-    } {
-        Ok(Some(new_keymap)) => new_keymap,
-        Ok(None) => {
-            debug!("Invalid libxkbcommon keymap");
-            return;
-        }
-        Err(err) => {
-            debug!("Could not map the keymap: {err:?}");
-            return;
-        }
-    };
+    let file = File::from(fd);
+    let mut bytes = vec![0; size as usize];
+    file.read_exact_at(&mut bytes, 0).unwrap();
+    // wl_keyboard keymaps are normally NUL-terminated,
+    // and `size` includes that terminator.
+    if bytes.last() == Some(&0) {
+        bytes.pop();
+    }
+    let keymap = str::from_utf8(&bytes).unwrap();
+    let wkb = WKB::new_from_string(keymap).unwrap();
+    let new_keymap = wkb.as_xkb_string().unwrap();
 
     // Store active virtual keyboard map.
     let mut inner = data.handle.inner.lock().unwrap();
     let mods = inner.state.take().map(|state| state.mods).unwrap_or_default();
     inner.state = Some(VirtualKeyboardState {
         mods,
-        keymap: KeymapFile::new(&new_keymap),
-        state: xkb::State::new(&new_keymap),
+        keymap: KeymapFile::new(new_keymap),
+        wkb,
     });
 }

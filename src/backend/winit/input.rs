@@ -5,12 +5,12 @@ use winit::{
     event::{ElementState, MouseButton as WinitMouseButton, MouseScrollDelta},
 };
 
-use crate::backend::input::{
+use crate::{backend::input::{
     self, AbsolutePositionEvent, Axis, AxisRelativeDirection, AxisSource, ButtonState, Device,
-    DeviceCapability, Event, InputBackend, KeyState, KeyboardKeyEvent, Keycode, PointerAxisEvent,
+    DeviceCapability, Event, InputBackend, KeyState, KeyboardKeyEvent, PointerAxisEvent,
     PointerButtonEvent, PointerMotionAbsoluteEvent, TouchCancelEvent, TouchDownEvent, TouchEvent,
     TouchMotionEvent, TouchSlot, TouchUpEvent, UnusedEvent,
-};
+}, input::keyboard::EvdevCode};
 
 /// Marker used to define the `InputBackend` types for the winit backend.
 #[derive(Debug)]
@@ -65,8 +65,8 @@ impl Event<WinitInput> for WinitKeyboardInputEvent {
 }
 
 impl KeyboardKeyEvent<WinitInput> for WinitKeyboardInputEvent {
-    fn key_code(&self) -> Keycode {
-        (self.key + 8).into()
+    fn key_code(&self) -> EvdevCode {
+        self.key
     }
 
     fn state(&self) -> KeyState {
