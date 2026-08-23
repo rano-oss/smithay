@@ -362,6 +362,49 @@ impl<'a> KeyHandle<'a> {
     pub fn wkb(&self) -> &Mutex<WKB> {
         self.wkb
     }
+
+    /// Resolve an XKB keysym suitable for compositor shortcut matching.
+    ///
+    /// Logo/Ctrl/Alt do not suppress the resolved keysym, so callers can match
+    /// bindings like Super+Q by checking [`ModifiersState`] separately.
+    pub fn keysym(&self) -> Keysym {
+        let wkb = self.wkb().lock().unwrap();
+        let layout = wkb.active_layout_idx();
+        let code = self.evdev_code;
+
+        if let Some(ch) = wkb.key_char(code) {
+            return Keysym::from_char(ch);
+        }
+
+        let level = usize::from(wkb.shift());
+        if let Some(ch) = wkb.level_char(code, layout, level) {
+            return Keysym::from_char(ch);
+        }
+        if let Some(ch) = wkb.level_char(code, layout, 0) {
+            return Keysym::from_char(ch);
+        }
+
+        let named = wkb.named_key(code);
+        if named != NamedKey::Unnamed {
+            return named_key_to_keysym(named);
+        }
+
+        Keysym::NoSymbol
+    }
+}
+
+fn named_key_to_keysym(key: NamedKey) -> Keysym {
+    use NamedKey::*;
+    match key {
+        Unnamed => Keysym::NoSymbol,
+        Backspace => Keysym::BackSpace,
+        Enter => Keysym::Return,
+        Tab => Keysym::Tab,
+        Escape => Keysym::Escape,
+        Delete => Keysym::Delete,
+        Space => Keysym::space,
+        _ => Keysym::NoSymbol,
+    }
 }
 
 /// The currently active WKB state exposed for layout changes and other mutations.

@@ -173,7 +173,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
         let action = keyboard
             .input(self, keycode, state, serial, time, |_, modifiers, handle| {
-                let keysym = handle.named_key();
+                let keysym = handle.keysym();
 
                 debug!(
                     ?state,
@@ -1368,7 +1368,8 @@ enum KeyAction {
 }
 
 fn process_keyboard_shortcut(modifiers: ModifiersState, keysym: Keysym) -> Option<KeyAction> {
-    if modifiers.ctrl && modifiers.alt && keysym == Keysym::BackSpace || modifiers.logo && keysym == Keysym::q
+    if modifiers.ctrl && modifiers.alt && keysym == Keysym::BackSpace
+        || modifiers.logo && keysym == Keysym::q
     {
         // ctrl+alt+backspace = quit
         // logo + q = quit
@@ -1378,6 +1379,23 @@ fn process_keyboard_shortcut(modifiers: ModifiersState, keysym: Keysym) -> Optio
         Some(KeyAction::VtSwitch(
             (keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32,
         ))
+    } else if modifiers.ctrl && modifiers.alt {
+        let vt = match keysym {
+            Keysym::F1 => Some(1),
+            Keysym::F2 => Some(2),
+            Keysym::F3 => Some(3),
+            Keysym::F4 => Some(4),
+            Keysym::F5 => Some(5),
+            Keysym::F6 => Some(6),
+            Keysym::F7 => Some(7),
+            Keysym::F8 => Some(8),
+            Keysym::F9 => Some(9),
+            Keysym::F10 => Some(10),
+            Keysym::F11 => Some(11),
+            Keysym::F12 => Some(12),
+            _ => None,
+        };
+        vt.map(KeyAction::VtSwitch)
     } else if modifiers.logo && keysym == Keysym::Return {
         // run terminal
         Some(KeyAction::Run("weston-terminal".into()))
