@@ -23,7 +23,7 @@
 //! #             GestureSwipeBeginEvent, GestureSwipeUpdateEvent, GestureSwipeEndEvent,
 //! #             GesturePinchBeginEvent, GesturePinchUpdateEvent, GesturePinchEndEvent,
 //! #             GestureHoldBeginEvent, GestureHoldEndEvent},
-//! #   keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
+//! #   keyboard::{KeyboardTarget, KeyHandle, ModifiersState},
 //! #   touch::{DownEvent, UpEvent, MotionEvent as TouchMotionEvent, ShapeEvent, OrientationEvent, TouchTarget, FrameMarker},
 //! # };
 //! # use smithay::utils::{IsAlive, Serial};
@@ -63,13 +63,13 @@
 //! #   fn gesture_hold_end(&self, seat: &Seat<State>, data: &mut State, event: &GestureHoldEndEvent) {}
 //! # }
 //! # impl KeyboardTarget<State> for Target {
-//! #   fn enter(&self, seat: &Seat<State>, data: &mut State, keys: Vec<KeysymHandle<'_>>, serial: Serial) {}
+//! #   fn enter(&self, seat: &Seat<State>, data: &mut State, keys: Vec<KeyHandle<'_>>, serial: Serial) {}
 //! #   fn leave(&self, seat: &Seat<State>, data: &mut State, serial: Serial) {}
 //! #   fn key(
 //! #       &self,
 //! #       seat: &Seat<State>,
 //! #       data: &mut State,
-//! #       key: KeysymHandle<'_>,
+//! #       key: KeyHandle<'_>,
 //! #       state: KeyState,
 //! #       serial: Serial,
 //! #       time: u32,
@@ -125,7 +125,6 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use tracing::{info_span, instrument};
 use self::touch::TouchTarget;
 use self::{
     keyboard::{Error as KeyboardError, KeyboardHandle, KeyboardTarget, LedState},
@@ -142,6 +141,7 @@ use crate::{
     },
     utils::{Serial, user_data::UserDataMap},
 };
+use tracing::{info_span, instrument};
 
 pub mod dnd;
 pub mod keyboard;
@@ -394,7 +394,7 @@ impl<D: SeatHandler + 'static> Seat<D> {
     /// #             GestureSwipeBeginEvent, GestureSwipeUpdateEvent, GestureSwipeEndEvent,
     /// #             GesturePinchBeginEvent, GesturePinchUpdateEvent, GesturePinchEndEvent,
     /// #             GestureHoldBeginEvent, GestureHoldEndEvent},
-    /// #   keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
+    /// #   keyboard::{KeyboardTarget, KeyHandle, ModifiersState},
     /// #   touch::{DownEvent, UpEvent, MotionEvent as TouchMotionEvent, ShapeEvent, OrientationEvent, TouchTarget, FrameMarker},
     /// # };
     /// # use smithay::utils::{IsAlive, Serial};
@@ -422,13 +422,13 @@ impl<D: SeatHandler + 'static> Seat<D> {
     /// #   fn gesture_hold_end(&self, seat: &Seat<State>, data: &mut State, event: &GestureHoldEndEvent) {}
     /// # }
     /// # impl KeyboardTarget<State> for Target {
-    /// #   fn enter(&self, seat: &Seat<State>, data: &mut State, keys: Vec<KeysymHandle<'_>>, serial: Serial) {}
+    /// #   fn enter(&self, seat: &Seat<State>, data: &mut State, keys: Vec<KeyHandle<'_>>, serial: Serial) {}
     /// #   fn leave(&self, seat: &Seat<State>, data: &mut State, serial: Serial) {}
     /// #   fn key(
     /// #       &self,
     /// #       seat: &Seat<State>,
     /// #       data: &mut State,
-    /// #       key: KeysymHandle<'_>,
+    /// #       key: KeyHandle<'_>,
     /// #       state: KeyState,
     /// #       serial: Serial,
     /// #       time: u32,
@@ -516,7 +516,7 @@ impl<D: SeatHandler + 'static> Seat<D> {
     /// #             GestureSwipeBeginEvent, GestureSwipeUpdateEvent, GestureSwipeEndEvent,
     /// #             GesturePinchBeginEvent, GesturePinchUpdateEvent, GesturePinchEndEvent,
     /// #             GestureHoldBeginEvent, GestureHoldEndEvent},
-    /// #   keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
+    /// #   keyboard::{KeyboardTarget, KeyHandle, ModifiersState},
     /// #   touch::{DownEvent, UpEvent, MotionEvent as TouchMotionEvent, ShapeEvent, OrientationEvent, TouchTarget, FrameMarker},
     /// # };
     /// # use smithay::utils::{IsAlive, Serial};
@@ -544,13 +544,13 @@ impl<D: SeatHandler + 'static> Seat<D> {
     /// #   fn gesture_hold_end(&self, seat: &Seat<State>, data: &mut State, event: &GestureHoldEndEvent) {}
     /// # }
     /// # impl KeyboardTarget<State> for Target {
-    /// #   fn enter(&self, seat: &Seat<State>, data: &mut State, keys: Vec<KeysymHandle<'_>>, serial: Serial) {}
+    /// #   fn enter(&self, seat: &Seat<State>, data: &mut State, keys: Vec<KeyHandle<'_>>, serial: Serial) {}
     /// #   fn leave(&self, seat: &Seat<State>, data: &mut State, serial: Serial) {}
     /// #   fn key(
     /// #       &self,
     /// #       seat: &Seat<State>,
     /// #       data: &mut State,
-    /// #       key: KeysymHandle<'_>,
+    /// #       key: KeyHandle<'_>,
     /// #       state: KeyState,
     /// #       serial: Serial,
     /// #       time: u32,
@@ -598,27 +598,8 @@ impl<D: SeatHandler + 'static> Seat<D> {
         repeat_delay: i32,
         repeat_rate: i32,
     ) -> Result<KeyboardHandle<D>, KeyboardError> {
-        Self::add_keyboard_with_context_flags(
-            self,
-            xkb_config,
-            repeat_delay,
-            repeat_rate,
-        )
-    }
-
-    /// [`Self::add_keyboard`] equivalent, that allows for overwriting default xkb::Context flags.
-    ///
-    /// For more info read [`Self::add_keyboard`] docs.
-    #[instrument(parent = &self.arc.span, skip(self))]
-    pub fn add_keyboard_with_context_flags(
-        &mut self,
-        xkb_config: keyboard::XkbConfig<'_>,
-        repeat_delay: i32,
-        repeat_rate: i32,
-    ) -> Result<KeyboardHandle<D>, KeyboardError> {
         let mut inner = self.arc.inner.lock().unwrap();
-        let keyboard =
-            self::keyboard::KeyboardHandle::new(xkb_config, repeat_delay, repeat_rate)?;
+        let keyboard = self::keyboard::KeyboardHandle::new(xkb_config, repeat_delay, repeat_rate)?;
         if inner.keyboard.is_some() {
             // there is already a keyboard, remove it and notify the clients
             // of the change
@@ -630,6 +611,18 @@ impl<D: SeatHandler + 'static> Seat<D> {
         #[cfg(feature = "wayland_frontend")]
         inner.send_all_caps();
         Ok(keyboard)
+    }
+
+    /// Deprecated alias for [`Self::add_keyboard`].
+    #[deprecated(note = "context flags are no longer used; use `add_keyboard` instead")]
+    #[instrument(parent = &self.arc.span, skip(self))]
+    pub fn add_keyboard_with_context_flags(
+        &mut self,
+        xkb_config: keyboard::XkbConfig<'_>,
+        repeat_delay: i32,
+        repeat_rate: i32,
+    ) -> Result<KeyboardHandle<D>, KeyboardError> {
+        self.add_keyboard(xkb_config, repeat_delay, repeat_rate)
     }
 
     /// Access the keyboard of this seat if any

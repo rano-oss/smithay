@@ -2,7 +2,7 @@ use crate::{
     backend::{input::KeyState, renderer::utils::RendererSurfaceStateUserData},
     input::{
         Seat, SeatHandler,
-        keyboard::{EvdevCode, KeyboardTarget, KeysymHandle, ModifiersState},
+        keyboard::{KeyHandle, KeyboardTarget, ModifiersState},
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
             GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
@@ -168,7 +168,7 @@ pub(crate) struct SharedSurfaceState {
     frame_extents: FrameExtents<i32, Physical>,
     pending_enter: Option<(
         Box<dyn std::any::Any + Send + 'static>,
-        Vec<EvdevCode>,
+        Vec<u32>,
         Option<ModifiersState>,
         Serial,
     )>,
@@ -2140,7 +2140,7 @@ impl IsAlive for X11Surface {
 }
 
 impl<D: SeatHandler + 'static> KeyboardTarget<D> for X11Surface {
-    fn enter(&self, seat: &Seat<D>, data: &mut D, keys: Vec<KeysymHandle<'_>>, serial: Serial) {
+    fn enter(&self, seat: &Seat<D>, data: &mut D, keys: Vec<KeyHandle<'_>>, serial: Serial) {
         let (set_input_focus, send_take_focus) = match self.input_model() {
             WmInputModel::None => return,
             WmInputModel::Passive => (true, false),
@@ -2211,7 +2211,7 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for X11Surface {
         &self,
         seat: &Seat<D>,
         data: &mut D,
-        key: KeysymHandle<'_>,
+        key: KeyHandle<'_>,
         state: KeyState,
         serial: Serial,
         time: u32,

@@ -1,8 +1,8 @@
 //! Implementation of input backend trait for types provided by `libinput`
 
-use crate::{backend::input::{
+use crate::backend::input::{
     self as backend, Axis, AxisRelativeDirection, AxisSource, InputBackend, InputEvent,
-}, input::keyboard::EvdevCode};
+};
 #[cfg(feature = "backend_session")]
 use crate::backend::session::{AsErrno, Session};
 use input as libinput;
@@ -111,7 +111,7 @@ impl backend::Event<LibinputInputBackend> for event::keyboard::KeyboardKeyEvent 
 }
 
 impl backend::KeyboardKeyEvent<LibinputInputBackend> for event::keyboard::KeyboardKeyEvent {
-    fn key_code(&self) -> EvdevCode {
+    fn key_code(&self) -> u32 {
         use input::event::keyboard::KeyboardEventTrait;
         self.key()
     }

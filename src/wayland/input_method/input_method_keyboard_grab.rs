@@ -11,15 +11,12 @@ use wayland_server::backend::ClientId;
 use crate::input::{
     SeatHandler,
     keyboard::{
-        EvdevCode, GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle, ModifiersState
+        GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle,
+        ModifiersState,
     },
 };
 use crate::wayland::text_input::TextInputHandle;
-use crate::{
-    backend::input::KeyState,
-    utils::Serial,
-    wayland::Dispatch2,
-};
+use crate::{backend::input::KeyState, utils::Serial, wayland::Dispatch2};
 
 #[derive(Default, Debug)]
 pub(crate) struct InputMethodKeyboard {
@@ -41,7 +38,7 @@ where
         &mut self,
         _data: &mut D,
         _handle: &mut KeyboardInnerHandle<'_, D>,
-        keycode: EvdevCode,
+        keycode: u32,
         key_state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,

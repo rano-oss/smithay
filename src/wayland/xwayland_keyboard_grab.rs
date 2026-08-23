@@ -57,7 +57,7 @@ use crate::{
     backend::input::KeyState,
     input::{
         Seat, SeatHandler,
-        keyboard::{self, EvdevCode, KeyboardGrab, KeyboardInnerHandle},
+        keyboard::{self, KeyboardGrab, KeyboardInnerHandle},
     },
     utils::{SERIAL_COUNTER, Serial},
     wayland::{Dispatch2, GlobalData, GlobalDispatch2},
@@ -116,7 +116,7 @@ impl<D: XWaylandKeyboardGrabHandler + 'static> KeyboardGrab<D> for XWaylandKeybo
         &mut self,
         data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
-        keycode: EvdevCode,
+        keycode: u32,
         state: KeyState,
         modifiers: Option<keyboard::ModifiersState>,
         serial: Serial,

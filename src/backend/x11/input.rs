@@ -6,7 +6,8 @@ use crate::{
         self, AbsolutePositionEvent, Axis, AxisRelativeDirection, AxisSource, ButtonState, Device,
         DeviceCapability, InputBackend, KeyState, KeyboardKeyEvent, Keycode, PointerAxisEvent,
         PointerButtonEvent, PointerMotionAbsoluteEvent, UnusedEvent,
-    }, input::keyboard::EvdevCode, utils::{Logical, Size}
+    },
+    utils::{Logical, Size},
 };
 use std::sync::Weak;
 
@@ -73,8 +74,8 @@ impl input::Event<X11Input> for X11KeyboardInputEvent {
 }
 
 impl KeyboardKeyEvent<X11Input> for X11KeyboardInputEvent {
-    fn key_code(&self) -> EvdevCode {
-        self.key.into()
+    fn key_code(&self) -> u32 {
+        u32::from(self.key).saturating_sub(8)
     }
 
     fn state(&self) -> KeyState {

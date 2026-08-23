@@ -10,7 +10,8 @@ use crate::{
     input::{
         SeatHandler,
         keyboard::{
-            EvdevCode, GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle, ModifiersState
+            GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardHandle, KeyboardInnerHandle,
+            ModifiersState,
         },
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
@@ -441,7 +442,7 @@ where
         &mut self,
         data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
-        keycode: EvdevCode,
+        keycode: u32,
         state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,

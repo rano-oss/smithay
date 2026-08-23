@@ -6,6 +6,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::input::keyboard::{KeyboardTarget, KeymapFile, ModifiersState};
+use crate::{
+    input::{Seat, SeatHandler},
+    utils::SERIAL_COUNTER,
+    wayland::{
+        Dispatch2,
+        seat::{WaylandFocus, keyboard::for_each_focused_kbds},
+    },
+};
 use tracing::debug;
 use wayland_protocols_misc::zwp_virtual_keyboard_v1::server::zwp_virtual_keyboard_v1::Error::NoKeymap;
 use wayland_protocols_misc::zwp_virtual_keyboard_v1::server::zwp_virtual_keyboard_v1::{
@@ -16,15 +25,9 @@ use wayland_server::{
     protocol::wl_keyboard::{KeyState, KeymapFormat},
 };
 use wkb::WKB;
-use crate::input::keyboard::{KeyboardTarget, KeymapFile, ModifiersState};
-use crate::{
-    input::{Seat, SeatHandler},
-    utils::SERIAL_COUNTER,
-    wayland::{
-        Dispatch2,
-        seat::{WaylandFocus, keyboard::for_each_focused_kbds},
-    },
-};
+
+/// Maximum virtual-keyboard keymap payload accepted from clients (1 MiB).
+const MAX_VIRTUAL_KEYMAP_SIZE: usize = 1_048_576;
 
 #[derive(Debug, Default)]
 pub(crate) struct VirtualKeyboard {
@@ -46,10 +49,6 @@ impl fmt::Debug for VirtualKeyboardState {
             .finish()
     }
 }
-
-// This is OK because all parts of `xkb` will remain on the
-// same thread
-unsafe impl Send for VirtualKeyboard {}
 
 /// Handle to a virtual keyboard instance
 #[derive(Debug, Clone, Default)]
@@ -138,7 +137,9 @@ where
                 };
 
                 // Update virtual keyboard's modifier state.
-                state.wkb.update_modifiers(mods_depressed, mods_latched, mods_locked, group);
+                state
+                    .wkb
+                    .update_modifiers(mods_depressed, mods_latched, mods_locked, group);
                 state.mods.update_with(&state.wkb);
 
                 // Ensure virtual keyboard's keymap is active.
@@ -164,28 +165,49 @@ where
 }
 
 /// Handle the zwp_virtual_keyboard_v1::keymap request.
-///
-/// The `true` returns when keymap was properly loaded.
 fn update_keymap<D>(data: &VirtualKeyboardUserData<D>, format: u32, fd: OwnedFd, size: usize)
 where
     D: SeatHandler + 'static,
 {
-    // Only libxkbcommon compatible keymaps are supported.
     if format != KeymapFormat::XkbV1 as u32 {
         debug!("Unsupported keymap format: {format:?}");
         return;
     }
+    if size == 0 || size > MAX_VIRTUAL_KEYMAP_SIZE {
+        debug!("Virtual keyboard keymap size out of range: {size}");
+        return;
+    }
     let file = File::from(fd);
-    let mut bytes = vec![0; size as usize];
-    file.read_exact_at(&mut bytes, 0).unwrap();
-    // wl_keyboard keymaps are normally NUL-terminated,
-    // and `size` includes that terminator.
+    let mut bytes = vec![0; size];
+    if file.read_exact_at(&mut bytes, 0).is_err() {
+        debug!("Failed to read virtual keyboard keymap from fd");
+        return;
+    }
+    // wl_keyboard keymaps are normally NUL-terminated, and `size` includes that terminator.
     if bytes.last() == Some(&0) {
         bytes.pop();
     }
-    let keymap = str::from_utf8(&bytes).unwrap();
-    let wkb = WKB::new_from_string(keymap).unwrap();
-    let new_keymap = wkb.as_xkb_string().unwrap();
+    let keymap = match str::from_utf8(&bytes) {
+        Ok(keymap) => keymap,
+        Err(err) => {
+            debug!("Virtual keyboard keymap is not valid UTF-8: {err}");
+            return;
+        }
+    };
+    let wkb = match WKB::new_from_string(keymap) {
+        Ok(wkb) => wkb,
+        Err(err) => {
+            debug!("Failed to load virtual keyboard keymap: {err}");
+            return;
+        }
+    };
+    let new_keymap = match wkb.as_xkb_string() {
+        Some(keymap) => keymap,
+        None => {
+            debug!("Failed to serialize virtual keyboard keymap");
+            return;
+        }
+    };
 
     // Store active virtual keyboard map.
     let mut inner = data.handle.inner.lock().unwrap();

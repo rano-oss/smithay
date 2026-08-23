@@ -8,9 +8,9 @@ use xkbcommon::xkb;
 /// For some modifiers, this means that the key is currently pressed, others are toggled/locked
 /// (like caps lock).
 ///
-/// **Note:** The XKB state should usually be the single source of truth, and the
-/// serialization is lossy and will not survive round trips. This is documented in
-/// [`xkb::State::update_mask`].
+/// **Note:** The WKB state should usually be the single source of truth. The serialized
+/// modifier masks in [`SerializedMods`] are authoritative when feeding state back into WKB;
+/// high-level fields are always rebuilt from WKB after an update.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ModifiersState {
     /// The "control" key
@@ -43,11 +43,10 @@ pub struct ModifiersState {
 }
 
 impl ModifiersState {
-    /// Updates the high-level modifiers state from an XKB state.
+    /// Updates the high-level modifiers state from a WKB instance.
     ///
-    /// **Note:** The XKB state should usually be the single source of truth, and the
-    /// serialization is lossy and will not survive round trips. This is documented in
-    /// [`xkb::State::update_mask`].
+    /// ISO Level3 maps to WKB Level3 (XKB Mod5 / AltGr). ISO Level5 maps to WKB Level5
+    /// (XKB Mod3). Prefer [`wkb::WKB::level3`] and [`wkb::WKB::level5`] when available.
     pub fn update_with(&mut self, wkb: &WKB) {
         self.ctrl = wkb.ctrl();
         self.alt = wkb.alt();
@@ -55,8 +54,8 @@ impl ModifiersState {
         self.caps_lock = wkb.caps_lock();
         self.logo = wkb.logo();
         self.num_lock = wkb.num_lock();
-        self.iso_level3_shift = wkb.mod3();
-        self.iso_level5_shift = wkb.mod5();
+        self.iso_level3_shift = wkb.level3();
+        self.iso_level5_shift = wkb.level5();
         self.serialized = serialize_modifiers(wkb);
     }
 

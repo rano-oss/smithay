@@ -1,6 +1,6 @@
 use reis::{eis::device::DeviceType, enumflags2::BitFlags, request::DeviceCapability};
-use wkb::WKB;
 use std::sync::{Arc, Mutex, Weak};
+use wkb::WKB;
 
 use crate::{
     backend::input::InputEvent,
@@ -84,7 +84,14 @@ impl EiInputSeat {
     ) -> Result<(), crate::input::keyboard::Error> {
         let mut inner = self.0.lock().unwrap();
         inner.device_keyboard = None;
-        let wkb = WKB::new_from_names(xkb_config.rules, xkb_config.model, xkb_config.layout, xkb_config.variant, xkb_config.options.as_deref()).map_err(|_| {
+        let wkb = WKB::new_from_names(
+            xkb_config.rules,
+            xkb_config.model,
+            xkb_config.layout,
+            xkb_config.variant,
+            xkb_config.options.as_deref(),
+        )
+        .map_err(|_| {
             tracing::debug!("Loading keymap from XkbConfig failed");
             crate::input::keyboard::Error::BadKeymap
         })?;

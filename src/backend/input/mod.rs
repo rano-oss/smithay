@@ -13,7 +13,7 @@ pub use tablet::{
 #[cfg(feature = "wayland_frontend")]
 use wayland_server::protocol::wl_pointer;
 
-use crate::{input::keyboard::EvdevCode, utils::{Logical, Point, Raw, Size}};
+use crate::utils::{Logical, Point, Raw, Size};
 
 /// Trait for generic functions every input device does provide
 pub trait Device: PartialEq + Eq + std::hash::Hash {
@@ -104,7 +104,7 @@ pub trait KeyboardKeyEvent<B: InputBackend>: Event<B> {
     /// `input-event-codes.h`.
     ///
     /// [input event codes]: https://gitlab.freedesktop.org/libinput/libinput/-/blob/main/include/linux/linux/input-event-codes.h
-    fn key_code(&self) -> EvdevCode;
+    fn key_code(&self) -> u32;
 
     /// State of the key
     fn state(&self) -> KeyState;
@@ -114,7 +114,7 @@ pub trait KeyboardKeyEvent<B: InputBackend>: Event<B> {
 }
 
 impl<B: InputBackend> KeyboardKeyEvent<B> for UnusedEvent {
-    fn key_code(&self) -> EvdevCode {
+    fn key_code(&self) -> u32 {
         match *self {}
     }
 
