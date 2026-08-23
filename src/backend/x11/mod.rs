@@ -82,7 +82,7 @@ use crate::{
         allocator::{Allocator, Swapchain},
         drm::{CreateDrmNodeError, DrmNode, NodeType},
         egl::{EGLDevice, EGLDisplay, Error as EGLError, native::X11DefaultDisplay},
-        input::{Axis, ButtonState, InputEvent, KeyState, Keycode},
+        input::{Axis, ButtonState, InputEvent, KeyState},
     },
     utils::{Logical, Size, x11rb::X11Source},
 };
@@ -807,7 +807,7 @@ impl X11Inner {
                             event: InputEvent::Keyboard {
                                 event: X11KeyboardInputEvent {
                                     time: key_press.time,
-                                    key: Keycode::from(key_press.detail),
+                                    key: key_press.detail as u32,
                                     count,
                                     state: KeyState::Pressed,
                                     window,
@@ -838,7 +838,7 @@ impl X11Inner {
                             event: InputEvent::Keyboard {
                                 event: X11KeyboardInputEvent {
                                     time: key_release.time,
-                                    key: Keycode::from(key_release.detail),
+                                    key: key_release.detail as u32,
                                     count,
                                     state: KeyState::Released,
                                     window,

@@ -1,7 +1,6 @@
 //! Common traits for input backends to receive input from.
 
 use std::path::PathBuf;
-pub use xkbcommon::xkb::Keycode;
 
 mod tablet;
 

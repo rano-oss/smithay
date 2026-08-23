@@ -4,7 +4,7 @@ use super::{Window, WindowTemporary, window_inner::WindowInner};
 use crate::{
     backend::input::{
         self, AbsolutePositionEvent, Axis, AxisRelativeDirection, AxisSource, ButtonState, Device,
-        DeviceCapability, InputBackend, KeyState, KeyboardKeyEvent, Keycode, PointerAxisEvent,
+        DeviceCapability, InputBackend, KeyState, KeyboardKeyEvent, PointerAxisEvent,
         PointerButtonEvent, PointerMotionAbsoluteEvent, UnusedEvent,
     },
     utils::{Logical, Size},
@@ -48,7 +48,7 @@ impl Device for X11VirtualDevice {
 #[derive(Debug, Clone)]
 pub struct X11KeyboardInputEvent {
     pub(crate) time: u32,
-    pub(crate) key: Keycode,
+    pub(crate) key: u32,
     pub(crate) count: u32,
     pub(crate) state: KeyState,
     pub(crate) window: Weak<WindowInner>,
@@ -75,7 +75,7 @@ impl input::Event<X11Input> for X11KeyboardInputEvent {
 
 impl KeyboardKeyEvent<X11Input> for X11KeyboardInputEvent {
     fn key_code(&self) -> u32 {
-        u32::from(self.key).saturating_sub(8)
+        self.key.saturating_sub(8)
     }
 
     fn state(&self) -> KeyState {

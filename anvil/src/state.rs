@@ -28,7 +28,7 @@ use smithay::{
     input::{
         Seat, SeatHandler, SeatState,
         dnd::{DnDGrab, DndGrabHandler, DndTarget, GrabType, Source},
-        keyboard::{Keysym, LedState, XkbConfig},
+        keyboard::{LedState, XkbConfig},
         pointer::{CursorImageStatus, Focus, PointerHandle},
         tablet::TabletSeatHandler,
     },
@@ -169,7 +169,7 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub dnd_icon: Option<DndIcon>,
 
     // input-related fields
-    pub suppressed_keys: Vec<Keysym>,
+    pub suppressed_keys: Vec<u32>,
     pub cursor_status: CursorImageStatus,
     pub seat_name: String,
     pub seat: Seat<AnvilState<BackendData>>,

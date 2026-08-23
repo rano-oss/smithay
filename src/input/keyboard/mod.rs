@@ -13,9 +13,7 @@ use std::{
 };
 use thiserror::Error;
 use tracing::{debug, info, info_span, instrument, trace};
-use wkb::{NamedKey, PhysicalKey, WKB};
-
-pub use xkbcommon::xkb::{self, ContextFlags, Keysym, keysyms};
+pub use wkb::{NamedKey, PhysicalKey, WKB};
 
 use super::{GrabStatus, Seat, SeatHandler};
 
@@ -362,49 +360,6 @@ impl<'a> KeyHandle<'a> {
     pub fn wkb(&self) -> &Mutex<WKB> {
         self.wkb
     }
-
-    /// Resolve an XKB keysym suitable for compositor shortcut matching.
-    ///
-    /// Logo/Ctrl/Alt do not suppress the resolved keysym, so callers can match
-    /// bindings like Super+Q by checking [`ModifiersState`] separately.
-    pub fn keysym(&self) -> Keysym {
-        let wkb = self.wkb().lock().unwrap();
-        let layout = wkb.active_layout_idx();
-        let code = self.evdev_code;
-
-        if let Some(ch) = wkb.key_char(code) {
-            return Keysym::from_char(ch);
-        }
-
-        let level = usize::from(wkb.shift());
-        if let Some(ch) = wkb.level_char(code, layout, level) {
-            return Keysym::from_char(ch);
-        }
-        if let Some(ch) = wkb.level_char(code, layout, 0) {
-            return Keysym::from_char(ch);
-        }
-
-        let named = wkb.named_key(code);
-        if named != NamedKey::Unnamed {
-            return named_key_to_keysym(named);
-        }
-
-        Keysym::NoSymbol
-    }
-}
-
-fn named_key_to_keysym(key: NamedKey) -> Keysym {
-    use NamedKey::*;
-    match key {
-        Unnamed => Keysym::NoSymbol,
-        Backspace => Keysym::BackSpace,
-        Enter => Keysym::Return,
-        Tab => Keysym::Tab,
-        Escape => Keysym::Escape,
-        Delete => Keysym::Delete,
-        Space => Keysym::space,
-        _ => Keysym::NoSymbol,
-    }
 }
 
 /// The currently active WKB state exposed for layout changes and other mutations.
@@ -470,7 +425,7 @@ impl fmt::Debug for WkbContext<'_> {
 ///
 /// The layout may become invalid after calling [`KeyboardHandle::set_xkb_config`]
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Layout(pub xkb::LayoutIndex);
+pub struct Layout(pub u32);
 
 /// Result for key input filtering (see [`KeyboardHandle::input`])
 #[derive(Debug)]
@@ -735,7 +690,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         }
     }
 
-    /// Change the [`Keymap`](xkb::Keymap) used by the keyboard.
+    /// Change the keymap used by the keyboard.
     ///
     /// The input is a keymap in XKB_KEYMAP_FORMAT_TEXT_V1 format.
     pub fn set_keymap_from_string(&self, data: &mut D, keymap: String) -> Result<(), Error> {
@@ -873,8 +828,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// [`FilterResult::Intercept`], a value can be passed to be returned by the whole function.
     /// This mechanism can be used to implement compositor-level key bindings for example.
     ///
-    /// The module [`keysyms`] exposes definitions of all possible keysyms to be compared against.
-    /// This includes non-character keysyms, such as XF86 special keys.
+    /// The `filter` closure receives the current [`ModifiersState`] and a [`KeyHandle`]
+    /// for the key event. Match shortcuts using [`KeyHandle::physical_key`] and
+    /// [`KeyHandle::named_key`] rather than character identity.
     #[instrument(level = "trace", parent = &self.arc.span, skip(self, data, filter))]
     pub fn input<T, F>(
         &self,
@@ -1059,8 +1015,8 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         guard.pressed_keys.clone()
     }
 
-    /// Iterate over the keysyms of the currently pressed keys.
-    pub fn with_pressed_keysyms<F, R>(&self, f: F) -> R
+    /// Iterate over the currently pressed keys.
+    pub fn with_pressed_keys<F, R>(&self, f: F) -> R
     where
         F: FnOnce(Vec<KeyHandle<'_>>) -> R,
         R: 'static,
@@ -1077,6 +1033,16 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 .collect::<Vec<_>>();
             f(handles)
         }
+    }
+
+    /// Deprecated alias for [`Self::with_pressed_keys`].
+    #[deprecated(note = "use `with_pressed_keys` instead")]
+    pub fn with_pressed_keysyms<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(Vec<KeyHandle<'_>>) -> R,
+        R: 'static,
+    {
+        self.with_pressed_keys(f)
     }
 
     /// Get the current modifiers state.
@@ -1189,35 +1155,35 @@ where
     D: SeatHandler + 'static,
     <D as SeatHandler>::KeyboardFocus: crate::wayland::seat::WaylandFocus,
 {
-    /// Inject a batch of keysyms as text into the currently focused client (KWin-style).
+    /// Inject a batch of Unicode text into the currently focused client (KWin-style).
     ///
     /// This is a helper/fallback: a compositor should prefer delivering text through the
     /// text-input protocol (`zwp_text_input_v3::commit_string`) when a text-input client is
     /// focused, and fall back to this for clients that aren't (terminals, games, ...).
     ///
-    /// Builds a throwaway keymap that binds each keysym to its own spare keycode at base level
+    /// Builds a throwaway keymap that binds each character to its own spare keycode at base level
     /// (so no modifiers are ever needed), hands that keymap to clients, taps each keycode on the
-    /// focused client, then restores the seat keymap. The compositor's own seat xkb state is
+    /// focused client, then restores the seat keymap. The compositor's own WKB state is
     /// **never** touched, so shortcut handling and physical-keyboard state are unaffected.
     /// `modifiers(0)` accompanies the injection keymap so any modifier the seat currently holds
     /// (e.g. a physically-held Shift) doesn't alter the injected characters.
-    pub fn inject_text_keysyms(&self, data: &mut D, keysyms: &[Keysym]) {
+    pub fn inject_text(&self, data: &mut D, text: &str) {
         const FIRST: u32 = 9;
         let mut keycode_decls = String::new();
         let mut symbol_decls = String::new();
-        let mut codes = Vec::with_capacity(keysyms.len());
-        for (i, keysym) in keysyms.iter().enumerate() {
+        let mut codes = Vec::new();
+        for (i, ch) in text.chars().enumerate() {
             let xkb_code = FIRST + i as u32;
             let evdev_code = xkb_code - 8;
             if xkb_code > 255 {
                 break;
             }
-            let name = xkb::keysym_get_name(*keysym);
-            if name.is_empty() || name == "NoSymbol" {
+            let symbol = char_to_xkb_symbol(ch);
+            if symbol.is_empty() {
                 continue;
             }
             keycode_decls.push_str(&format!("    <K{xkb_code}> = {xkb_code};\n"));
-            symbol_decls.push_str(&format!("    key <K{xkb_code}> {{ [ {name} ] }};\n"));
+            symbol_decls.push_str(&format!("    key <K{xkb_code}> {{ [ {symbol} ] }};\n"));
             codes.push(evdev_code);
         }
         if codes.is_empty() {
@@ -1273,6 +1239,14 @@ where
         let seat_keymap = self.arc.keymap.lock().unwrap();
         let focus = guard.focus.as_mut().map(|(focus, _)| focus);
         self.send_keymap(data, &focus, &seat_keymap, seat_mods);
+    }
+}
+
+fn char_to_xkb_symbol(ch: char) -> String {
+    if ch.is_ascii() && !ch.is_control() && ch != '"' {
+        format!("{ch}")
+    } else {
+        format!("U{:04X}", ch as u32)
     }
 }
 
@@ -1398,7 +1372,7 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
     }
 
     /// Iterate over the currently pressed keys.
-    pub fn with_pressed_keysyms<F, R>(&self, f: F) -> R
+    pub fn with_pressed_keys<F, R>(&self, f: F) -> R
     where
         F: FnOnce(Vec<KeyHandle<'_>>) -> R,
         R: 'static,
@@ -1410,6 +1384,16 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
             .map(|code| self.key_handle(*code))
             .collect();
         f(handles)
+    }
+
+    /// Deprecated alias for [`Self::with_pressed_keys`].
+    #[deprecated(note = "use `with_pressed_keys` instead")]
+    pub fn with_pressed_keysyms<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(Vec<KeyHandle<'_>>) -> R,
+        R: 'static,
+    {
+        self.with_pressed_keys(f)
     }
 
     /// The forwarded held keys and modifier state to announce to a newly-focused target on a
