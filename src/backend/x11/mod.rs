@@ -807,7 +807,7 @@ impl X11Inner {
                             event: InputEvent::Keyboard {
                                 event: X11KeyboardInputEvent {
                                     time: key_press.time,
-                                    key: key_press.detail as u32,
+                                    key: key_press.detail,
                                     count,
                                     state: KeyState::Pressed,
                                     window,
@@ -838,7 +838,7 @@ impl X11Inner {
                             event: InputEvent::Keyboard {
                                 event: X11KeyboardInputEvent {
                                     time: key_release.time,
-                                    key: key_release.detail as u32,
+                                    key: key_release.detail,
                                     count,
                                     state: KeyState::Released,
                                     window,

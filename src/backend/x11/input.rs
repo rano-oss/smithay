@@ -4,8 +4,8 @@ use super::{Window, WindowTemporary, window_inner::WindowInner};
 use crate::{
     backend::input::{
         self, AbsolutePositionEvent, Axis, AxisRelativeDirection, AxisSource, ButtonState, Device,
-        DeviceCapability, InputBackend, KeyState, KeyboardKeyEvent, PointerAxisEvent,
-        PointerButtonEvent, PointerMotionAbsoluteEvent, UnusedEvent,
+        DeviceCapability, InputBackend, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+        PointerMotionAbsoluteEvent, UnusedEvent,
     },
     utils::{Logical, Size},
 };

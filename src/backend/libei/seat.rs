@@ -89,7 +89,7 @@ impl EiInputSeat {
             xkb_config.model,
             xkb_config.layout,
             xkb_config.variant,
-            xkb_config.options.as_deref(),
+            xkb_config.options,
         )
         .map_err(|_| {
             tracing::debug!("Loading keymap from XkbConfig failed");

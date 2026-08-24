@@ -147,7 +147,7 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
             xkb_config.model,
             xkb_config.layout,
             xkb_config.variant,
-            xkb_config.options.as_deref(),
+            xkb_config.options,
         )
         .map_err(|_| ())?;
         let led_state = led_state_from_wkb(&wkb);
@@ -652,7 +652,8 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         let mut internal = self.arc.internal.lock().unwrap();
 
         let previous_led_state = internal.led_state;
-        let _previous_mods = internal.mods_state;
+        #[cfg(not(feature = "wayland_frontend"))]
+        let previous_mods = internal.mods_state;
 
         for key in &internal.pressed_keys {
             wkb.press_key(*key);
@@ -694,9 +695,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     ///
     /// The input is a keymap in XKB_KEYMAP_FORMAT_TEXT_V1 format.
     pub fn set_keymap_from_string(&self, data: &mut D, keymap: String) -> Result<(), Error> {
-        let keymap = WKB::new_from_string(&keymap).or_else(|error| {
+        let keymap = WKB::new_from_string(&keymap).map_err(|error| {
             debug!("Loading keymap from string failed: {}", error);
-            Err(Error::BadKeymap)
+            Error::BadKeymap
         })?;
         // self.arc.internal.lock().unwrap().wkb = keymap;
         self.update_wkb_state(data, keymap);
@@ -710,11 +711,11 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             xkb_config.model,
             xkb_config.layout,
             xkb_config.variant,
-            xkb_config.options.as_deref(),
+            xkb_config.options,
         )
-        .or_else(|error| {
+        .map_err(|error| {
             debug!("Loading keymap from string failed: {}", error);
-            Err(Error::BadKeymap)
+            Error::BadKeymap
         })?;
         self.update_wkb_state(data, keymap);
         Ok(())
