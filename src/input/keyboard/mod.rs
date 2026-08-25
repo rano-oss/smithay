@@ -662,6 +662,8 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             mods_state
         };
         let led_state = led_state_from_wkb(&wkb);
+
+        #[cfg(feature = "wayland_frontend")]
         let keymap = wkb.as_xkb_string().unwrap_or_default();
 
         internal.wkb = Arc::new(Mutex::new(wkb));
@@ -1170,18 +1172,18 @@ where
         let mut keycode_decls = String::new();
         let mut symbol_decls = String::new();
         let mut codes = Vec::new();
-        for (i, ch) in text.chars().enumerate() {
+        for (i, _ch) in text.chars().enumerate() {
             let xkb_code = FIRST + i as u32;
             let evdev_code = xkb_code - 8;
             if xkb_code > 255 {
                 break;
             }
-            let symbol = char_to_xkb_symbol(ch);
-            if symbol.is_empty() {
+            let symbol = PhysicalKey::from_evdev(evdev_code);
+            if symbol == PhysicalKey::Unidentified {
                 continue;
             }
             keycode_decls.push_str(&format!("    <K{xkb_code}> = {xkb_code};\n"));
-            symbol_decls.push_str(&format!("    key <K{xkb_code}> {{ [ {symbol} ] }};\n"));
+            symbol_decls.push_str(&format!("    key <K{xkb_code}> {{ [ {symbol:?} ] }};\n"));
             codes.push(evdev_code);
         }
         if codes.is_empty() {
@@ -1237,14 +1239,6 @@ where
         let seat_keymap = self.arc.keymap.lock().unwrap();
         let focus = guard.focus.as_mut().map(|(focus, _)| focus);
         self.send_keymap(data, &focus, &seat_keymap, seat_mods);
-    }
-}
-
-fn char_to_xkb_symbol(ch: char) -> String {
-    if ch.is_ascii() && !ch.is_control() && ch != '"' {
-        format!("{ch}")
-    } else {
-        format!("U{:04X}", ch as u32)
     }
 }
 
