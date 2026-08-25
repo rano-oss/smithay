@@ -30,8 +30,6 @@ pub use modifiers_state::{ModifiersState, SerializedMods};
 mod xkb_config;
 pub use xkb_config::XkbConfig;
 
-#[cfg(test)]
-
 /// Trait representing object that can receive keyboard interactions
 pub trait KeyboardTarget<D>: IsAlive + fmt::Debug + Send
 where
