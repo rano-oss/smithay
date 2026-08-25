@@ -1172,18 +1172,22 @@ where
         let mut keycode_decls = String::new();
         let mut symbol_decls = String::new();
         let mut codes = Vec::new();
-        for (i, _ch) in text.chars().enumerate() {
+        for (i, ch) in text.chars().enumerate() {
             let xkb_code = FIRST + i as u32;
             let evdev_code = xkb_code - 8;
             if xkb_code > 255 {
                 break;
             }
-            let symbol = PhysicalKey::from_evdev(evdev_code);
-            if symbol == PhysicalKey::Unidentified {
+            if ch.is_control() {
                 continue;
             }
+            let symbol = if ch.is_ascii() && ch != '"' {
+                format!("{ch}")
+            } else {
+                format!("U{:04X}", ch as u32)
+            };
             keycode_decls.push_str(&format!("    <K{xkb_code}> = {xkb_code};\n"));
-            symbol_decls.push_str(&format!("    key <K{xkb_code}> {{ [ {symbol:?} ] }};\n"));
+            symbol_decls.push_str(&format!("    key <K{xkb_code}> {{ [ {symbol} ] }};\n"));
             codes.push(evdev_code);
         }
         if codes.is_empty() {
