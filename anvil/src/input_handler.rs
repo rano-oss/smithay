@@ -14,7 +14,7 @@ use smithay::{
     },
     desktop::{WindowSurfaceType, layer_map_for_output},
     input::{
-        keyboard::{FilterResult, Keysym, ModifiersState, keysyms as xkb},
+        keyboard::{FilterResult, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
         tablet::{TabletDescriptor, TabletSeatTrait},
         touch::{DownEvent, UpEvent},
@@ -31,6 +31,8 @@ use smithay::{
         shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer},
     },
 };
+
+use wkb::{NamedKey, PhysicalKey};
 
 use smithay::backend::input::AbsolutePositionEvent;
 
@@ -173,13 +175,17 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
         let action = keyboard
             .input(self, keycode, state, serial, time, |_, modifiers, handle| {
-                let keysym = handle.modified_sym();
+                let evdev = handle.evdev_code();
+                let physical = handle.physical_key();
+                let named = handle.named_key();
 
                 debug!(
                     ?state,
                     mods = ?modifiers,
-                    keysym = ::xkbcommon::xkb::keysym_get_name(keysym),
-                    "keysym"
+                    physical = ?physical,
+                    named = ?named,
+                    evdev,
+                    "key"
                 );
 
                 // If the key is pressed and triggered a action
@@ -189,10 +195,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 // should be forwarded to the client or not.
                 if let KeyState::Pressed = state {
                     if !inhibited {
-                        let action = process_keyboard_shortcut(*modifiers, keysym);
+                        let action = process_keyboard_shortcut(*modifiers, physical, named);
 
                         if action.is_some() {
-                            suppressed_keys.push(keysym);
+                            suppressed_keys.push(evdev);
                         }
 
                         action
@@ -202,9 +208,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                         FilterResult::Forward
                     }
                 } else {
-                    let suppressed = suppressed_keys.contains(&keysym);
+                    let suppressed = suppressed_keys.contains(&evdev);
                     if suppressed {
-                        suppressed_keys.retain(|k| *k != keysym);
+                        suppressed_keys.retain(|k| *k != evdev);
                         FilterResult::Intercept(KeyAction::None)
                     } else {
                         FilterResult::Forward
@@ -1367,34 +1373,56 @@ enum KeyAction {
     None,
 }
 
-fn process_keyboard_shortcut(modifiers: ModifiersState, keysym: Keysym) -> Option<KeyAction> {
-    if modifiers.ctrl && modifiers.alt && keysym == Keysym::BackSpace || modifiers.logo && keysym == Keysym::q
+fn process_keyboard_shortcut(
+    modifiers: ModifiersState,
+    physical: PhysicalKey,
+    named: NamedKey,
+) -> Option<KeyAction> {
+    if modifiers.ctrl && modifiers.alt && named == NamedKey::Backspace
+        || modifiers.logo && physical == PhysicalKey::KeyQ
     {
-        // ctrl+alt+backspace = quit
-        // logo + q = quit
         Some(KeyAction::Quit)
-    } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym.raw()) {
-        // VTSwitch
-        Some(KeyAction::VtSwitch(
-            (keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32,
-        ))
-    } else if modifiers.logo && keysym == Keysym::Return {
-        // run terminal
+    } else if modifiers.ctrl && modifiers.alt {
+        match physical {
+            PhysicalKey::F1 => Some(KeyAction::VtSwitch(1)),
+            PhysicalKey::F2 => Some(KeyAction::VtSwitch(2)),
+            PhysicalKey::F3 => Some(KeyAction::VtSwitch(3)),
+            PhysicalKey::F4 => Some(KeyAction::VtSwitch(4)),
+            PhysicalKey::F5 => Some(KeyAction::VtSwitch(5)),
+            PhysicalKey::F6 => Some(KeyAction::VtSwitch(6)),
+            PhysicalKey::F7 => Some(KeyAction::VtSwitch(7)),
+            PhysicalKey::F8 => Some(KeyAction::VtSwitch(8)),
+            PhysicalKey::F9 => Some(KeyAction::VtSwitch(9)),
+            PhysicalKey::F10 => Some(KeyAction::VtSwitch(10)),
+            PhysicalKey::F11 => Some(KeyAction::VtSwitch(11)),
+            PhysicalKey::F12 => Some(KeyAction::VtSwitch(12)),
+            _ => None,
+        }
+    } else if modifiers.logo && named == NamedKey::Enter {
         Some(KeyAction::Run("weston-terminal".into()))
-    } else if modifiers.logo && (xkb::KEY_1..=xkb::KEY_9).contains(&keysym.raw()) {
-        Some(KeyAction::Screen((keysym.raw() - xkb::KEY_1) as usize))
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::M {
-        Some(KeyAction::ScaleDown)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::P {
-        Some(KeyAction::ScaleUp)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::W {
-        Some(KeyAction::TogglePreview)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::R {
-        Some(KeyAction::RotateOutput)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::T {
-        Some(KeyAction::ToggleTint)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::D {
-        Some(KeyAction::ToggleDecorations)
+    } else if modifiers.logo && modifiers.shift {
+        match physical {
+            PhysicalKey::KeyM => Some(KeyAction::ScaleDown),
+            PhysicalKey::KeyP => Some(KeyAction::ScaleUp),
+            PhysicalKey::KeyW => Some(KeyAction::TogglePreview),
+            PhysicalKey::KeyR => Some(KeyAction::RotateOutput),
+            PhysicalKey::KeyT => Some(KeyAction::ToggleTint),
+            PhysicalKey::KeyD => Some(KeyAction::ToggleDecorations),
+            _ => None,
+        }
+    } else if modifiers.logo {
+        match physical {
+            PhysicalKey::Digit1 => Some(KeyAction::Screen(0)),
+            PhysicalKey::Digit2 => Some(KeyAction::Screen(1)),
+            PhysicalKey::Digit3 => Some(KeyAction::Screen(2)),
+            PhysicalKey::Digit4 => Some(KeyAction::Screen(3)),
+            PhysicalKey::Digit5 => Some(KeyAction::Screen(4)),
+            PhysicalKey::Digit6 => Some(KeyAction::Screen(5)),
+            PhysicalKey::Digit7 => Some(KeyAction::Screen(6)),
+            PhysicalKey::Digit8 => Some(KeyAction::Screen(7)),
+            PhysicalKey::Digit9 => Some(KeyAction::Screen(8)),
+            _ => None,
+        }
     } else {
         None
     }

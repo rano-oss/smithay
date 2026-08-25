@@ -2,8 +2,6 @@
 
 use std::path::PathBuf;
 
-pub use xkbcommon::xkb::Keycode;
-
 mod tablet;
 
 pub use tablet::{
@@ -105,7 +103,7 @@ pub trait KeyboardKeyEvent<B: InputBackend>: Event<B> {
     /// `input-event-codes.h`.
     ///
     /// [input event codes]: https://gitlab.freedesktop.org/libinput/libinput/-/blob/main/include/linux/linux/input-event-codes.h
-    fn key_code(&self) -> Keycode;
+    fn key_code(&self) -> u32;
 
     /// State of the key
     fn state(&self) -> KeyState;
@@ -115,7 +113,7 @@ pub trait KeyboardKeyEvent<B: InputBackend>: Event<B> {
 }
 
 impl<B: InputBackend> KeyboardKeyEvent<B> for UnusedEvent {
-    fn key_code(&self) -> Keycode {
+    fn key_code(&self) -> u32 {
         match *self {}
     }
 

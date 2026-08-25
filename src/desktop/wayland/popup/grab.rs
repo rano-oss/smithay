@@ -1,12 +1,13 @@
 use std::{
     fmt,
+    mem::take,
     sync::{Arc, Mutex},
 };
 
 use wayland_server::{Resource, protocol::wl_surface::WlSurface};
 
 use crate::{
-    backend::input::{ButtonState, KeyState, Keycode},
+    backend::input::{ButtonState, KeyState},
     input::{
         SeatHandler,
         keyboard::{
@@ -170,7 +171,7 @@ impl PopupGrabInner {
                 }
             }
             PopupUngrabStrategy::All => {
-                let grabs = guard.active_grabs.drain(..).collect::<Vec<_>>();
+                let grabs = take(&mut guard.active_grabs);
 
                 if let Some(grab) = grabs.first() {
                     let dismissed = PopupManager::dismiss_popup(root, grab);
@@ -442,7 +443,7 @@ where
         &mut self,
         data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
-        keycode: Keycode,
+        keycode: u32,
         state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,

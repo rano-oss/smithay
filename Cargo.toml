@@ -65,7 +65,6 @@ wayland-sys = { version = "0.31.11", optional = true }
 wayland-backend = { version = "0.3.15", optional = true }
 winit = { version = "0.31.0-beta.2", default-features = false, features = ["wayland", "wayland-dlopen", "x11"], optional = true }
 x11rb = { version = "0.13.0", optional = true, features = ["res", "sync"]}
-xkbcommon = { version = "0.9.0", features = ["wayland"]}
 encoding_rs = { version = "0.8.33", optional = true }
 profiling = "1.0.13"
 smallvec = "1.11"
@@ -76,6 +75,7 @@ sha2 = "0.10.9"
 tracy-client = { version = "0.18.4", default-features = false, optional = true }
 reis = { version = "0.7.0", features = ["calloop"] }
 glam = { version = "0.33.2", default-features = false, features = ["std"] }
+wayland-keyboard = "0.3.1"
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }

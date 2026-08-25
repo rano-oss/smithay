@@ -13,9 +13,7 @@ use std::{
 };
 use thiserror::Error;
 use tracing::{debug, info, info_span, instrument, trace};
-
-use xkbcommon::xkb::ffi::XKB_STATE_LAYOUT_EFFECTIVE;
-pub use xkbcommon::xkb::{self, ContextFlags, Keycode, Keysym, keysyms};
+pub use wkb::{NamedKey, PhysicalKey, WKB};
 
 use super::{GrabStatus, Seat, SeatHandler};
 
@@ -38,7 +36,7 @@ where
     D: SeatHandler,
 {
     /// Keyboard focus of a given seat was assigned to this handler
-    fn enter(&self, seat: &Seat<D>, data: &mut D, keys: Vec<KeysymHandle<'_>>, serial: Serial);
+    fn enter(&self, seat: &Seat<D>, data: &mut D, keys: Vec<KeyHandle<'_>>, serial: Serial);
     /// The keyboard focus of a given seat left this handler
     fn leave(&self, seat: &Seat<D>, data: &mut D, serial: Serial);
     /// A key was pressed on a keyboard from a given seat
@@ -46,7 +44,7 @@ where
         &self,
         seat: &Seat<D>,
         data: &mut D,
-        key: KeysymHandle<'_>,
+        key: KeyHandle<'_>,
         state: KeyState,
         serial: Serial,
         time: u32,
@@ -59,44 +57,13 @@ where
         replaced: <D as SeatHandler>::KeyboardFocus,
         seat: &Seat<D>,
         data: &mut D,
-        keys: Vec<KeysymHandle<'_>>,
+        keys: Vec<KeyHandle<'_>>,
         modifiers: ModifiersState,
         serial: Serial,
     ) {
         KeyboardTarget::<D>::leave(&replaced, seat, data, serial);
         KeyboardTarget::<D>::enter(self, seat, data, keys, serial);
         KeyboardTarget::<D>::modifiers(self, seat, data, modifiers, serial);
-    }
-}
-
-/// Mapping of the led of a keymap
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LedMapping {
-    /// Index of the NUMLOCK led
-    pub num: Option<xkb::LedIndex>,
-    /// Index of the CAPSLOCK led
-    pub caps: Option<xkb::LedIndex>,
-    /// Index of the SCROLLLOCK led
-    pub scroll: Option<xkb::LedIndex>,
-}
-
-impl LedMapping {
-    /// Get the mapping from a keymap
-    pub fn from_keymap(keymap: &xkb::Keymap) -> Self {
-        Self {
-            num: match keymap.led_get_index(xkb::LED_NAME_NUM) {
-                xkb::LED_INVALID => None,
-                index => Some(index),
-            },
-            caps: match keymap.led_get_index(xkb::LED_NAME_CAPS) {
-                xkb::LED_INVALID => None,
-                index => Some(index),
-            },
-            scroll: match keymap.led_get_index(xkb::LED_NAME_SCROLL) {
-                xkb::LED_INVALID => None,
-                index => Some(index),
-            },
-        }
     }
 }
 
@@ -111,97 +78,14 @@ pub struct LedState {
     pub scroll: Option<bool>,
 }
 
-impl LedState {
-    /// Update the led state from an xkb state and mapping
-    ///
-    /// Returns whether the led state changed
-    pub fn update_with(&mut self, state: &xkb::State, mapping: &LedMapping) -> bool {
-        let previous_state = *self;
-        self.num = mapping.num.map(|idx| state.led_index_is_active(idx));
-        self.caps = mapping.caps.map(|idx| state.led_index_is_active(idx));
-        self.scroll = mapping.scroll.map(|idx| state.led_index_is_active(idx));
-        *self != previous_state
-    }
-
-    /// Initialize the led state from an xkb state and mapping
-    pub fn from_state(state: &xkb::State, mapping: &LedMapping) -> Self {
-        let mut led_state = LedState::default();
-        led_state.update_with(state, mapping);
-        led_state
+fn led_state_from_wkb(wkb: &WKB) -> LedState {
+    let leds = wkb.leds_state();
+    LedState {
+        num: Some(leds.num_lock),
+        caps: Some(leds.caps_lock),
+        scroll: Some(leds.scroll_lock),
     }
 }
-
-/// An xkbcommon context, keymap, and state, that can be sent to another
-/// thread, but should not have additional ref-counts kept on one thread.
-pub struct Xkb {
-    context: xkb::Context,
-    keymap: xkb::Keymap,
-    state: xkb::State,
-}
-
-impl Xkb {
-    /// The xkbcommon context.
-    ///
-    /// # Safety
-    /// A ref-count of the context should not outlive the `Xkb`
-    pub unsafe fn context(&self) -> &xkb::Context {
-        &self.context
-    }
-
-    /// The xkbcommon keymap.
-    ///
-    /// # Safety
-    /// A ref-count of the keymap should not outlive the `Xkb`
-    pub unsafe fn keymap(&self) -> &xkb::Keymap {
-        &self.keymap
-    }
-
-    /// The xkbcommon state.
-    ///
-    /// # Safety
-    /// A ref-count of the state should not outlive the `Xkb`
-    pub unsafe fn state(&self) -> &xkb::State {
-        &self.state
-    }
-
-    /// Get the active layout of the keyboard.
-    pub fn active_layout(&self) -> Layout {
-        (0..self.keymap.num_layouts())
-            .find(|&idx| self.state.layout_index_is_active(idx, XKB_STATE_LAYOUT_EFFECTIVE))
-            .map(Layout)
-            .unwrap_or_default()
-    }
-
-    /// Get the human readable name for the layout.
-    pub fn layout_name(&self, layout: Layout) -> &str {
-        self.keymap.layout_get_name(layout.0)
-    }
-
-    /// Iterate over layouts present in the keymap.
-    pub fn layouts(&self) -> impl Iterator<Item = Layout> + use<> {
-        (0..self.keymap.num_layouts()).map(Layout)
-    }
-
-    /// Returns the syms for the underlying keycode without any modifications by the current keymap
-    /// state applied.
-    pub fn raw_syms_for_key_in_layout(&self, keycode: Keycode, layout: Layout) -> &[Keysym] {
-        self.keymap.key_get_syms_by_level(keycode, layout.0, 0)
-    }
-}
-
-impl fmt::Debug for Xkb {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Xkb")
-            .field("context", &self.context.get_raw_ptr())
-            .field("keymap", &self.keymap.get_raw_ptr())
-            .field("state", &self.state.get_raw_ptr())
-            .finish()
-    }
-}
-
-// This is OK because all parts of `xkb` will remain on the
-// same thread
-unsafe impl Send for Xkb {}
 
 /// Identifies which input source a key event comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -227,14 +111,13 @@ impl KeyboardSource {
 pub(crate) struct KbdInternal<D: SeatHandler> {
     pub(crate) focus: Option<(<D as SeatHandler>::KeyboardFocus, Serial)>,
     pending_focus: Option<<D as SeatHandler>::KeyboardFocus>,
-    pub(crate) pressed_keys: HashSet<Keycode>,
-    pub(crate) key_sources: HashMap<Keycode, HashSet<KeyboardSource>>,
-    pub(crate) forwarded_pressed_keys: HashSet<Keycode>,
+    pub(crate) pressed_keys: HashSet<u32>,
+    pub(crate) key_sources: HashMap<u32, HashSet<KeyboardSource>>,
+    pub(crate) forwarded_pressed_keys: HashSet<u32>,
     pub(crate) mods_state: ModifiersState,
-    xkb: Arc<Mutex<Xkb>>,
+    wkb: Arc<Mutex<WKB>>,
     pub(crate) repeat_rate: i32,
     pub(crate) repeat_delay: i32,
-    led_mapping: LedMapping,
     pub(crate) led_state: LedState,
     grab: GrabStatus<dyn KeyboardGrab<D>>,
 }
@@ -248,52 +131,37 @@ impl<D: SeatHandler> fmt::Debug for KbdInternal<D> {
             .field("pressed_keys", &self.pressed_keys)
             .field("forwarded_pressed_keys", &self.forwarded_pressed_keys)
             .field("mods_state", &self.mods_state)
-            .field("xkb", &self.xkb)
             .field("repeat_rate", &self.repeat_rate)
             .field("repeat_delay", &self.repeat_delay)
             .finish()
     }
 }
 
-// This is OK because all parts of `xkb` will remain on the
-// same thread
-unsafe impl<D: SeatHandler> Send for KbdInternal<D> {}
-
 impl<D: SeatHandler + 'static> KbdInternal<D> {
-    fn new(
-        xkb_config: XkbConfig<'_>,
-        repeat_rate: i32,
-        repeat_delay: i32,
-        context_flags: ContextFlags,
-    ) -> Result<KbdInternal<D>, ()> {
-        // we create a new context for each keyboard because libxkbcommon is actually NOT threadsafe
-        // so confining it inside the KbdInternal allows us to use Rusts mutability rules to make
-        // sure nothing goes wrong.
-        //
-        // FIXME: This is an issue with the xkbcommon-rs crate that does not reflect this
-        // non-threadsafety properly.
-        let context = xkb::Context::new(context_flags);
-        let keymap = xkb_config.compile_keymap(&context)?;
-        let state = xkb::State::new(&keymap);
-        let led_mapping = LedMapping::from_keymap(&keymap);
-        let led_state = LedState::from_state(&state, &led_mapping);
+    fn new(xkb_config: XkbConfig<'_>, repeat_rate: i32, repeat_delay: i32) -> Result<KbdInternal<D>, ()> {
+        let wkb = WKB::new_from_names(
+            xkb_config.rules,
+            xkb_config.model,
+            xkb_config.layout,
+            xkb_config.variant,
+            xkb_config.options,
+        )
+        .map_err(|_| ())?;
+        let led_state = led_state_from_wkb(&wkb);
+        let mut mods_state = ModifiersState::default();
+        mods_state.update_with(&wkb);
         Ok(KbdInternal {
             focus: None,
             pending_focus: None,
             pressed_keys: HashSet::new(),
             key_sources: HashMap::new(),
             forwarded_pressed_keys: HashSet::new(),
-            mods_state: ModifiersState::default(),
-            xkb: Arc::new(Mutex::new(Xkb {
-                context,
-                keymap,
-                state,
-            })),
+            mods_state,
             repeat_rate,
             repeat_delay,
-            led_mapping,
             led_state,
             grab: GrabStatus::None,
+            wkb: Arc::new(Mutex::new(wkb)),
         })
     }
 
@@ -302,9 +170,10 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
     //
     // `is_transition` is `true` only when this event actually changes the combined pressed set
     // i.e. the first source to press a keycode, or the last source to release it.
-    fn key_input(&mut self, source: KeyboardSource, keycode: Keycode, state: KeyState) -> (bool, bool, bool) {
-        // track pressed keys per source, the seat xkb only follows the *combined* set
-        let direction = match state {
+    fn key_input(&mut self, source: KeyboardSource, keycode: u32, state: KeyState) -> (bool, bool, bool) {
+        // track pressed keys per source, the seat WKB only follows the *combined* set
+        let wkb = &mut self.wkb.lock().unwrap();
+        let changes = match state {
             KeyState::Pressed => {
                 let holders = self.key_sources.entry(keycode).or_default();
                 let was_held = !holders.is_empty();
@@ -314,7 +183,7 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
                     return (false, false, false);
                 }
                 self.pressed_keys.insert(keycode);
-                xkb::KeyDirection::Down
+                wkb.press_key(keycode)
             }
             KeyState::Released => {
                 match self.key_sources.get_mut(&keycode) {
@@ -326,7 +195,7 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
                         }
                         self.key_sources.remove(&keycode);
                         self.pressed_keys.remove(&keycode);
-                        xkb::KeyDirection::Up
+                        wkb.release_key(keycode)
                     }
                     // not tracked as held: absorb
                     None => return (false, false, false),
@@ -334,25 +203,22 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
             }
         };
 
-        // update state
-        // Offset the keycode by 8, as the evdev XKB rules reflect X's
-        // broken keycode system, which starts at 8.
-        let mut xkb = self.xkb.lock().unwrap();
-        let state_components = xkb.state.update_key(keycode, direction);
-        let modifiers_changed = state_components != 0;
-        if modifiers_changed {
-            self.mods_state.update_with(&xkb.state);
+        if changes.modifiers_updated {
+            self.mods_state.update_with(wkb);
         }
-        let leds_changed = self.led_state.update_with(&xkb.state, &self.led_mapping);
-        (modifiers_changed, leds_changed, true)
+        if changes.leds_updated {
+            self.led_state = led_state_from_wkb(wkb);
+        }
+
+        (changes.modifiers_updated, changes.leds_updated, true)
     }
 
     /// Release every keycode currently held by `source`, as if the source sent a release for
     /// each. A keycode only actually transitions up (and gets forwarded) if no other source is
     /// still holding it. Returns the keycodes that transitioned up, so the caller can forward
     /// the releases to the focused client.
-    fn release_source_keys(&mut self, source: KeyboardSource) -> Vec<Keycode> {
-        let held: Vec<Keycode> = self
+    fn release_source_keys(&mut self, source: KeyboardSource) -> Vec<u32> {
+        let held: Vec<u32> = self
             .key_sources
             .iter()
             .filter(|(_, holders)| holders.contains(&source))
@@ -414,8 +280,8 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
 /// Errors that can be encountered when creating a keyboard handler
 #[derive(Debug, Error)]
 pub enum Error {
-    /// libxkbcommon could not load the specified keymap
-    #[error("Libxkbcommon could not load the specified keymap")]
+    /// The keymap could not be loaded.
+    #[error("Failed to load the specified keymap")]
     BadKeymap,
     /// Smithay could not create a tempfile to share the keymap with clients
     #[error("Failed to create tempfile to share the keymap: {0}")]
@@ -454,157 +320,98 @@ impl<D: SeatHandler> fmt::Debug for KbdRc<D> {
     }
 }
 
-/// Handle to the underlying keycode to allow for different conversions
-pub struct KeysymHandle<'a> {
-    xkb: &'a Mutex<Xkb>,
-    keycode: Keycode,
+/// Handle to a key event's evdev keycode, used to resolve key identity and text from WKB.
+pub struct KeyHandle<'a> {
+    wkb: &'a Mutex<WKB>,
+    evdev_code: u32,
 }
 
-impl fmt::Debug for KeysymHandle<'_> {
+impl fmt::Debug for KeyHandle<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.keycode)
+        write!(f, "{:?}", self.evdev_code)
     }
 }
 
-impl<'a> KeysymHandle<'a> {
-    /// Get the reference to the xkb state.
-    pub fn xkb(&self) -> &Mutex<Xkb> {
-        self.xkb
+impl<'a> KeyHandle<'a> {
+    /// Physical key position for this evdev keycode.
+    pub fn physical_key(&self) -> PhysicalKey {
+        self.wkb().lock().unwrap().physical_key(self.evdev_code)
     }
 
-    /// Returns the sym for the underlying keycode with all modifications by the current keymap state applied.
-    ///
-    /// This function is similar to [`KeysymHandle::modified_syms`], but is intended for cases where the user
-    /// does not want to or cannot handle multiple keysyms.
-    ///
-    /// If the key does not have exactly one keysym, returns [`keysyms::KEY_NoSymbol`].
-    pub fn modified_sym(&self) -> Keysym {
-        self.xkb.lock().unwrap().state.key_get_one_sym(self.keycode)
+    /// Named non-character key identity under the current modifier state.
+    pub fn named_key(&self) -> NamedKey {
+        self.wkb().lock().unwrap().named_key(self.evdev_code)
     }
 
-    /// Returns the syms for the underlying keycode with all modifications by the current keymap state applied.
-    pub fn modified_syms(&self) -> Vec<Keysym> {
-        self.xkb.lock().unwrap().state.key_get_syms(self.keycode).to_vec()
+    /// Character produced by this key under the current modifier state.
+    pub fn key_char(&self) -> Option<char> {
+        self.wkb().lock().unwrap().key_char(self.evdev_code)
     }
 
-    /// Returns the syms for the underlying keycode without any modifications by the current keymap state applied.
-    pub fn raw_syms(&self) -> Vec<Keysym> {
-        let xkb = self.xkb.lock().unwrap();
-        xkb.keymap
-            .key_get_syms_by_level(self.keycode, xkb.state.key_get_layout(self.keycode), 0)
-            .to_vec()
+    /// Raw Linux/evdev keycode for this key event.
+    pub fn evdev_code(&self) -> u32 {
+        self.evdev_code
     }
 
-    /// Get the raw latin keysym or fallback to current raw keysym.
-    ///
-    /// This method is handy to implement layout agnostic bindings. Keep in mind that
-    /// it could be not-ideal to use just this function, since some layouts utilize non-standard
-    /// shift levels and you should look into [`Self::modified_sym`] first.
-    ///
-    /// The `None` is returned when the underlying keycode doesn't produce a valid keysym.
-    pub fn raw_latin_sym_or_raw_current_sym(&self) -> Option<Keysym> {
-        let xkb = self.xkb.lock().unwrap();
-        let effective_layout = Layout(xkb.state.key_get_layout(self.keycode));
-
-        // don't call `self.raw_syms()` to avoid a deadlock
-        // and an unnecessary allocation into a Vec
-        let raw_syms =
-            xkb.keymap
-                .key_get_syms_by_level(self.keycode, xkb.state.key_get_layout(self.keycode), 0);
-        // NOTE: There's always a keysym in the current layout given that we have modified_sym.
-        let base_sym = *raw_syms.first()?;
-
-        // If the character is ascii or non-printable, return it.
-        if base_sym.key_char().map(|ch| ch.is_ascii()).unwrap_or(true) {
-            return Some(base_sym);
-        };
-
-        // Try to look other layouts and find the one with ascii character.
-        for layout in xkb.layouts() {
-            if layout == effective_layout {
-                continue;
-            }
-
-            if let Some(keysym) = xkb.raw_syms_for_key_in_layout(self.keycode, layout).first() {
-                // NOTE: Only check for ascii non-control characters, since control ones are
-                // layout agnostic.
-                if keysym
-                    .key_char()
-                    .map(|key| key.is_ascii() && !key.is_ascii_control())
-                    .unwrap_or(false)
-                {
-                    return Some(*keysym);
-                }
-            }
-        }
-
-        Some(base_sym)
-    }
-
-    /// Returns the raw code in X keycode system (shifted by 8)
-    pub fn raw_code(&'a self) -> Keycode {
-        self.keycode
+    /// Access the WKB instance backing this handle.
+    pub fn wkb(&self) -> &Mutex<WKB> {
+        self.wkb
     }
 }
 
-/// The currently active state of the Xkb.
-pub struct XkbContext<'a> {
-    xkb: &'a Mutex<Xkb>,
+/// The currently active WKB state exposed for layout changes and other mutations.
+pub struct WkbContext<'a> {
+    wkb: &'a Mutex<WKB>,
     mods_state: &'a mut ModifiersState,
     mods_changed: &'a mut bool,
-    leds_state: &'a mut LedState,
     leds_changed: &'a mut bool,
-    leds_mapping: &'a LedMapping,
 }
 
-impl XkbContext<'_> {
-    /// Get the reference to the xkb state.
-    pub fn xkb(&self) -> &Mutex<Xkb> {
-        self.xkb
+impl WkbContext<'_> {
+    /// Access the WKB instance.
+    pub fn wkb(&self) -> &Mutex<WKB> {
+        self.wkb
     }
 
     /// Set layout of the keyboard to the given index.
     pub fn set_layout(&mut self, layout: Layout) {
-        let mut xkb = self.xkb.lock().unwrap();
-
-        let state = xkb.state.update_mask(
-            self.mods_state.serialized.depressed,
-            self.mods_state.serialized.latched,
-            self.mods_state.serialized.locked,
-            0,
-            0,
-            layout.0,
-        );
-
-        if state != 0 {
-            self.mods_state.update_with(&xkb.state);
-            *self.mods_changed = true;
+        let changes = {
+            let mut wkb = self.wkb.lock().unwrap();
+            wkb.update_modifiers(
+                self.mods_state.serialized.depressed,
+                self.mods_state.serialized.latched,
+                self.mods_state.serialized.locked,
+                layout.0,
+            )
+        };
+        if changes.modifiers_updated {
+            let wkb = self.wkb.lock().unwrap();
+            self.mods_state.update_with(&wkb);
         }
-
-        *self.leds_changed = self.leds_state.update_with(&xkb.state, self.leds_mapping);
+        *self.mods_changed |= changes.modifiers_updated;
+        *self.leds_changed |= changes.leds_updated;
     }
 
     /// Switches layout forward cycling when it reaches the end.
     pub fn cycle_next_layout(&mut self) {
-        let xkb = self.xkb.lock().unwrap();
-        let next_layout = (xkb.active_layout().0 + 1) % xkb.keymap.num_layouts();
-        drop(xkb);
-        self.set_layout(Layout(next_layout));
+        let wkb = self.wkb.lock().unwrap();
+        let next_layout = (wkb.active_layout_idx() + 1) % wkb.num_layouts();
+        drop(wkb);
+        self.set_layout(Layout(next_layout as u32));
     }
 
     /// Switches layout backward cycling when it reaches the start.
     pub fn cycle_prev_layout(&mut self) {
-        let xkb = self.xkb.lock().unwrap();
-        let num_layouts = xkb.keymap.num_layouts();
-        let next_layout = (num_layouts + xkb.active_layout().0 - 1) % num_layouts;
-        drop(xkb);
-        self.set_layout(Layout(next_layout));
+        let wkb = self.wkb.lock().unwrap();
+        let prev_layout = (wkb.num_layouts() + wkb.active_layout_idx() - 1) % wkb.num_layouts();
+        drop(wkb);
+        self.set_layout(Layout(prev_layout as u32));
     }
 }
 
-impl fmt::Debug for XkbContext<'_> {
+impl fmt::Debug for WkbContext<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("XkbContext")
+        f.debug_struct("WkbContext")
             .field("mods_state", &self.mods_state)
             .field("mods_changed", &self.mods_changed)
             .finish()
@@ -615,7 +422,7 @@ impl fmt::Debug for XkbContext<'_> {
 ///
 /// The layout may become invalid after calling [`KeyboardHandle::set_xkb_config`]
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Layout(pub xkb::LayoutIndex);
+pub struct Layout(pub u32);
 
 /// Result for key input filtering (see [`KeyboardHandle::input`])
 #[derive(Debug)]
@@ -663,7 +470,7 @@ impl<D: SeatHandler + 'static> Clone for GrabStartData<D> {
 /// When your grab ends (either as you requested it or if it was forcefully cancelled by the server),
 /// the struct implementing this trait will be dropped. As such you should put clean-up logic in the destructor,
 /// rather than trying to guess when the grab will end.
-pub trait KeyboardGrab<D: SeatHandler>: Downcast {
+pub trait KeyboardGrab<D: SeatHandler>: Downcast + Send {
     /// An input was reported.
     ///
     /// `modifiers` are only passed when their state actually changes. The modifier must be
@@ -673,7 +480,7 @@ pub trait KeyboardGrab<D: SeatHandler>: Downcast {
         &mut self,
         data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
-        keycode: Keycode,
+        keycode: u32,
         state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,
@@ -737,33 +544,26 @@ impl<D: SeatHandler> ::std::cmp::PartialEq for KeyboardHandle<D> {
 
 impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Create a keyboard handler from a set of RMLVO rules
-    pub(crate) fn new(
-        xkb_config: XkbConfig<'_>,
-        repeat_delay: i32,
-        repeat_rate: i32,
-        context_flags: ContextFlags,
-    ) -> Result<Self, Error> {
+    pub(crate) fn new(xkb_config: XkbConfig<'_>, repeat_delay: i32, repeat_rate: i32) -> Result<Self, Error> {
         let span = info_span!("input_keyboard");
         let _guard = span.enter();
 
-        info!("Initializing a xkbcommon handler with keymap query");
-        let internal =
-            KbdInternal::new(xkb_config, repeat_rate, repeat_delay, context_flags).map_err(|_| {
-                debug!("Loading keymap failed");
-                Error::BadKeymap
-            })?;
+        info!("Initializing a keyboard handler with keymap query");
+        let internal = KbdInternal::new(xkb_config, repeat_rate, repeat_delay).map_err(|_| {
+            debug!("Loading keymap failed");
+            Error::BadKeymap
+        })?;
+        let wkb = internal.wkb.try_lock().unwrap();
 
-        let xkb = internal.xkb.lock().unwrap();
-
-        info!(name = xkb.keymap.layouts().next(), "Loaded Keymap");
+        info!(name = wkb.layout_name(wkb.active_layout_idx()), "Loaded Keymap");
 
         #[cfg(feature = "wayland_frontend")]
-        let keymap_file = KeymapFile::new(&xkb.keymap);
+        let keymap_file = KeymapFile::new(wkb.as_xkb_string().unwrap()); // WKB should always have a valid keymap
         #[cfg(feature = "wayland_frontend")]
         let active_keymap = keymap_file.id();
 
-        drop(xkb);
         drop(_guard);
+        drop(wkb);
         Ok(Self {
             arc: Arc::new(KbdRc {
                 #[cfg(feature = "wayland_frontend")]
@@ -786,7 +586,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         &self,
         data: &mut D,
         focus: &Option<&mut <D as SeatHandler>::KeyboardFocus>,
-        keymap: &xkb::Keymap,
+        keymap: String,
         mods: ModifiersState,
     ) {
         let mut keymap_file = self.arc.keymap.lock().unwrap();
@@ -845,97 +645,105 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         true
     }
 
-    fn update_xkb_state(&self, data: &mut D, keymap: xkb::Keymap) {
+    fn update_wkb_state(&self, data: &mut D, mut wkb: WKB) {
         let mut internal = self.arc.internal.lock().unwrap();
 
-        let mut state = xkb::State::new(&keymap);
+        let previous_led_state = internal.led_state;
+        #[cfg(not(feature = "wayland_frontend"))]
+        let previous_mods = internal.mods_state;
+
         for key in &internal.pressed_keys {
-            state.update_key(*key, xkb::KeyDirection::Down);
+            wkb.press_key(*key);
         }
 
-        let led_mapping = LedMapping::from_keymap(&keymap);
-        internal.led_mapping = led_mapping;
-        internal.mods_state.update_with(&state);
-        let leds_changed = internal.led_state.update_with(&state, &led_mapping);
-        let mut xkb = internal.xkb.lock().unwrap();
-        xkb.keymap = keymap.clone();
-        xkb.state = state;
-        drop(xkb);
+        let mods = {
+            let mut mods_state = ModifiersState::default();
+            mods_state.update_with(&wkb);
+            mods_state
+        };
+        let led_state = led_state_from_wkb(&wkb);
 
-        let mods = internal.mods_state;
+        #[cfg(feature = "wayland_frontend")]
+        let keymap = wkb.as_xkb_string().unwrap_or_default();
+
+        internal.wkb = Arc::new(Mutex::new(wkb));
+        internal.mods_state = mods;
+        internal.led_state = led_state;
+
         let focus = internal.focus.as_mut().map(|(focus, _)| focus);
 
         #[cfg(not(feature = "wayland_frontend"))]
         if let Some(focus) = focus.as_ref() {
-            let seat = self.get_seat(data);
-            focus.modifiers(&seat, data, mods, SERIAL_COUNTER.next_serial());
-        };
+            if mods != previous_mods {
+                let seat = self.get_seat(data);
+                focus.modifiers(&seat, data, mods, SERIAL_COUNTER.next_serial());
+            }
+        }
 
         #[cfg(feature = "wayland_frontend")]
-        self.change_keymap(data, &focus, &keymap, mods);
+        self.change_keymap(data, &focus, keymap, mods);
 
-        if leds_changed {
-            let led_state = internal.led_state;
+        if led_state != previous_led_state {
             std::mem::drop(internal);
             let seat = self.get_seat(data);
             data.led_state_changed(&seat, led_state);
         }
     }
 
-    /// Change the [`Keymap`](xkb::Keymap) used by the keyboard.
+    /// Change the keymap used by the keyboard.
     ///
     /// The input is a keymap in XKB_KEYMAP_FORMAT_TEXT_V1 format.
     pub fn set_keymap_from_string(&self, data: &mut D, keymap: String) -> Result<(), Error> {
-        // Construct the Keymap internally instead of accepting one as input
-        // because libxkbcommon is not thread-safe.
-        let keymap = xkb::Keymap::new_from_string(
-            &self.arc.internal.lock().unwrap().xkb.lock().unwrap().context,
-            keymap,
-            xkb::KEYMAP_FORMAT_TEXT_V1,
-            xkb::KEYMAP_COMPILE_NO_FLAGS,
-        )
-        .ok_or_else(|| {
-            debug!("Loading keymap from string failed");
+        let keymap = WKB::new_from_string(&keymap).map_err(|error| {
+            debug!("Loading keymap from string failed: {}", error);
             Error::BadKeymap
         })?;
-        self.update_xkb_state(data, keymap);
+        // self.arc.internal.lock().unwrap().wkb = keymap;
+        self.update_wkb_state(data, keymap);
         Ok(())
     }
 
     /// Change the [`XkbConfig`] used by the keyboard.
     pub fn set_xkb_config(&self, data: &mut D, xkb_config: XkbConfig<'_>) -> Result<(), Error> {
-        let keymap = xkb_config
-            .compile_keymap(&self.arc.internal.lock().unwrap().xkb.lock().unwrap().context)
-            .map_err(|_| {
-                debug!("Loading keymap from XkbConfig failed");
-                Error::BadKeymap
-            })?;
-        self.update_xkb_state(data, keymap);
+        let keymap = WKB::new_from_names(
+            xkb_config.rules,
+            xkb_config.model,
+            xkb_config.layout,
+            xkb_config.variant,
+            xkb_config.options,
+        )
+        .map_err(|error| {
+            debug!("Loading keymap from string failed: {}", error);
+            Error::BadKeymap
+        })?;
+        self.update_wkb_state(data, keymap);
         Ok(())
     }
 
-    /// Access the underlying Xkb state and perform mutable operations on it, like
+    /// Access the underlying WKB state and perform mutable operations on it, like
     /// changing layouts.
     ///
     /// The changes to the state are automatically broadcasted to the focused client on exit.
-    pub fn with_xkb_state<F, T>(&self, data: &mut D, mut callback: F) -> T
+    pub fn with_wkb_state<F, T>(&self, data: &mut D, mut callback: F) -> T
     where
-        F: FnMut(XkbContext<'_>) -> T,
+        F: FnMut(WkbContext<'_>) -> T,
     {
         let (result, new_led_state) = {
             let internal = &mut *self.arc.internal.lock().unwrap();
             let mut mods_changed = false;
             let mut leds_changed = false;
-            let state = XkbContext {
+            let state = WkbContext {
                 mods_state: &mut internal.mods_state,
-                xkb: &mut internal.xkb,
+                wkb: &internal.wkb,
                 mods_changed: &mut mods_changed,
-                leds_state: &mut internal.led_state,
                 leds_changed: &mut leds_changed,
-                leds_mapping: &internal.led_mapping,
             };
 
             let result = callback(state);
+
+            if leds_changed {
+                internal.led_state = led_state_from_wkb(&internal.wkb.lock().unwrap());
+            }
 
             if mods_changed {
                 if let Some((focus, _)) = internal.focus.as_mut() {
@@ -1020,20 +828,21 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// [`FilterResult::Intercept`], a value can be passed to be returned by the whole function.
     /// This mechanism can be used to implement compositor-level key bindings for example.
     ///
-    /// The module [`keysyms`] exposes definitions of all possible keysyms to be compared against.
-    /// This includes non-character keysyms, such as XF86 special keys.
+    /// The `filter` closure receives the current [`ModifiersState`] and a [`KeyHandle`]
+    /// for the key event. Match shortcuts using [`KeyHandle::physical_key`] and
+    /// [`KeyHandle::named_key`] rather than character identity.
     #[instrument(level = "trace", parent = &self.arc.span, skip(self, data, filter))]
     pub fn input<T, F>(
         &self,
         data: &mut D,
-        keycode: Keycode,
+        keycode: u32,
         state: KeyState,
         serial: Serial,
         time: u32,
         filter: F,
     ) -> Option<T>
     where
-        F: FnOnce(&mut D, &ModifiersState, KeysymHandle<'_>) -> FilterResult<T>,
+        F: FnOnce(&mut D, &ModifiersState, KeyHandle<'_>) -> FilterResult<T>,
     {
         self.input_from_source(KeyboardSource::MAIN, data, keycode, state, serial, time, filter)
     }
@@ -1044,14 +853,14 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         &self,
         source: KeyboardSource,
         data: &mut D,
-        keycode: Keycode,
+        keycode: u32,
         state: KeyState,
         serial: Serial,
         time: u32,
         filter: F,
     ) -> Option<T>
     where
-        F: FnOnce(&mut D, &ModifiersState, KeysymHandle<'_>) -> FilterResult<T>,
+        F: FnOnce(&mut D, &ModifiersState, KeyHandle<'_>) -> FilterResult<T>,
     {
         trace!("Handling keystroke");
 
@@ -1059,7 +868,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         let (mods_changed, leds_changed, is_transition) = guard.key_input(source, keycode, state);
         let led_state = guard.led_state;
         let mods_state = guard.mods_state;
-        let xkb = guard.xkb.clone();
+        let wkb = guard.wkb.clone();
         std::mem::drop(guard);
 
         if leds_changed {
@@ -1073,8 +882,11 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             return None;
         }
 
-        let key_handle = KeysymHandle { xkb: &xkb, keycode };
-        trace!(mods_state = ?mods_state, sym = xkb::keysym_get_name(key_handle.modified_sym()), "Calling input filter");
+        let key_handle = KeyHandle {
+            wkb: &wkb,
+            evdev_code: keycode,
+        };
+        trace!(mods_state = ?mods_state, sym = ?key_handle.evdev_code, "Calling input filter");
         if let FilterResult::Intercept(val) = filter(data, &mods_state, key_handle) {
             trace!("Input was intercepted by filter");
             return Some(val);
@@ -1112,15 +924,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     ///
     /// Prefer using [`KeyboardHandle::input`] if this decision can be done synchronously
     /// in the `filter` closure.
-    pub fn input_intercept<T, F>(
-        &self,
-        data: &mut D,
-        keycode: Keycode,
-        state: KeyState,
-        filter: F,
-    ) -> (T, bool)
+    pub fn input_intercept<T, F>(&self, data: &mut D, keycode: u32, state: KeyState, filter: F) -> (T, bool)
     where
-        F: FnOnce(&mut D, &ModifiersState, KeysymHandle<'_>) -> T,
+        F: FnOnce(&mut D, &ModifiersState, KeyHandle<'_>) -> T,
     {
         trace!("Handling keystroke");
 
@@ -1129,12 +935,15 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             guard.key_input(KeyboardSource::MAIN, keycode, state);
         let led_state = guard.led_state;
         let mods_state = guard.mods_state;
-        let xkb = guard.xkb.clone();
+        let wkb = guard.wkb.clone();
         std::mem::drop(guard);
 
-        let key_handle = KeysymHandle { xkb: &xkb, keycode };
+        let key_handle = KeyHandle {
+            wkb: &wkb,
+            evdev_code: keycode,
+        };
 
-        trace!(mods_state = ?mods_state, sym = xkb::keysym_get_name(key_handle.modified_sym()), "Calling input filter");
+        trace!(mods_state = ?mods_state, sym = ?key_handle.evdev_code, "Calling input filter");
         let filter_result = filter(data, &mods_state, key_handle);
 
         if leds_changed {
@@ -1151,7 +960,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     pub fn input_forward(
         &self,
         data: &mut D,
-        keycode: Keycode,
+        keycode: u32,
         state: KeyState,
         serial: Serial,
         time: u32,
@@ -1201,15 +1010,15 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     }
 
     /// Return the key codes of the currently pressed keys.
-    pub fn pressed_keys(&self) -> HashSet<Keycode> {
+    pub fn pressed_keys(&self) -> HashSet<u32> {
         let guard = self.arc.internal.lock().unwrap();
         guard.pressed_keys.clone()
     }
 
-    /// Iterate over the keysyms of the currently pressed keys.
-    pub fn with_pressed_keysyms<F, R>(&self, f: F) -> R
+    /// Iterate over the currently pressed keys.
+    pub fn with_pressed_keys<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(Vec<KeysymHandle<'_>>) -> R,
+        F: FnOnce(Vec<KeyHandle<'_>>) -> R,
         R: 'static,
     {
         let guard = self.arc.internal.lock().unwrap();
@@ -1217,13 +1026,23 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             let handles = guard
                 .pressed_keys
                 .iter()
-                .map(|keycode| KeysymHandle {
-                    xkb: &guard.xkb,
-                    keycode: *keycode,
+                .map(|keycode| KeyHandle {
+                    wkb: &guard.wkb,
+                    evdev_code: *keycode,
                 })
                 .collect::<Vec<_>>();
             f(handles)
         }
+    }
+
+    /// Deprecated alias for [`Self::with_pressed_keys`].
+    #[deprecated(note = "use `with_pressed_keys` instead")]
+    pub fn with_pressed_keysyms<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(Vec<KeyHandle<'_>>) -> R,
+        R: 'static,
+    {
+        self.with_pressed_keys(f)
     }
 
     /// Get the current modifiers state.
@@ -1231,64 +1050,41 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         self.arc.internal.lock().unwrap().mods_state
     }
 
-    /// Find a keycode that produces `keysym` at *any* shift level of the currently active
-    /// layout, if any.
+    /// Set modifier state from serialized masks received from `wl_keyboard.modifiers`.
     ///
-    /// Intended for injecting a keysym as a real key through the shared seat *while modifiers are
-    /// held* (e.g. a libei `ei_text.keysym` `c` arriving while Ctrl is down, or an uppercase `Y` while
-    /// Super is down)
-    pub fn keycode_for_keysym(&self, keysym: Keysym) -> Option<Keycode> {
-        let guard = self.arc.internal.lock().unwrap();
-        let xkb = guard.xkb.lock().unwrap();
-        let layout = xkb.state.serialize_layout(XKB_STATE_LAYOUT_EFFECTIVE);
-        (xkb.keymap.min_keycode().raw()..=xkb.keymap.max_keycode().raw())
-            .map(Keycode::new)
-            .find(|&keycode| {
-                (0..xkb.keymap.num_levels_for_key(keycode, layout)).any(|level| {
-                    xkb.keymap
-                        .key_get_syms_by_level(keycode, layout, level)
-                        .contains(&keysym)
-                })
-            })
-    }
-
-    /// Set the modifiers state.
+    /// The serialized depressed, latched, locked, and layout fields are authoritative.
+    /// High-level fields in [`ModifiersState`] are rebuilt from WKB after the update.
     ///
-    /// Note that the round-trip from XKB state to serialized form and back to XKB state is lossy,
-    /// as documented in [`xkb::State::update_mask`].
-    pub fn set_modifier_state(&self, mods_state: ModifiersState) -> u32 {
+    /// Returns whether modifier state changed.
+    pub fn set_modifier_state(&self, serialized: SerializedMods) -> bool {
         let internal = &mut self.arc.internal.lock().unwrap();
 
-        let (leds_changed, led_state, modifiers_changed, serialized) = {
-            let state = &mut internal.xkb.lock().unwrap().state;
-
-            let serialized = mods_state.serialize_back(state);
-
-            let modifiers_changed = state.update_mask(
+        let (modifiers_changed, new_mods, new_leds) = {
+            let wkb = &mut internal.wkb.lock().unwrap();
+            let changes = wkb.update_modifiers(
                 serialized.depressed,
                 serialized.latched,
                 serialized.locked,
-                serialized.layout_effective & xkb::STATE_LAYOUT_DEPRESSED,
-                serialized.layout_effective & xkb::STATE_LAYOUT_LATCHED,
-                serialized.layout_effective & xkb::STATE_LAYOUT_LOCKED,
+                serialized.layout_effective,
             );
-
-            // Return early it nothing changed.
-            if modifiers_changed == 0 {
-                return 0;
-            }
-
-            let led_mapping = &internal.led_mapping;
-            let mut led_state = internal.led_state;
-            let leds_changed = led_state.update_with(state, led_mapping);
-
-            (leds_changed, led_state, modifiers_changed, serialized)
+            let new_mods = if changes.modifiers_updated {
+                let mut mods_state = ModifiersState::default();
+                mods_state.update_with(wkb);
+                Some(mods_state)
+            } else {
+                None
+            };
+            let new_leds = if changes.leds_updated {
+                Some(led_state_from_wkb(wkb))
+            } else {
+                None
+            };
+            (changes.modifiers_updated, new_mods, new_leds)
         };
-
-        internal.mods_state = mods_state;
-        internal.mods_state.serialized = serialized;
-
-        if leds_changed {
+        if let Some(mods_state) = new_mods {
+            internal.mods_state = mods_state;
+        }
+        if let Some(led_state) = new_leds {
             internal.led_state = led_state;
         }
 
@@ -1359,35 +1155,40 @@ where
     D: SeatHandler + 'static,
     <D as SeatHandler>::KeyboardFocus: crate::wayland::seat::WaylandFocus,
 {
-    /// Inject a batch of keysyms as text into the currently focused client (KWin-style).
+    /// Inject a batch of Unicode text into the currently focused client (KWin-style).
     ///
     /// This is a helper/fallback: a compositor should prefer delivering text through the
     /// text-input protocol (`zwp_text_input_v3::commit_string`) when a text-input client is
     /// focused, and fall back to this for clients that aren't (terminals, games, ...).
     ///
-    /// Builds a throwaway keymap that binds each keysym to its own spare keycode at base level
+    /// Builds a throwaway keymap that binds each character to its own spare keycode at base level
     /// (so no modifiers are ever needed), hands that keymap to clients, taps each keycode on the
-    /// focused client, then restores the seat keymap. The compositor's own seat xkb state is
+    /// focused client, then restores the seat keymap. The compositor's own WKB state is
     /// **never** touched, so shortcut handling and physical-keyboard state are unaffected.
     /// `modifiers(0)` accompanies the injection keymap so any modifier the seat currently holds
     /// (e.g. a physically-held Shift) doesn't alter the injected characters.
-    pub fn inject_text_keysyms(&self, data: &mut D, keysyms: &[Keysym]) {
+    pub fn inject_text(&self, data: &mut D, text: &str) {
         const FIRST: u32 = 9;
         let mut keycode_decls = String::new();
         let mut symbol_decls = String::new();
-        let mut codes = Vec::with_capacity(keysyms.len());
-        for (i, keysym) in keysyms.iter().enumerate() {
-            let code = FIRST + i as u32;
-            if code > 255 {
+        let mut codes = Vec::new();
+        for (i, ch) in text.chars().enumerate() {
+            let xkb_code = FIRST + i as u32;
+            let evdev_code = xkb_code - 8;
+            if xkb_code > 255 {
                 break;
             }
-            let name = xkb::keysym_get_name(*keysym);
-            if name.is_empty() || name == "NoSymbol" {
+            if ch.is_control() {
                 continue;
             }
-            keycode_decls.push_str(&format!("    <K{code}> = {code};\n"));
-            symbol_decls.push_str(&format!("    key <K{code}> {{ [ {name} ] }};\n"));
-            codes.push(Keycode::new(code));
+            let symbol = if ch.is_ascii() && ch != '"' {
+                format!("{ch}")
+            } else {
+                format!("U{:04X}", ch as u32)
+            };
+            keycode_decls.push_str(&format!("    <K{xkb_code}> = {xkb_code};\n"));
+            symbol_decls.push_str(&format!("    key <K{xkb_code}> {{ [ {symbol} ] }};\n"));
+            codes.push(evdev_code);
         }
         if codes.is_empty() {
             return;
@@ -1401,22 +1202,11 @@ where
              xkb_symbols \"custom\" {{\n{symbol_decls}}};\n\
              }};\n"
         );
-
-        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-        let Some(keymap) = xkb::Keymap::new_from_string(
-            &context,
-            custom,
-            xkb::KEYMAP_FORMAT_TEXT_V1,
-            xkb::KEYMAP_COMPILE_NO_FLAGS,
-        ) else {
-            return;
+        let wkb = match WKB::new_from_string(&custom) {
+            Ok(wkb) => Mutex::new(wkb),
+            Err(_) => return,
         };
-        let xkb = Mutex::new(Xkb {
-            state: xkb::State::new(&keymap),
-            keymap,
-            context,
-        });
-        let injection_keymap = KeymapFile::new(&xkb.lock().unwrap().keymap);
+        let injection_keymap = KeymapFile::new(custom);
 
         let seat = self.get_seat(data);
         let mut guard = self.arc.internal.lock().unwrap();
@@ -1434,11 +1224,17 @@ where
             let press = SERIAL_COUNTER.next_serial();
             let release = SERIAL_COUNTER.next_serial();
             if let Some((focus, _)) = guard.focus.as_mut() {
-                let handle = KeysymHandle { xkb: &xkb, keycode };
+                let handle = KeyHandle {
+                    wkb: &wkb,
+                    evdev_code: keycode,
+                };
                 focus.key(&seat, data, handle, KeyState::Pressed, press, 0);
             }
             if let Some((focus, _)) = guard.focus.as_mut() {
-                let handle = KeysymHandle { xkb: &xkb, keycode };
+                let handle = KeyHandle {
+                    wkb: &wkb,
+                    evdev_code: keycode,
+                };
                 focus.key(&seat, data, handle, KeyState::Released, release, 0);
             }
         }
@@ -1523,11 +1319,11 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
         self.inner.focus.as_ref().map(|f| &f.0)
     }
 
-    /// Convert a given keycode as a [`KeysymHandle`] modified by this keyboards state
-    pub fn keysym_handle(&self, keycode: Keycode) -> KeysymHandle<'_> {
-        KeysymHandle {
-            keycode,
-            xkb: &self.inner.xkb,
+    /// Convert a given evdev keycode to a [`KeyHandle`] using this keyboard's WKB state.
+    pub fn key_handle(&self, keycode: u32) -> KeyHandle<'_> {
+        KeyHandle {
+            evdev_code: keycode,
+            wkb: &self.inner.wkb,
         }
     }
 
@@ -1540,7 +1336,7 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
     pub fn input(
         &mut self,
         data: &mut D,
-        keycode: Keycode,
+        keycode: u32,
         key_state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,
@@ -1558,9 +1354,9 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
             keyboard_handle.send_keymap(data, &Some(focus), &keymap_file, mods);
         }
 
-        let key = KeysymHandle {
-            xkb: &self.inner.xkb,
-            keycode,
+        let key = KeyHandle {
+            wkb: &self.inner.wkb,
+            evdev_code: keycode,
         };
 
         // Modifiers must be sent before the key event so the client resolves the key against the
@@ -1572,30 +1368,40 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
     }
 
     /// Iterate over the currently pressed keys.
-    pub fn with_pressed_keysyms<F, R>(&self, f: F) -> R
+    pub fn with_pressed_keys<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(Vec<KeysymHandle<'_>>) -> R,
+        F: FnOnce(Vec<KeyHandle<'_>>) -> R,
         R: 'static,
     {
         let handles = self
             .inner
             .pressed_keys
             .iter()
-            .map(|code| self.keysym_handle(*code))
+            .map(|code| self.key_handle(*code))
             .collect();
         f(handles)
     }
 
+    /// Deprecated alias for [`Self::with_pressed_keys`].
+    #[deprecated(note = "use `with_pressed_keys` instead")]
+    pub fn with_pressed_keysyms<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(Vec<KeyHandle<'_>>) -> R,
+        R: 'static,
+    {
+        self.with_pressed_keys(f)
+    }
+
     /// The forwarded held keys and modifier state to announce to a newly-focused target on a
     /// focus change, from the seat's shared state.
-    fn focus_enter_state(&self) -> (Vec<KeysymHandle<'_>>, ModifiersState) {
+    fn focus_enter_state(&self) -> (Vec<KeyHandle<'_>>, ModifiersState) {
         (
             self.inner
                 .forwarded_pressed_keys
                 .iter()
-                .map(|keycode| KeysymHandle {
-                    xkb: &self.inner.xkb,
-                    keycode: *keycode,
+                .map(|keycode| KeyHandle {
+                    wkb: &self.inner.wkb,
+                    evdev_code: *keycode,
                 })
                 .collect(),
             self.inner.mods_state,
@@ -1650,7 +1456,7 @@ impl<D: SeatHandler + 'static> KeyboardGrab<D> for DefaultGrab {
         &mut self,
         data: &mut D,
         handle: &mut KeyboardInnerHandle<'_, D>,
-        keycode: Keycode,
+        keycode: u32,
         state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,

@@ -3,7 +3,6 @@ use std::os::unix::io::{AsFd, BorrowedFd};
 
 use sha2::{Digest, Sha256};
 use tracing::error;
-use xkbcommon::xkb::{self, KEYMAP_FORMAT_TEXT_V1, Keymap};
 
 use crate::utils::SealedFile;
 
@@ -30,15 +29,12 @@ pub struct KeymapFile {
 
 impl KeymapFile {
     /// Turn the keymap into a string using KEYMAP_FORMAT_TEXT_V1, create a sealed file for it, and store the string
-    pub fn new(keymap: &Keymap) -> Self {
+    pub fn new(keymap: String) -> Self {
         let name = c"smithay-keymap";
-        let keymap = keymap.get_as_string(KEYMAP_FORMAT_TEXT_V1);
         let sealed = SealedFile::with_content(name, &CString::new(keymap.as_str()).unwrap());
-
         if let Err(err) = sealed.as_ref() {
             error!("Error when creating sealed keymap file: {}", err);
         }
-
         Self {
             id: KeymapFileId::for_keymap(&keymap),
             sealed: sealed.ok(),
@@ -47,9 +43,7 @@ impl KeymapFile {
     }
 
     #[cfg(feature = "wayland_frontend")]
-    pub(crate) fn change_keymap(&mut self, keymap: &Keymap) {
-        let keymap = keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
-
+    pub(crate) fn change_keymap(&mut self, keymap: String) {
         let name = c"smithay-keymap-file";
         let sealed = SealedFile::with_content(name, &CString::new(keymap.clone()).unwrap());
 

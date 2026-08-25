@@ -1,4 +1,4 @@
-use xkbcommon::xkb;
+use wkb::WKB;
 
 /// Represents the current state of the keyboard modifiers
 ///
@@ -7,9 +7,9 @@ use xkbcommon::xkb;
 /// For some modifiers, this means that the key is currently pressed, others are toggled/locked
 /// (like caps lock).
 ///
-/// **Note:** The XKB state should usually be the single source of truth, and the
-/// serialization is lossy and will not survive round trips. This is documented in
-/// [`xkb::State::update_mask`].
+/// **Note:** The WKB state should usually be the single source of truth. The serialized
+/// modifier masks in [`SerializedMods`] are authoritative when feeding state back into WKB;
+/// high-level fields are always rebuilt from WKB after an update.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ModifiersState {
     /// The "control" key
@@ -36,120 +36,26 @@ pub struct ModifiersState {
 
     /// Cached serialized modifier state, e.g. for sending in `wl_keyboard.modifiers`.
     ///
-    /// Note that this may have outdated information compared to the other fields, and that
-    /// this is not updated in [`ModifiersState::serialize_back`].
+    /// This is populated by [`ModifiersState::update_with`] from WKB and should be treated as
+    /// authoritative for wire protocol serialization.
     pub serialized: SerializedMods,
 }
 
 impl ModifiersState {
-    /// Updates the high-level modifiers state from an XKB state.
+    /// Updates the high-level modifiers state from a WKB instance.
     ///
-    /// **Note:** The XKB state should usually be the single source of truth, and the
-    /// serialization is lossy and will not survive round trips. This is documented in
-    /// [`xkb::State::update_mask`].
-    pub fn update_with(&mut self, state: &xkb::State) {
-        self.ctrl = state.mod_name_is_active(&xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
-        self.alt = state.mod_name_is_active(&xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
-        self.shift = state.mod_name_is_active(&xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
-        self.caps_lock = state.mod_name_is_active(&xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
-        self.logo = state.mod_name_is_active(&xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
-        self.num_lock = state.mod_name_is_active(&xkb::MOD_NAME_NUM, xkb::STATE_MODS_EFFECTIVE);
-        self.iso_level3_shift =
-            state.mod_name_is_active(&xkb::MOD_NAME_ISO_LEVEL3_SHIFT, xkb::STATE_MODS_EFFECTIVE);
-        self.iso_level5_shift = state.mod_name_is_active(&xkb::MOD_NAME_MOD3, xkb::STATE_MODS_EFFECTIVE);
-        self.serialized = serialize_modifiers(state);
-    }
-
-    /// Serializes the high-level modifiers state to be sent to XKB e.g. in
-    /// `wl_keyboard.modifiers`.
-    ///
-    /// **Note:** The XKB state should usually be the single source of truth, and the
-    /// serialization is lossy and will not survive round trips. This is documented in
-    /// [`xkb::State::update_mask`].
-    ///
-    /// Note that cached serialized state is stored in [`ModifiersState::serialized`], but it may
-    /// have outdated information. This function ignores that field. You should update the cached
-    /// serialized state after using this function, like so:
-    ///
-    /// ```no_run
-    /// use smithay::input::keyboard::ModifiersState;
-    ///
-    /// let mut mods_state: ModifiersState;
-    /// # mods_state = todo!();
-    /// # let xkb_state = todo!();
-    ///
-    /// // Update the information
-    /// mods_state.ctrl = true;
-    ///
-    /// // Serialize e.g. for sending in `wl_keyboard.modifiers`
-    /// let serialized = mods_state.serialize_back(&xkb_state);
-    ///
-    /// // Update the cached serialized state
-    /// mods_state.serialized = serialized;
-    /// ```
-    pub fn serialize_back(&self, state: &xkb::State) -> SerializedMods {
-        let keymap = state.get_keymap();
-
-        let mut locked: u32 = 0;
-        let mut depressed: u32 = 0;
-
-        if self.caps_lock {
-            let index = keymap.mod_get_index(&xkb::MOD_NAME_CAPS);
-            if index != xkb::MOD_INVALID {
-                locked |= 1 << index;
-            }
-        }
-        if self.num_lock {
-            let index = keymap.mod_get_index(&xkb::MOD_NAME_NUM);
-            if index != xkb::MOD_INVALID {
-                locked |= 1 << index;
-            }
-        }
-        if self.ctrl {
-            let index = keymap.mod_get_index(&xkb::MOD_NAME_CTRL);
-            if index != xkb::MOD_INVALID {
-                depressed |= 1 << index;
-            }
-        }
-        if self.alt {
-            let index = keymap.mod_get_index(&xkb::MOD_NAME_ALT);
-            if index != xkb::MOD_INVALID {
-                depressed |= 1 << index;
-            }
-        }
-        if self.shift {
-            let index = keymap.mod_get_index(&xkb::MOD_NAME_SHIFT);
-            if index != xkb::MOD_INVALID {
-                depressed |= 1 << index;
-            }
-        }
-        if self.logo {
-            let index = keymap.mod_get_index(&xkb::MOD_NAME_LOGO);
-            if index != xkb::MOD_INVALID {
-                depressed |= 1 << index;
-            }
-        }
-        if self.iso_level3_shift {
-            let index = keymap.mod_get_index(&xkb::MOD_NAME_ISO_LEVEL3_SHIFT);
-            if index != xkb::MOD_INVALID {
-                depressed |= 1 << index;
-            }
-        }
-        if self.iso_level5_shift {
-            let index = keymap.mod_get_index(&xkb::MOD_NAME_MOD3);
-            if index != xkb::MOD_INVALID {
-                depressed |= 1 << index;
-            }
-        }
-
-        let layout_effective = state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE);
-
-        SerializedMods {
-            depressed,
-            latched: 0,
-            locked,
-            layout_effective,
-        }
+    /// ISO Level3 maps to WKB Level3 (XKB Mod5 / AltGr). ISO Level5 maps to WKB Level5
+    /// (XKB Mod3). Prefer [`wkb::WKB::level3`] and [`wkb::WKB::level5`] when available.
+    pub fn update_with(&mut self, wkb: &WKB) {
+        self.ctrl = wkb.ctrl();
+        self.alt = wkb.alt();
+        self.shift = wkb.shift();
+        self.caps_lock = wkb.caps_lock();
+        self.logo = wkb.logo();
+        self.num_lock = wkb.num_lock();
+        self.iso_level3_shift = wkb.level3();
+        self.iso_level5_shift = wkb.level5();
+        self.serialized = serialize_modifiers(wkb);
     }
 }
 
@@ -166,16 +72,12 @@ pub struct SerializedMods {
     pub layout_effective: u32,
 }
 
-fn serialize_modifiers(state: &xkb::State) -> SerializedMods {
-    let depressed = state.serialize_mods(xkb::STATE_MODS_DEPRESSED);
-    let latched = state.serialize_mods(xkb::STATE_MODS_LATCHED);
-    let locked = state.serialize_mods(xkb::STATE_MODS_LOCKED);
-    let layout_effective = state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE);
-
+fn serialize_modifiers(wkb: &WKB) -> SerializedMods {
+    let raw_mods = wkb.raw_modifiers();
     SerializedMods {
-        depressed,
-        latched,
-        locked,
-        layout_effective,
+        depressed: raw_mods.depressed,
+        latched: raw_mods.latched,
+        locked: raw_mods.locked,
+        layout_effective: raw_mods.layout,
     }
 }

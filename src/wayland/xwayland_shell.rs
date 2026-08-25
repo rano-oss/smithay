@@ -24,7 +24,7 @@
 //! #             GestureSwipeBeginEvent, GestureSwipeUpdateEvent, GestureSwipeEndEvent,
 //! #             GesturePinchBeginEvent, GesturePinchUpdateEvent, GesturePinchEndEvent,
 //! #             GestureHoldBeginEvent, GestureHoldEndEvent},
-//! #   keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
+//! #   keyboard::{KeyboardTarget, KeyHandle, ModifiersState},
 //! #   touch::{DownEvent, UpEvent, MotionEvent as TouchMotionEvent, ShapeEvent, OrientationEvent, TouchTarget, FrameMarker},
 //! # };
 //! # use smithay::utils::{IsAlive, Serial};
@@ -52,13 +52,13 @@
 //! #   fn gesture_hold_end(&self, seat: &Seat<State>, data: &mut State, event: &GestureHoldEndEvent) {}
 //! # }
 //! # impl KeyboardTarget<State> for Target {
-//! #   fn enter(&self, seat: &Seat<State>, data: &mut State, keys: Vec<KeysymHandle<'_>>, serial: Serial) {}
+//! #   fn enter(&self, seat: &Seat<State>, data: &mut State, keys: Vec<KeyHandle<'_>>, serial: Serial) {}
 //! #   fn leave(&self, seat: &Seat<State>, data: &mut State, serial: Serial) {}
 //! #   fn key(
 //! #       &self,
 //! #       seat: &Seat<State>,
 //! #       data: &mut State,
-//! #       key: KeysymHandle<'_>,
+//! #       key: KeyHandle<'_>,
 //! #       state: KeyState,
 //! #       serial: Serial,
 //! #       time: u32,

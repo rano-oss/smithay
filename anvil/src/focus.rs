@@ -9,7 +9,7 @@ pub use smithay::{
     desktop::{LayerSurface, PopupKind},
     input::{
         Seat,
-        keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
+        keyboard::{KeyHandle, KeyboardTarget, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, MotionEvent, PointerTarget, RelativeMotionEvent},
     },
     reexports::wayland_server::{Resource, backend::ObjectId, protocol::wl_surface::WlSurface},
@@ -255,7 +255,7 @@ impl<BackendData: Backend> KeyboardTarget<AnvilState<BackendData>> for KeyboardF
         &self,
         seat: &Seat<AnvilState<BackendData>>,
         data: &mut AnvilState<BackendData>,
-        keys: Vec<KeysymHandle<'_>>,
+        keys: Vec<KeyHandle<'_>>,
         serial: Serial,
     ) {
         self.inner_keyboard_target().enter(seat, data, keys, serial)
@@ -272,7 +272,7 @@ impl<BackendData: Backend> KeyboardTarget<AnvilState<BackendData>> for KeyboardF
         &self,
         seat: &Seat<AnvilState<BackendData>>,
         data: &mut AnvilState<BackendData>,
-        key: KeysymHandle<'_>,
+        key: KeyHandle<'_>,
         state: KeyState,
         serial: Serial,
         time: u32,

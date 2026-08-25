@@ -50,7 +50,7 @@
 //! #             GestureSwipeBeginEvent, GestureSwipeUpdateEvent, GestureSwipeEndEvent,
 //! #             GesturePinchBeginEvent, GesturePinchUpdateEvent, GesturePinchEndEvent,
 //! #             GestureHoldBeginEvent, GestureHoldEndEvent},
-//! #   keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
+//! #   keyboard::{KeyboardTarget, KeyHandle, ModifiersState},
 //! #   touch::{DownEvent, UpEvent, MotionEvent as TouchMotionEvent, ShapeEvent, OrientationEvent, TouchTarget},
 //! # };
 //! # use smithay::utils::{IsAlive, Serial};

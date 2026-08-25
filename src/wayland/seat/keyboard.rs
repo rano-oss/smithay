@@ -12,10 +12,10 @@ use wayland_server::{
 
 use super::WaylandFocus;
 use crate::{
-    backend::input::{KeyState, Keycode},
+    backend::input::KeyState,
     input::{
         Seat, SeatHandler, WeakSeat,
-        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState},
+        keyboard::{KeyHandle, KeyboardHandle, KeyboardTarget, ModifiersState},
     },
     utils::{HookId, Serial, iter::new_locked_obj_iter_from_vec},
     wayland::{
@@ -165,8 +165,8 @@ pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
 }
 
 /// Serialize keycodes for the `WlKeyboard` interface
-pub fn serialize_pressed_keys(keys: impl Iterator<Item = Keycode>) -> Vec<u8> {
-    keys.flat_map(|key| (key.raw() - 8).to_ne_bytes()).collect()
+pub fn serialize_pressed_keys(keys: impl Iterator<Item = u32>) -> Vec<u8> {
+    keys.flat_map(|key| (key).to_ne_bytes()).collect()
 }
 
 // WeakSeat doesn't implement `Hash`, but we don't expect a lot of seats anyway,
@@ -208,7 +208,7 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     surface: &WlSurface,
     seat: &Seat<D>,
     state: &mut D,
-    keys: impl Iterator<Item = Keycode>,
+    keys: impl Iterator<Item = u32>,
     serial: Serial,
 ) {
     *seat.get_keyboard().unwrap().arc.last_enter.lock().unwrap() = Some(serial);
@@ -261,8 +261,8 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
 }
 
 impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
-    fn enter(&self, seat: &Seat<D>, state: &mut D, keys: Vec<KeysymHandle<'_>>, serial: Serial) {
-        enter_internal(self, seat, state, keys.iter().map(|h| h.raw_code()), serial)
+    fn enter(&self, seat: &Seat<D>, state: &mut D, keys: Vec<KeyHandle<'_>>, serial: Serial) {
+        enter_internal(self, seat, state, keys.iter().map(|h| h.evdev_code()), serial)
     }
 
     fn leave(&self, seat: &Seat<D>, state: &mut D, serial: Serial) {
@@ -295,13 +295,13 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
         &self,
         seat: &Seat<D>,
         _data: &mut D,
-        key: KeysymHandle<'_>,
+        key: KeyHandle<'_>,
         state: KeyState,
         serial: Serial,
         time: u32,
     ) {
         for_each_focused_kbds(seat, self, |kbd| {
-            kbd.key(serial.into(), time, key.raw_code().raw() - 8, state.into())
+            kbd.key(serial.into(), time, key.evdev_code(), state.into())
         })
     }
 
