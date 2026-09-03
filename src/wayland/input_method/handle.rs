@@ -9,8 +9,8 @@ use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
 
 use super::InputMethodHandler;
-use super::v2::V2InputMethodHandle;
-use super::v3::V3InputMethodHandle;
+use super::v2::InputMethodV2Handle;
+use super::v3::InputMethodV3Handle;
 
 /// Handle to input method state for a seat, covering both protocol versions.
 ///
@@ -18,16 +18,16 @@ use super::v3::V3InputMethodHandle;
 /// Individual protocol versions live in the internal v2/v3 modules.
 #[derive(Clone, Debug, Default)]
 pub struct InputMethodHandle {
-    v2: V2InputMethodHandle,
-    v3: V3InputMethodHandle,
+    v2: InputMethodV2Handle,
+    v3: InputMethodV3Handle,
 }
 
 impl InputMethodHandle {
-    pub(crate) fn v2(&self) -> &V2InputMethodHandle {
+    pub(crate) fn v2(&self) -> &InputMethodV2Handle {
         &self.v2
     }
 
-    pub(crate) fn v3(&self) -> &V3InputMethodHandle {
+    pub(crate) fn v3(&self) -> &InputMethodV3Handle {
         &self.v3
     }
 

@@ -72,11 +72,11 @@ impl InputMethod {
 
 /// Handle to a possible input method instance.
 #[derive(Default, Debug, Clone)]
-pub(crate) struct V3InputMethodHandle {
+pub(crate) struct InputMethodV3Handle {
     pub(crate) inner: Arc<Mutex<InputMethodState>>,
 }
 
-impl V3InputMethodHandle {
+impl InputMethodV3Handle {
     /// Assigns a new instance with the given app_id.
     pub(super) fn add_instance(&self, instance: &ZwpInputMethodV3, app_id: String) {
         let mut inner = self.inner.lock().unwrap();
@@ -397,7 +397,7 @@ impl V3InputMethodHandle {
 #[derive(Clone)]
 pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) seat: Seat<D>,
-    pub(super) handle: V3InputMethodHandle,
+    pub(super) handle: InputMethodV3Handle,
     pub(crate) text_input_handle: TextInputHandle,
     /// Handle to main keyboard for registering sub-keyboards
     pub(crate) keyboard_handle: KeyboardHandle<D>,

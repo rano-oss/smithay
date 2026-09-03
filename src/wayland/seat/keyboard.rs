@@ -155,7 +155,8 @@ pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
     mut f: impl FnMut(&dyn WlKeyboardApi),
 ) {
     if let Some(keyboard) = seat.get_keyboard() {
-        if let Some(kbd) = keyboard.arc.kbd_interceptor.lock().unwrap().as_ref() {
+        let kbd_interceptor = &keyboard.arc.kbd_interceptor;
+        if let Some(kbd) = kbd_interceptor.lock().unwrap().as_ref() {
             f(kbd.as_ref());
             return;
         }
@@ -168,13 +169,16 @@ pub(crate) fn for_each_focused_kbd_resource(
     surface: &WlSurface,
     mut f: impl FnMut(&dyn WlKeyboardApi),
 ) {
-    keyboards
-        .lock()
-        .unwrap()
-        .iter()
-        .filter_map(|k| k.upgrade().ok())
-        .filter(|k| k.id().same_client_as(&surface.id()))
-        .for_each(|k| f(&k));
+    let known_kbds = keyboards;
+    for kbd in &*known_kbds.lock().unwrap() {
+        let Ok(kbd) = kbd.upgrade() else {
+            continue;
+        };
+
+        if kbd.id().same_client_as(&surface.id()) {
+            f(&kbd);
+        }
+    }
 }
 
 /// Serialize keycodes for the `WlKeyboard` interface

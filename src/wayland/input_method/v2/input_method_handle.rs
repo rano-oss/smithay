@@ -50,11 +50,11 @@ impl Instance {
 
 /// Handle to an input method instance (v2 protocol).
 #[derive(Default, Debug, Clone)]
-pub(crate) struct V2InputMethodHandle {
+pub(crate) struct InputMethodV2Handle {
     pub(crate) inner: Arc<Mutex<InputMethod>>,
 }
 
-impl V2InputMethodHandle {
+impl InputMethodV2Handle {
     pub(super) fn add_instance(&self, instance: &ZwpInputMethodV2) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(instance) = inner.instance.as_mut() {
@@ -166,7 +166,7 @@ impl V2InputMethodHandle {
 
 /// User data of ZwpInputMethodV2 object
 pub struct InputMethodUserData<D: SeatHandler> {
-    pub(super) handle: V2InputMethodHandle,
+    pub(super) handle: InputMethodV2Handle,
     pub(crate) text_input_handle: TextInputHandle,
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     pub(crate) popup_geometry_callback: fn(&D, &WlSurface) -> Rectangle<i32, Logical>,

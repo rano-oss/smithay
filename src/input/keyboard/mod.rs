@@ -809,7 +809,8 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         *self.arc.active_keymap.write().unwrap() = new_id;
 
         // Update keymap for every wl_keyboard.
-        if let Some(kbd) = self.arc.kbd_interceptor.lock().unwrap().as_ref() {
+        let kbd_interceptor = &self.arc.kbd_interceptor;
+        if let Some(kbd) = kbd_interceptor.lock().unwrap().as_ref() {
             let res = keymap_file.with_fd(kbd.version() >= 7, |fd, size| {
                 kbd.keymap(KeymapFormat::XkbV1, fd.as_fd(), size as u32)
             });
@@ -817,14 +818,12 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 warn!(err = ?e, "Failed to send keymap to client");
             }
         } else {
-            for kbd in self
-                .arc
-                .known_kbds
-                .lock()
-                .unwrap()
-                .iter()
-                .filter_map(|k| k.upgrade().ok())
-            {
+            let known_kbds = &self.arc.known_kbds;
+            for kbd in &*known_kbds.lock().unwrap() {
+                let Ok(kbd) = kbd.upgrade() else {
+                    continue;
+                };
+
                 let res = keymap_file.with_fd(Resource::version(&kbd) >= 7, |fd, size| {
                     kbd.keymap(KeymapFormat::XkbV1, fd.as_fd(), size as u32)
                 });
@@ -1240,21 +1239,21 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         guard.repeat_delay = delay;
         guard.repeat_rate = rate;
         #[cfg(feature = "wayland_frontend")]
-        if let Some(kbd) = self.arc.kbd_interceptor.lock().unwrap().as_ref() {
-            if kbd.version() >= 4 {
-                kbd.repeat_info(rate, delay);
-            }
-        } else {
-            for kbd in self
-                .arc
-                .known_kbds
-                .lock()
-                .unwrap()
-                .iter()
-                .filter_map(|k| k.upgrade().ok())
-            {
-                if Resource::version(&kbd) >= 4 {
+        {
+            let kbd_interceptor = &self.arc.kbd_interceptor;
+            if let Some(kbd) = kbd_interceptor.lock().unwrap().as_ref() {
+                if kbd.version() >= 4 {
                     kbd.repeat_info(rate, delay);
+                }
+            } else {
+                let known_kbds = &self.arc.known_kbds;
+                for kbd in &*known_kbds.lock().unwrap() {
+                    let Ok(kbd) = kbd.upgrade() else {
+                        continue;
+                    };
+                    if Resource::version(&kbd) >= 4 {
+                        kbd.repeat_info(rate, delay);
+                    }
                 }
             }
         }

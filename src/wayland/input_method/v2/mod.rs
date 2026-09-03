@@ -13,7 +13,7 @@ use crate::{
 };
 
 pub use input_method_handle::InputMethodUserData;
-pub(crate) use input_method_handle::V2InputMethodHandle;
+pub(crate) use input_method_handle::InputMethodV2Handle;
 
 pub use input_method_keyboard_grab::{InputMethodKeyboardGrab, InputMethodKeyboardUserData};
 pub use input_method_popup_surface::InputMethodPopupSurfaceUserData;
