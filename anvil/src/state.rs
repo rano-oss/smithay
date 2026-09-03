@@ -346,7 +346,10 @@ impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
     }
 
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
-        self.ime_parent_geometry(parent)
+        self.space
+            .elements()
+            .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
+            .unwrap_or_default()
     }
 
     fn popup_geometry(
@@ -355,7 +358,11 @@ impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
         cursor: &Rectangle<i32, smithay::utils::Logical>,
         positioner: &PositionerState,
     ) -> Rectangle<i32, smithay::utils::Logical> {
-        let parent_geo = self.ime_parent_geometry(parent);
+        let parent_geo = self
+            .space
+            .elements()
+            .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
+            .unwrap_or_default();
         let target = Rectangle::new((0, 0).into(), parent_geo.size);
         positioner.get_unconstrained_geometry(*cursor, target)
     }
@@ -366,15 +373,6 @@ impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
         _dh: &DisplayHandle,
     ) -> Option<String> {
         None
-    }
-}
-
-impl<BackendData: Backend> AnvilState<BackendData> {
-    fn ime_parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
-        self.space
-            .elements()
-            .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
-            .unwrap_or_default()
     }
 }
 

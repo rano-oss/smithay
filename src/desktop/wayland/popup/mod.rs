@@ -9,7 +9,7 @@ use crate::{
     utils::{IsAlive, Logical, Point, Rectangle},
     wayland::{
         compositor::with_states,
-        input_method::{PopupSurface},
+        input_method,
         shell::xdg::{self, SurfaceCachedState},
     },
 };
@@ -20,7 +20,7 @@ pub enum PopupKind {
     /// xdg-shell [`PopupSurface`](xdg::PopupSurface)
     Xdg(xdg::PopupSurface),
     /// input-method popup from v2 or v3
-    InputMethod(PopupSurface),
+    InputMethod(input_method::PopupSurface),
 }
 
 impl IsAlive for PopupKind {
@@ -97,9 +97,9 @@ impl From<xdg::PopupSurface> for PopupKind {
     }
 }
 
-impl From<PopupSurface> for PopupKind {
+impl From<input_method::PopupSurface> for PopupKind {
     #[inline]
-    fn from(p: PopupSurface) -> PopupKind {
+    fn from(p: input_method::PopupSurface) -> PopupKind {
         PopupKind::InputMethod(p)
     }
 }
