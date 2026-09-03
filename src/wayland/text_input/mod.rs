@@ -145,12 +145,12 @@ where
                 user_data.insert_if_missing(TextInputHandle::default);
                 user_data.insert_if_missing(InputMethodHandle::default);
                 let handle = user_data.get::<TextInputHandle>().unwrap();
-                let input_method_handle = user_data.get::<InputMethodHandle>().unwrap().clone();
+                let input_method_handle = user_data.get::<InputMethodHandle>().unwrap();
                 let instance = data_init.init(
                     id,
                     TextInputUserData {
                         handle: handle.clone(),
-                        input_method_handle,
+                        input_method_handle: input_method_handle.clone(),
                     },
                 );
                 handle.add_instance(&instance);
