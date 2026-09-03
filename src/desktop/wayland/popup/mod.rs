@@ -76,7 +76,7 @@ impl PopupKind {
     fn send_done(&self) {
         match *self {
             PopupKind::Xdg(ref t) => t.send_popup_done(),
-            PopupKind::InputMethod(_) => {}
+            PopupKind::InputMethod(_) => {} // The IME receives a deactivate event which already indicates that the popup is destroyed.
         }
     }
 
