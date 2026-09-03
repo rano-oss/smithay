@@ -15,7 +15,7 @@ use wayland_server::{
         wl_keyboard::{KeyState, WlKeyboard},
         wl_surface::WlSurface,
     },
-    Client, DataInit, Dispatch, DisplayHandle, Resource, Weak,
+    Client, DataInit, DisplayHandle, Resource, Weak,
 };
 
 use crate::input::{

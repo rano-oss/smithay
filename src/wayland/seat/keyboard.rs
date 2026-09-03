@@ -21,7 +21,7 @@ use crate::{
     wayland::{
         Dispatch2,
         compositor::{add_destruction_hook, remove_destruction_hook, with_states},
-        input_method_forwarding::SeatInputMethods,
+        input_method::InputMethodSeat,
         text_input::TextInputSeat,
     },
 };
@@ -240,15 +240,15 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     }
 
     let text_input = seat.text_input();
-    let input_methods = SeatInputMethods::from_seat(seat);
+    let input_method = seat.input_method();
 
-    input_methods.deactivate_all(state);
+    input_method.deactivate_all(state);
 
     // NOTE: Always set focus regardless whether the client actually has the
     // text-input global bound due to clients doing lazy global binding.
     text_input.set_focus(Some(surface.clone()));
 
-    if input_methods.has_instance() {
+    if input_method.has_instance() {
         text_input.enter();
     }
 }
@@ -271,11 +271,11 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
         };
 
         let text_input = seat.text_input();
-        let input_methods = SeatInputMethods::from_seat(seat);
+        let input_method = seat.input_method();
 
-        input_methods.deactivate_all(state);
+        input_method.deactivate_all(state);
 
-        if input_methods.has_instance() {
+        if input_method.has_instance() {
             text_input.leave();
         }
 

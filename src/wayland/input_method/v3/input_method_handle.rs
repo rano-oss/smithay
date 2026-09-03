@@ -20,10 +20,11 @@ use crate::{
     wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle, Dispatch2},
 };
 
+use super::super::{text_input_sync, InputMethodHandler, InputMethodPopup};
 use super::{
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
     positioner::PositionerUserData,
-    InputMethodHandler, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
+    InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
 /// Contains all input method instances and tracks which one is active.
@@ -71,14 +72,15 @@ impl InputMethod {
 
 /// Handle to a possible input method instance.
 #[derive(Default, Debug, Clone)]
-pub struct InputMethodHandle {
+pub(crate) struct V3InputMethodHandle {
     pub(crate) inner: Arc<Mutex<InputMethodState>>,
 }
 
-impl InputMethodHandle {
+impl V3InputMethodHandle {
     /// Assigns a new instance with the given app_id.
     pub(super) fn add_instance(&self, instance: &ZwpInputMethodV3, app_id: String) {
         let mut inner = self.inner.lock().unwrap();
+        let object_id = instance.id();
         inner.instances.push(InputMethod {
             object: instance.clone(),
             serial: 0,
@@ -88,11 +90,23 @@ impl InputMethodHandle {
             cursor_rectangle: Rectangle::default(),
             pending_preedit: None,
         });
+        if inner.active_input_method_id.is_none() {
+            inner.active_input_method_id = Some(object_id);
+        }
     }
 
     /// Whether there's any registered input method instance available.
     pub(crate) fn has_instance(&self) -> bool {
         !self.inner.lock().unwrap().instances.is_empty()
+    }
+
+    /// Whether an input method instance is selected to receive protocol traffic.
+    pub(crate) fn has_active_instance(&self) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .active_input_method_id
+            .as_ref()
+            .is_some_and(|active_id| inner.instances.iter().any(|i| i.object.id() == *active_id))
     }
 
     /// List all registered input method app_ids.
@@ -199,7 +213,7 @@ impl InputMethodHandle {
                 .collect();
 
             for popup in popups_to_reposition {
-                state.popup_repositioned(popup);
+                state.popup_repositioned(popup.into());
             }
         }
     }
@@ -241,7 +255,7 @@ impl InputMethodHandle {
         };
 
         for popup in popups_to_reposition {
-            state.popup_repositioned(popup);
+            state.popup_repositioned(popup.into());
         }
     }
 
@@ -363,7 +377,7 @@ impl InputMethodHandle {
             data.text_input_handle.done(false);
 
             for popup in im.popup_handles.drain(..) {
-                (data.dismiss_popup)(state, popup.clone());
+                (data.dismiss_popup)(state, popup.clone().into());
             }
             let filter = data.keyboard_filter.lock().unwrap();
             if let Some(keyboard_filter) = filter.as_ref() {
@@ -377,14 +391,14 @@ impl InputMethodHandle {
 #[derive(Clone)]
 pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) seat: Seat<D>,
-    pub(super) handle: InputMethodHandle,
+    pub(super) handle: V3InputMethodHandle,
     pub(crate) text_input_handle: TextInputHandle,
     /// Handle to main keyboard for registering sub-keyboards
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     /// Currently bound keyboard filter, set by the keyboard_filter protocol.
     pub(crate) keyboard_filter: Arc<Mutex<Option<keyboard_filter::Filter>>>,
     /// This is just a copy from InputMethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup.
-    pub(crate) dismiss_popup: fn(&mut D, PopupSurface),
+    pub(crate) dismiss_popup: fn(&mut D, InputMethodPopup),
 }
 
 impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
@@ -416,9 +430,7 @@ where
         use zwp_input_method_v3::Request;
         match request {
             Request::CommitString { text } => {
-                self.text_input_handle.with_active_text_input(|ti, _surface| {
-                    ti.commit_string(Some(text.clone()));
-                });
+                text_input_sync::commit_string(&self.text_input_handle, text);
                 let mut inner = self.handle.inner.lock().unwrap();
                 if let Some(active_id) = inner.active_input_method_id.clone() {
                     if let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id)
@@ -494,17 +506,22 @@ where
                     self.handle.done();
                 }
 
-                self.text_input_handle.with_active_text_input(|ti, _surface| {
-                    ti.preedit_string(Some(text.clone()), cursor_begin, cursor_end);
-                });
+                text_input_sync::set_preedit_string(
+                    &self.text_input_handle,
+                    text,
+                    cursor_begin,
+                    cursor_end,
+                );
             }
             Request::DeleteSurroundingText {
                 before_length,
                 after_length,
             } => {
-                self.text_input_handle.with_active_text_input(|ti, _surface| {
-                    ti.delete_surrounding_text(before_length, after_length);
-                });
+                text_input_sync::delete_surrounding_text(
+                    &self.text_input_handle,
+                    before_length,
+                    after_length,
+                );
             }
 
             Request::Commit { serial } => {
@@ -526,7 +543,11 @@ where
                     (instance.serial, defer_done)
                 };
                 if !defer_done {
-                    self.text_input_handle.done(serial != current_serial);
+                    text_input_sync::commit_done(
+                        &self.text_input_handle,
+                        serial,
+                        current_serial,
+                    );
                 }
             }
             Request::PerformAction { action } => {
@@ -621,7 +642,7 @@ where
                         positioner_data,
                     );
                     instance.popup_handles.push(popup.clone());
-                    state.new_popup(popup);
+                    state.new_popup(popup.into());
                 } else {
                     // Race condition: client may have sent this before receiving our deactivate.
                     // Silently ignore rather than killing the client with a fatal protocol error.

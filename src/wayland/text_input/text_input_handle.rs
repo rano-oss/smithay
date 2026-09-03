@@ -10,7 +10,7 @@ use wayland_server::{Resource, protocol::wl_surface::WlSurface};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::{Dispatch2, input_method, input_method_forwarding::SeatInputMethods, input_method_v3};
+use crate::wayland::{Dispatch2, input_method::InputMethodHandler};
 
 #[derive(Default, Debug)]
 pub(crate) struct TextInput {
@@ -183,19 +183,12 @@ impl TextInputHandle {
 #[derive(Debug)]
 pub struct TextInputUserData {
     pub(super) handle: TextInputHandle,
-    pub(crate) input_method_handle: input_method::InputMethodHandle,
-    pub(crate) input_method_v3_handle: input_method_v3::InputMethodHandle,
-}
-
-impl TextInputUserData {
-    fn seat_input_methods(&self) -> SeatInputMethods {
-        SeatInputMethods::new(self.input_method_handle.clone(), self.input_method_v3_handle.clone())
-    }
+    pub(crate) input_method: crate::wayland::input_method::InputMethodHandle,
 }
 
 impl<D> Dispatch2<ZwpTextInputV3, D> for TextInputUserData
 where
-    D: SeatHandler + input_method_v3::InputMethodHandler,
+    D: SeatHandler + InputMethodHandler,
     D: 'static,
 {
     fn request(
@@ -213,7 +206,7 @@ where
         }
 
         // Discard requests without any active input method instance.
-        if !self.seat_input_methods().has_instance() {
+        if !self.input_method.has_instance() {
             debug!("discarding text-input request without IME running");
             return;
         }
@@ -280,13 +273,13 @@ where
                         *active_text_input_id = Some(resource.id());
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
-                        self.seat_input_methods().activate_all(state, &focus);
+                        self.input_method.activate_all(state, &focus);
                     }
                     Some(false) => {
                         *active_text_input_id = None;
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
-                        self.seat_input_methods().deactivate_all(state);
+                        self.input_method.deactivate_all(state);
                         return;
                     }
                     None => {
@@ -301,31 +294,27 @@ where
                 }
 
                 if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
-                    self.seat_input_methods()
+                    self.input_method
                         .forward_surrounding_text(text, cursor, anchor);
                 }
 
                 if let Some(cause) = new_state.text_change_cause.take() {
-                    self.seat_input_methods().forward_text_change_cause(cause);
+                    self.input_method.forward_text_change_cause(cause);
                 }
 
                 if let Some((hint, purpose)) = new_state.content_type.take() {
-                    self.seat_input_methods().forward_content_type(hint, purpose);
+                    self.input_method.forward_content_type(hint, purpose);
                 }
 
                 if let Some(rect) = new_state.cursor_rectangle.take() {
-                    self.seat_input_methods()
+                    self.input_method
                         .forward_cursor_rectangle::<D>(state, rect);
                 }
 
-                if self.input_method_v3_handle.has_preedit_commit_followup() {
-                    self.input_method_v3_handle
-                        .capture_pending_preedit_anchor_from_last_cursor::<D>(state);
-                    self.input_method_v3_handle
-                        .flush_pending_preedit(&self.handle);
-                }
+                self.input_method
+                    .text_input_commit_followup::<D>(state, &self.handle);
 
-                self.seat_input_methods().text_input_done();
+                self.input_method.text_input_done();
             }
             zwp_text_input_v3::Request::Destroy => {
                 // Nothing to do
@@ -355,7 +344,7 @@ where
         };
 
         if deactivate_im {
-            self.seat_input_methods().deactivate_all(state);
+            self.input_method.deactivate_all(state);
         }
     }
 }

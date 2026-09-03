@@ -20,11 +20,11 @@ use crate::{
     wayland::{Dispatch2, compositor, seat::WaylandFocus, text_input::TextInputHandle},
 };
 
+use super::super::{text_input_sync, InputMethodHandler, InputMethodPopup};
 use super::{
-    INPUT_POPUP_SURFACE_ROLE, InputMethodHandler, InputMethodKeyboardUserData,
-    InputMethodPopupSurfaceUserData,
     input_method_keyboard_grab::InputMethodKeyboardGrab,
     input_method_popup_surface::{PopupHandle, PopupParent, PopupSurface},
+    InputMethodKeyboardUserData, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
 #[derive(Default, Debug)]
@@ -48,13 +48,13 @@ impl Instance {
     }
 }
 
-/// Handle to an input method instance
+/// Handle to an input method instance (v2 protocol).
 #[derive(Default, Debug, Clone)]
-pub struct InputMethodHandle {
+pub(crate) struct V2InputMethodHandle {
     pub(crate) inner: Arc<Mutex<InputMethod>>,
 }
 
-impl InputMethodHandle {
+impl V2InputMethodHandle {
     pub(super) fn add_instance(&self, instance: &ZwpInputMethodV2) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(instance) = inner.instance.as_mut() {
@@ -117,7 +117,7 @@ impl InputMethodHandle {
 
         if let Some(instance) = &inner.instance {
             let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
-            (data.popup_repositioned)(state, popup_surface);
+            (data.popup_repositioned)(state, popup_surface.into());
         };
     }
 
@@ -130,7 +130,7 @@ impl InputMethodHandle {
                     let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
                     let location = (data.popup_geometry_callback)(state, surface);
                     // Remove old popup.
-                    (data.dismiss_popup)(state, popup.clone());
+                    (data.dismiss_popup)(state, popup.clone().into());
 
                     // Add a new one with updated parent.
                     let parent = PopupParent {
@@ -138,7 +138,7 @@ impl InputMethodHandle {
                         location,
                     };
                     popup.set_parent(Some(parent));
-                    (data.new_popup)(state, popup.clone());
+                    (data.new_popup)(state, popup.clone().into());
                 }
             }
         });
@@ -155,7 +155,7 @@ impl InputMethodHandle {
                 if let Some(popup) = im.popup_handle.surface.as_mut() {
                     let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
                     if popup.get_parent().is_some() {
-                        (data.dismiss_popup)(state, popup.clone());
+                        (data.dismiss_popup)(state, popup.clone().into());
                     }
                     popup.set_parent(None);
                 }
@@ -166,13 +166,13 @@ impl InputMethodHandle {
 
 /// User data of ZwpInputMethodV2 object
 pub struct InputMethodUserData<D: SeatHandler> {
-    pub(super) handle: InputMethodHandle,
+    pub(super) handle: V2InputMethodHandle,
     pub(crate) text_input_handle: TextInputHandle,
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     pub(crate) popup_geometry_callback: fn(&D, &WlSurface) -> Rectangle<i32, Logical>,
-    pub(crate) new_popup: fn(&mut D, PopupSurface),
-    pub(crate) popup_repositioned: fn(&mut D, PopupSurface),
-    pub(crate) dismiss_popup: fn(&mut D, PopupSurface),
+    pub(crate) new_popup: fn(&mut D, InputMethodPopup),
+    pub(crate) popup_repositioned: fn(&mut D, InputMethodPopup),
+    pub(crate) dismiss_popup: fn(&mut D, InputMethodPopup),
 }
 
 impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
@@ -205,26 +205,29 @@ where
     ) {
         match request {
             zwp_input_method_v2::Request::CommitString { text } => {
-                self.text_input_handle.with_active_text_input(|ti, _surface| {
-                    ti.commit_string(Some(text.clone()));
-                });
+                text_input_sync::commit_string(&self.text_input_handle, text);
             }
             zwp_input_method_v2::Request::SetPreeditString {
                 text,
                 cursor_begin,
                 cursor_end,
             } => {
-                self.text_input_handle.with_active_text_input(|ti, _surface| {
-                    ti.preedit_string(Some(text.clone()), cursor_begin, cursor_end);
-                });
+                text_input_sync::set_preedit_string(
+                    &self.text_input_handle,
+                    text,
+                    cursor_begin,
+                    cursor_end,
+                );
             }
             zwp_input_method_v2::Request::DeleteSurroundingText {
                 before_length,
                 after_length,
             } => {
-                self.text_input_handle.with_active_text_input(|ti, _surface| {
-                    ti.delete_surrounding_text(before_length, after_length);
-                });
+                text_input_sync::delete_surrounding_text(
+                    &self.text_input_handle,
+                    before_length,
+                    after_length,
+                );
             }
             zwp_input_method_v2::Request::Commit { serial } => {
                 let current_serial = self
@@ -237,7 +240,7 @@ where
                     .map(|i| i.serial)
                     .unwrap_or(0);
 
-                self.text_input_handle.done(serial != current_serial);
+                text_input_sync::commit_done(&self.text_input_handle, serial, current_serial);
             }
             zwp_input_method_v2::Request::GetInputPopupSurface { id, surface } => {
                 if compositor::give_role(&surface, INPUT_POPUP_SURFACE_ROLE).is_err()
@@ -270,7 +273,7 @@ where
                 let popup = PopupSurface::new(instance, surface, popup_rect, parent);
                 input_method.popup_handle.surface = Some(popup.clone());
                 if popup.get_parent().is_some() {
-                    state.new_popup(popup);
+                    state.new_popup(popup.into());
                 }
             }
             zwp_input_method_v2::Request::GrabKeyboard { keyboard } => {

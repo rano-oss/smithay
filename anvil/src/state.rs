@@ -17,7 +17,7 @@ use smithay::{
     },
     delegate_dispatch2,
     desktop::{
-        PopupKind, PopupManager, Space,
+        PopupKind, PopupManager, Space, InputMethodPopup,
         space::SpaceElement,
         utils::{
             OutputPresentationFeedback, surface_presentation_feedback_flags_from_states,
@@ -58,10 +58,8 @@ use smithay::{
         image_copy_capture::{
             BufferConstraints, Frame, ImageCopyCaptureHandler, ImageCopyCaptureState, Session, SessionRef,
         },
-        input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface},
-        input_method_v3::{
-            InputMethodHandler as InputMethodV3Handler, PopupSurface as PopupSurfaceV3, PositionerState,
-        },
+        input_method::{InputMethodHandler, InputMethodManagerState},
+        input_method_v3::PositionerState,
         keyboard_shortcuts_inhibit::{
             KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
         },
@@ -334,37 +332,18 @@ impl<BackendData: Backend> TabletSeatHandler for AnvilState<BackendData> {
 }
 
 impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
-    fn new_popup(&mut self, surface: PopupSurface) {
-        if let Err(err) = self.popups.track_popup(PopupKind::from(surface)) {
-            warn!("Failed to track popup: {}", err);
-        }
+    fn new_popup(&mut self, surface: InputMethodPopup) {
+        self.track_ime_popup(surface);
     }
 
-    fn popup_repositioned(&mut self, _: PopupSurface) {}
+    fn popup_repositioned(&mut self, _: InputMethodPopup) {}
 
-    fn dismiss_popup(&mut self, surface: PopupSurface) {
-        if let Some(parent) = surface.get_parent().map(|parent| parent.surface.clone()) {
-            let _ = PopupManager::dismiss_popup(&parent, &PopupKind::from(surface));
-        }
+    fn dismiss_popup(&mut self, surface: InputMethodPopup) {
+        self.dismiss_ime_popup(surface);
     }
 
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
         self.ime_parent_geometry(parent)
-    }
-}
-
-impl<BackendData: Backend> InputMethodV3Handler for AnvilState<BackendData> {
-    fn new_popup(&mut self, surface: PopupSurfaceV3) {
-        if let Err(err) = self.popups.track_popup(PopupKind::from(surface)) {
-            warn!("Failed to track popup: {}", err);
-        }
-    }
-
-    fn popup_repositioned(&mut self, _: PopupSurfaceV3) {}
-
-    fn dismiss_popup(&mut self, surface: PopupSurfaceV3) {
-        let parent = surface.get_parent().surface.clone();
-        let _ = PopupManager::dismiss_popup(&parent, &PopupKind::from(surface));
     }
 
     fn popup_geometry(
@@ -378,10 +357,6 @@ impl<BackendData: Backend> InputMethodV3Handler for AnvilState<BackendData> {
         positioner.get_unconstrained_geometry(*cursor, target)
     }
 
-    fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
-        self.ime_parent_geometry(parent)
-    }
-
     fn input_method_app_id(
         &self,
         _client: &smithay::reexports::wayland_server::Client,
@@ -392,6 +367,24 @@ impl<BackendData: Backend> InputMethodV3Handler for AnvilState<BackendData> {
 }
 
 impl<BackendData: Backend> AnvilState<BackendData> {
+    fn track_ime_popup(&mut self, popup: InputMethodPopup) {
+        if let Err(err) = self.popups.track_popup(PopupKind::from(popup)) {
+            warn!("Failed to track popup: {}", err);
+        }
+    }
+
+    fn dismiss_ime_popup(&mut self, popup: InputMethodPopup) {
+        let parent = match &popup {
+            InputMethodPopup::V2(surface) => surface
+                .get_parent()
+                .map(|parent| parent.surface.clone()),
+            InputMethodPopup::V3(surface) => Some(surface.get_parent().surface.clone()),
+        };
+        if let Some(parent) = parent {
+            let _ = PopupManager::dismiss_popup(&parent, &PopupKind::from(popup));
+        }
+    }
+
     fn ime_parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
         self.space
             .elements()

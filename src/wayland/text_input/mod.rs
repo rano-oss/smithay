@@ -58,7 +58,7 @@ use crate::{
 pub use text_input_handle::TextInputHandle;
 pub use text_input_handle::TextInputUserData;
 
-use super::{input_method, input_method_v3};
+use super::input_method;
 
 const MANAGER_VERSION: u32 = 1;
 
@@ -144,21 +144,18 @@ where
                 let user_data = seat.user_data();
                 user_data.insert_if_missing(TextInputHandle::default);
                 user_data.insert_if_missing(input_method::InputMethodHandle::default);
-                user_data.insert_if_missing(input_method_v3::InputMethodHandle::default);
                 let handle = user_data.get::<TextInputHandle>().unwrap();
-                let input_method_handle = user_data.get::<input_method::InputMethodHandle>().unwrap();
-                let input_method_v3_handle =
-                    user_data.get::<input_method_v3::InputMethodHandle>().unwrap();
+                let input_method = user_data.get::<input_method::InputMethodHandle>().unwrap().clone();
+                let has_ime = input_method.has_instance();
                 let instance = data_init.init(
                     id,
                     TextInputUserData {
                         handle: handle.clone(),
-                        input_method_handle: input_method_handle.clone(),
-                        input_method_v3_handle: input_method_v3_handle.clone(),
+                        input_method,
                     },
                 );
                 handle.add_instance(&instance);
-                if input_method_handle.has_instance() || input_method_v3_handle.has_instance() {
+                if has_ime {
                     handle.enter();
                 }
             }

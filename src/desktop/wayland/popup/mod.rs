@@ -10,78 +10,11 @@ use crate::{
     wayland::{
         compositor::with_states,
         input_method,
-        input_method_v3,
         shell::xdg::{self, SurfaceCachedState},
     },
 };
 
-/// Input-method popup from either protocol version.
-#[derive(Debug, Clone, PartialEq)]
-pub enum InputMethodPopup {
-    /// input-method v2 [`PopupSurface`](input_method::PopupSurface)
-    V2(input_method::PopupSurface),
-    /// input-method v3 [`PopupSurface`](input_method_v3::PopupSurface)
-    V3(input_method_v3::PopupSurface),
-}
-
-impl IsAlive for InputMethodPopup {
-    #[inline]
-    fn alive(&self) -> bool {
-        match self {
-            InputMethodPopup::V2(popup) => popup.alive(),
-            InputMethodPopup::V3(popup) => popup.alive(),
-        }
-    }
-}
-
-impl InputMethodPopup {
-    /// Retrieves the underlying [`WlSurface`]
-    #[inline]
-    pub fn wl_surface(&self) -> &WlSurface {
-        match self {
-            InputMethodPopup::V2(popup) => popup.wl_surface(),
-            InputMethodPopup::V3(popup) => popup.wl_surface(),
-        }
-    }
-
-    fn parent(&self) -> Option<WlSurface> {
-        match self {
-            InputMethodPopup::V2(popup) => popup.get_parent().map(|parent| parent.surface.clone()),
-            InputMethodPopup::V3(popup) => Some(popup.get_parent().surface.clone()),
-        }
-    }
-
-    fn geometry(&self) -> Rectangle<i32, Logical> {
-        match self {
-            InputMethodPopup::V2(popup) => popup
-                .get_parent()
-                .map(|parent| parent.location)
-                .unwrap_or_default(),
-            InputMethodPopup::V3(popup) => popup.get_parent().location,
-        }
-    }
-
-    fn location(&self) -> Point<i32, Logical> {
-        match self {
-            InputMethodPopup::V2(popup) => popup.location(),
-            InputMethodPopup::V3(popup) => popup.location(),
-        }
-    }
-}
-
-impl From<input_method::PopupSurface> for InputMethodPopup {
-    #[inline]
-    fn from(popup: input_method::PopupSurface) -> Self {
-        InputMethodPopup::V2(popup)
-    }
-}
-
-impl From<input_method_v3::PopupSurface> for InputMethodPopup {
-    #[inline]
-    fn from(popup: input_method_v3::PopupSurface) -> Self {
-        InputMethodPopup::V3(popup)
-    }
-}
+pub use crate::wayland::input_method::InputMethodPopup;
 
 /// Represents a popup surface
 #[derive(Debug, Clone, PartialEq)]
@@ -173,16 +106,16 @@ impl From<InputMethodPopup> for PopupKind {
     }
 }
 
-impl From<input_method::PopupSurface> for PopupKind {
+impl From<input_method::v2::PopupSurface> for PopupKind {
     #[inline]
-    fn from(p: input_method::PopupSurface) -> PopupKind {
+    fn from(p: input_method::v2::PopupSurface) -> PopupKind {
         PopupKind::InputMethod(p.into())
     }
 }
 
-impl From<input_method_v3::PopupSurface> for PopupKind {
+impl From<input_method::v3::PopupSurface> for PopupKind {
     #[inline]
-    fn from(p: input_method_v3::PopupSurface) -> PopupKind {
+    fn from(p: input_method::v3::PopupSurface) -> PopupKind {
         PopupKind::InputMethod(p.into())
     }
 }

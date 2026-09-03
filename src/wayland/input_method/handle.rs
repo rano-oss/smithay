@@ -1,51 +1,47 @@
-//! Helpers for forwarding text-input state to both input-method v2 and v3.
+//! Unified seat-level input method handle wrapping v2 and v3 backends.
 
 use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::{
     ChangeCause, ContentHint, ContentPurpose,
 };
 use wayland_server::protocol::wl_surface::WlSurface;
 
-use crate::input::{Seat, SeatHandler};
+use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::{input_method, input_method_v3};
+use crate::wayland::text_input::TextInputHandle;
 
-use input_method::InputMethodSeat;
-use input_method_v3::InputMethodSeat as InputMethodV3Seat;
+use super::v2::V2InputMethodHandle;
+use super::v3::V3InputMethodHandle;
+use super::InputMethodHandler;
 
-/// Handles for both input-method protocol versions on a seat.
-#[derive(Clone, Debug)]
-pub(crate) struct SeatInputMethods {
-    v2: input_method::InputMethodHandle,
-    v3: input_method_v3::InputMethodHandle,
+/// Handle to input method state for a seat, covering both protocol versions.
+///
+/// Compositors and text-input integration should use this type exclusively.
+/// Individual protocol versions live in the internal v2/v3 modules.
+#[derive(Clone, Debug, Default)]
+pub struct InputMethodHandle {
+    v2: V2InputMethodHandle,
+    v3: V3InputMethodHandle,
 }
 
-impl SeatInputMethods {
-    pub(crate) fn from_seat<D>(seat: &Seat<D>) -> Self
-    where
-        D: SeatHandler + 'static,
-    {
-        Self {
-            v2: seat.input_method().clone(),
-            v3: seat.input_method_v3().clone(),
-        }
+impl InputMethodHandle {
+    pub(crate) fn v2(&self) -> &V2InputMethodHandle {
+        &self.v2
     }
 
-    pub(crate) fn new(
-        v2: input_method::InputMethodHandle,
-        v3: input_method_v3::InputMethodHandle,
-    ) -> Self {
-        Self { v2, v3 }
+    pub(crate) fn v3(&self) -> &V3InputMethodHandle {
+        &self.v3
     }
 
+    /// Whether any input method can receive text-input state on this seat.
     pub(crate) fn has_instance(&self) -> bool {
-        self.v2.has_instance() || self.v3.has_instance()
+        self.v2.has_instance() || self.v3.has_active_instance()
     }
 
     pub(crate) fn deactivate_all<D: SeatHandler + 'static>(&self, state: &mut D) {
         if self.v2.has_instance() {
             self.v2.deactivate_input_method(state);
         }
-        if self.v3.has_instance() {
+        if self.v3.has_active_instance() {
             self.v3.deactivate_input_method(state);
         }
     }
@@ -54,7 +50,7 @@ impl SeatInputMethods {
         if self.v2.has_instance() {
             self.v2.activate_input_method(state, surface);
         }
-        if self.v3.has_instance() {
+        if self.v3.has_active_instance() {
             self.v3.activate_input_method(state, surface);
         }
     }
@@ -87,7 +83,7 @@ impl SeatInputMethods {
         });
     }
 
-    pub(crate) fn forward_cursor_rectangle<D: SeatHandler + input_method_v3::InputMethodHandler + 'static>(
+    pub(crate) fn forward_cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,
         rect: Rectangle<i32, Logical>,
@@ -96,8 +92,40 @@ impl SeatInputMethods {
         self.v3.set_cursor_rectangle::<D>(state, rect);
     }
 
+    pub(crate) fn text_input_commit_followup<D: SeatHandler + InputMethodHandler + 'static>(
+        &self,
+        state: &mut D,
+        text_input_handle: &TextInputHandle,
+    ) {
+        if self.v3.has_preedit_commit_followup() {
+            self.v3
+                .capture_pending_preedit_anchor_from_last_cursor::<D>(state);
+            self.v3.flush_pending_preedit(text_input_handle);
+        }
+    }
+
     pub(crate) fn text_input_done(&self) {
         self.v2.with_instance(|input_method| input_method.done());
         self.v3.done();
+    }
+
+    /// v2-only: whether the IME holds a keyboard grab.
+    pub fn keyboard_grabbed(&self) -> bool {
+        self.v2.keyboard_grabbed()
+    }
+
+    /// Select the active v3 input method instance by app_id.
+    pub fn set_active_instance(&self, app_id: &str) -> bool {
+        self.v3.set_active_instance(app_id)
+    }
+
+    /// Clear the active v3 input method instance.
+    pub fn clear_active_instance<D: SeatHandler + 'static>(&self, state: &mut D) {
+        self.v3.clear_active_instance(state);
+    }
+
+    /// List registered v3 input method app_ids.
+    pub fn list_instances(&self) -> Vec<String> {
+        self.v3.list_instances()
     }
 }

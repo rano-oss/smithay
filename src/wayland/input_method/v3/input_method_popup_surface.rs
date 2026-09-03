@@ -401,7 +401,7 @@ where
                     popup.clone()
                 };
 
-                state.popup_repositioned(popup);
+                state.popup_repositioned(popup.into());
 
                 im.handle.done();
             }
