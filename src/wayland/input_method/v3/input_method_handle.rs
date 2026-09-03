@@ -20,7 +20,7 @@ use crate::{
     wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle, Dispatch2},
 };
 
-use super::super::{InputMethodHandler, InputMethodPopup};
+use super::super::{InputMethodHandler, PopupSurface as ImPopupSurface};
 use super::{
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
     positioner::PositionerUserData,
@@ -44,7 +44,7 @@ pub(crate) struct InputMethod {
     pub app_id: String,
     pub popup_handles: Vec<PopupSurface>,
     /// Relative to surface on which input method is enabled
-    pub cursor_rectangle: Rectangle<i32, Logical>,
+    pub text_input_rectangle: Rectangle<i32, Logical>,
     /// Preedit held until a start-of-preedit anchor probe completes.
     pub pending_preedit: Option<(String, i32, i32)>,
 }
@@ -57,7 +57,7 @@ impl fmt::Debug for InputMethod {
             .field("active", &self.active)
             .field("app_id", &self.app_id)
             .field("popup_handles", &self.popup_handles)
-            .field("cursor_rectangle", &self.cursor_rectangle)
+            .field("text_input_rectangle", &self.text_input_rectangle)
             .finish()
     }
 }
@@ -87,7 +87,7 @@ impl V3InputMethodHandle {
             active: false,
             app_id,
             popup_handles: vec![],
-            cursor_rectangle: Rectangle::default(),
+            text_input_rectangle: Rectangle::default(),
             pending_preedit: None,
         });
         if inner.active_input_method_id.is_none() {
@@ -187,7 +187,7 @@ impl V3InputMethodHandle {
                 .any(|popup| popup.is_awaiting_preedit_anchor())
     }
 
-    pub(crate) fn set_cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
+    pub(crate) fn set_text_input_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,
         cursor: Rectangle<i32, Logical>,
@@ -198,7 +198,7 @@ impl V3InputMethodHandle {
             None => return,
         };
         if let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) {
-            instance.cursor_rectangle = cursor;
+            instance.text_input_rectangle = cursor;
 
             let popups_to_reposition: Vec<_> = instance
                 .popup_handles
@@ -261,7 +261,7 @@ impl V3InputMethodHandle {
 
     /// Complete an anchor probe using the last known cursor rectangle.
     ///
-    /// Some clients omit `set_cursor_rectangle` on commits that do not move the caret.
+    /// Some clients omit text-input rectangle updates on commits that do not move the caret.
     pub(crate) fn capture_pending_preedit_anchor_from_last_cursor<
         D: SeatHandler + InputMethodHandler + 'static,
     >(
@@ -285,9 +285,9 @@ impl V3InputMethodHandle {
             if !awaiting {
                 return;
             }
-            instance.cursor_rectangle
+            instance.text_input_rectangle
         };
-        self.set_cursor_rectangle(state, cursor);
+        self.set_text_input_rectangle(state, cursor);
     }
 
     /// Forward a held preedit to the text-input client after its anchor probe completes.
@@ -398,7 +398,7 @@ pub struct InputMethodUserData<D: SeatHandler> {
     /// Currently bound keyboard filter, set by the keyboard_filter protocol.
     pub(crate) keyboard_filter: Arc<Mutex<Option<keyboard_filter::Filter>>>,
     /// This is just a copy from InputMethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup.
-    pub(crate) dismiss_popup: fn(&mut D, InputMethodPopup),
+    pub(crate) dismiss_popup: fn(&mut D, ImPopupSurface),
 }
 
 impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
@@ -468,7 +468,7 @@ where
                         && instance.popup_handles.iter().any(|popup| {
                             popup.is_start_of_preedit() && popup.preedit_anchor_needs_probe()
                         });
-                    (needs_anchor, needs_probe, instance.cursor_rectangle)
+                    (needs_anchor, needs_probe, instance.text_input_rectangle)
                 };
 
                 if needs_anchor && needs_probe {
@@ -624,14 +624,14 @@ where
                         .unwrap();
 
                     let geometry =
-                        state.popup_geometry(&parent.surface, &instance.cursor_rectangle, &positioner_data);
+                        state.popup_geometry(&parent.surface, &instance.text_input_rectangle, &positioner_data);
 
                     let popup = PopupSurface::new(
                         |data| data_init.init(id, data),
                         im.clone(),
                         parent,
                         surface,
-                        instance.cursor_rectangle,
+                        instance.text_input_rectangle,
                         geometry,
                         positioner_data,
                     );

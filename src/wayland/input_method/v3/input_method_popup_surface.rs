@@ -383,7 +383,7 @@ where
                         .anchored_cursor_rectangle
                         .lock()
                         .unwrap()
-                        .unwrap_or(instance.cursor_rectangle);
+                        .unwrap_or(instance.text_input_rectangle);
                     let popup = instance
                         .popup_handles
                         .iter_mut()

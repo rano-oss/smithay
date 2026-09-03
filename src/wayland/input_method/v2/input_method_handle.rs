@@ -20,7 +20,7 @@ use crate::{
     wayland::{Dispatch2, compositor, seat::WaylandFocus, text_input::TextInputHandle},
 };
 
-use super::super::{InputMethodHandler, InputMethodPopup};
+use super::super::{InputMethodHandler, PopupSurface as ImPopupSurface};
 use super::{
     input_method_keyboard_grab::InputMethodKeyboardGrab,
     input_method_popup_surface::{PopupHandle, PopupParent, PopupSurface},
@@ -170,9 +170,9 @@ pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) text_input_handle: TextInputHandle,
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     pub(crate) popup_geometry_callback: fn(&D, &WlSurface) -> Rectangle<i32, Logical>,
-    pub(crate) new_popup: fn(&mut D, InputMethodPopup),
-    pub(crate) popup_repositioned: fn(&mut D, InputMethodPopup),
-    pub(crate) dismiss_popup: fn(&mut D, InputMethodPopup),
+    pub(crate) new_popup: fn(&mut D, ImPopupSurface),
+    pub(crate) popup_repositioned: fn(&mut D, ImPopupSurface),
+    pub(crate) dismiss_popup: fn(&mut D, ImPopupSurface),
 }
 
 impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {

@@ -32,12 +32,13 @@ impl InputMethodHandle {
         &self.v3
     }
 
-    /// Whether any input method can receive text-input state on this seat.
+    /// Whether there's an active instance of input-method.
     pub(crate) fn has_instance(&self) -> bool {
         self.v2.has_instance() || self.v3.has_active_instance()
     }
 
-    pub(crate) fn deactivate_all<D: SeatHandler + 'static>(&self, state: &mut D) {
+    /// Deactivate the active input method.
+    pub(crate) fn deactivate_input_method<D: SeatHandler + 'static>(&self, state: &mut D) {
         if self.v2.has_instance() {
             self.v2.deactivate_input_method(state);
         }
@@ -46,7 +47,8 @@ impl InputMethodHandle {
         }
     }
 
-    pub(crate) fn activate_all<D: SeatHandler + 'static>(&self, state: &mut D, surface: &WlSurface) {
+    /// Activate input method on the given surface.
+    pub(crate) fn activate_input_method<D: SeatHandler + 'static>(&self, state: &mut D, surface: &WlSurface) {
         if self.v2.has_instance() {
             self.v2.activate_input_method(state, surface);
         }
@@ -83,13 +85,13 @@ impl InputMethodHandle {
         });
     }
 
-    pub(crate) fn cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
+    pub(crate) fn set_text_input_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,
         rect: Rectangle<i32, Logical>,
     ) {
         self.v2.set_text_input_rectangle::<D>(state, rect);
-        self.v3.set_cursor_rectangle::<D>(state, rect);
+        self.v3.set_text_input_rectangle::<D>(state, rect);
     }
 
     pub(crate) fn text_input_commit_followup<D: SeatHandler + InputMethodHandler + 'static>(
@@ -109,7 +111,7 @@ impl InputMethodHandle {
         self.v3.done();
     }
 
-    /// v2-only: whether the IME holds a keyboard grab.
+    /// Indicates that an input method has grabbed a keyboard
     pub fn keyboard_grabbed(&self) -> bool {
         self.v2.keyboard_grabbed()
     }

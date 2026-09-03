@@ -273,13 +273,13 @@ where
                         *active_text_input_id = Some(resource.id());
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
-                        self.input_method.activate_all(state, &focus);
+                        self.input_method.activate_input_method(state, &focus);
                     }
                     Some(false) => {
                         *active_text_input_id = None;
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
-                        self.input_method.deactivate_all(state);
+                        self.input_method.deactivate_input_method(state);
                         return;
                     }
                     None => {
@@ -306,7 +306,7 @@ where
                 }
 
                 if let Some(rect) = new_state.cursor_rectangle.take() {
-                    self.input_method.cursor_rectangle::<D>(state, rect);
+                    self.input_method.set_text_input_rectangle::<D>(state, rect);
                 }
 
                 self.input_method
@@ -342,7 +342,7 @@ where
         };
 
         if deactivate_im {
-            self.input_method.deactivate_all(state);
+            self.input_method.deactivate_input_method(state);
         }
     }
 }

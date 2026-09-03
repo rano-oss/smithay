@@ -6,7 +6,7 @@
 //! ```
 //! use smithay::input::{Seat, SeatState, SeatHandler, pointer::CursorImageStatus};
 //! # use smithay::wayland::compositor::{CompositorHandler, CompositorState, CompositorClientState};
-//! use smithay::wayland::input_method::{InputMethodHandler, InputMethodManagerState, InputMethodPopup};
+//! use smithay::wayland::input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface};
 //! use smithay::wayland::text_input::TextInputManagerState;
 //! use smithay::reexports::wayland_server::{Display, protocol::wl_surface::WlSurface};
 //! # use smithay::reexports::wayland_server::Client;
@@ -15,9 +15,9 @@
 //! # struct State { seat_state: SeatState<Self> };
 //!
 //! impl InputMethodHandler for State {
-//!     fn new_popup(&mut self, surface: InputMethodPopup) {}
-//!     fn dismiss_popup(&mut self, surface: InputMethodPopup) {}
-//!     fn popup_repositioned(&mut self, surface: InputMethodPopup) {}
+//!     fn new_popup(&mut self, surface: PopupSurface) {}
+//!     fn dismiss_popup(&mut self, surface: PopupSurface) {}
+//!     fn popup_repositioned(&mut self, surface: PopupSurface) {}
 //!     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, Logical> {
 //!         Rectangle::default()
 //!     }
@@ -68,12 +68,12 @@ mod v2;
 mod v3;
 
 pub use handle::InputMethodHandle;
-pub use popup::InputMethodPopup;
+pub use popup::PopupSurface;
 
 pub use v2::{
     InputMethodKeyboardGrab, InputMethodKeyboardUserData, InputMethodManagerGlobalData,
     InputMethodManagerState, InputMethodPopupSurfaceUserData, InputMethodUserData, PopupParent,
-    PopupSurface, INPUT_POPUP_SURFACE_ROLE,
+    INPUT_POPUP_SURFACE_ROLE,
 };
 
 pub use v3::{
@@ -87,13 +87,13 @@ pub(crate) use v3::InputMethodUserData as InputMethodV3UserData;
 /// Adds input method popup to compositor state
 pub trait InputMethodHandler {
     /// Add a popup surface to compositor state.
-    fn new_popup(&mut self, surface: InputMethodPopup);
+    fn new_popup(&mut self, surface: PopupSurface);
 
     /// Dismiss a popup surface from the compositor state.
-    fn dismiss_popup(&mut self, surface: InputMethodPopup);
+    fn dismiss_popup(&mut self, surface: PopupSurface);
 
     /// Popup location has changed.
-    fn popup_repositioned(&mut self, surface: InputMethodPopup);
+    fn popup_repositioned(&mut self, surface: PopupSurface);
 
     /// Sets the parent location so the popup surface can be placed correctly
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, Logical>;

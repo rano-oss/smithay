@@ -17,7 +17,7 @@ use smithay::{
     },
     delegate_dispatch2,
     desktop::{
-        PopupKind, PopupManager, Space, InputMethodPopup,
+        PopupKind, PopupManager, Space,
         space::SpaceElement,
         utils::{
             OutputPresentationFeedback, surface_presentation_feedback_flags_from_states,
@@ -58,7 +58,7 @@ use smithay::{
         image_copy_capture::{
             BufferConstraints, Frame, ImageCopyCaptureHandler, ImageCopyCaptureState, Session, SessionRef,
         },
-        input_method::{InputMethodHandler, InputMethodManagerState, PositionerState},
+        input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface, PositionerState},
         keyboard_shortcuts_inhibit::{
             KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
         },
@@ -331,14 +331,18 @@ impl<BackendData: Backend> TabletSeatHandler for AnvilState<BackendData> {
 }
 
 impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
-    fn new_popup(&mut self, surface: InputMethodPopup) {
-        self.track_ime_popup(surface);
+    fn new_popup(&mut self, surface: PopupSurface) {
+        if let Err(err) = self.popups.track_popup(PopupKind::from(surface)) {
+            warn!("Failed to track popup: {}", err);
+        }
     }
 
-    fn popup_repositioned(&mut self, _: InputMethodPopup) {}
+    fn popup_repositioned(&mut self, _: PopupSurface) {}
 
-    fn dismiss_popup(&mut self, surface: InputMethodPopup) {
-        self.dismiss_ime_popup(surface);
+    fn dismiss_popup(&mut self, surface: PopupSurface) {
+        if let Some(parent) = surface.get_parent().map(|parent| parent.surface) {
+            let _ = PopupManager::dismiss_popup(&parent, &PopupKind::from(surface));
+        }
     }
 
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
@@ -366,24 +370,6 @@ impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
 }
 
 impl<BackendData: Backend> AnvilState<BackendData> {
-    fn track_ime_popup(&mut self, popup: InputMethodPopup) {
-        if let Err(err) = self.popups.track_popup(PopupKind::from(popup)) {
-            warn!("Failed to track popup: {}", err);
-        }
-    }
-
-    fn dismiss_ime_popup(&mut self, popup: InputMethodPopup) {
-        let parent = match &popup {
-            InputMethodPopup::V2(surface) => surface
-                .get_parent()
-                .map(|parent| parent.surface.clone()),
-            InputMethodPopup::V3(surface) => Some(surface.get_parent().surface.clone()),
-        };
-        if let Some(parent) = parent {
-            let _ = PopupManager::dismiss_popup(&parent, &PopupKind::from(popup));
-        }
-    }
-
     fn ime_parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
         self.space
             .elements()
