@@ -3,9 +3,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use wayland_protocols::wp::input_method::zv3::server::{
-    zwp_input_method_v3::{self, ZwpInputMethodV3},
-    zwp_input_popup_surface_v3::ZwpInputPopupSurfaceV3,
+use wayland_protocols::wp::{
+    input_method::zv3::server::{
+        zwp_input_method_v3::{self, ZwpInputMethodV3},
+        zwp_input_popup_surface_v3::ZwpInputPopupSurfaceV3,
+    },
+    keyboard_filter::zv1::server::zwp_keyboard_filter_v1::ZwpKeyboardFilterV1,
 };
 use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::Action;
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
@@ -17,7 +20,10 @@ use wayland_server::{
 use crate::{
     input::{Seat, SeatHandler, keyboard::KeyboardHandle},
     utils::{Logical, Rectangle},
-    wayland::{Dispatch2, compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle},
+    wayland::{
+        Dispatch2, compositor, keyboard_filter::KeyboardFilterUserData, seat::WaylandFocus,
+        text_input::TextInputHandle,
+    },
 };
 
 use super::super::{InputMethodHandler, PopupParent, PopupSurface as ImPopupSurface};
@@ -358,7 +364,10 @@ impl InputMethodV3Handle {
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
             let filter = data.keyboard_filter.lock().unwrap();
             if let Some(keyboard_filter) = filter.as_ref() {
-                keyboard_filter.activate_interceptor(&data.seat, surface);
+                keyboard_filter
+                    .data::<KeyboardFilterUserData<D>>()
+                    .unwrap()
+                    .activate_interceptor(surface);
             }
             im.active = true;
         });
@@ -387,7 +396,10 @@ impl InputMethodV3Handle {
             }
             let filter = data.keyboard_filter.lock().unwrap();
             if let Some(keyboard_filter) = filter.as_ref() {
-                keyboard_filter.deactivate_interceptor(&data.seat);
+                keyboard_filter
+                    .data::<KeyboardFilterUserData<D>>()
+                    .unwrap()
+                    .deactivate_interceptor();
             }
         });
     }
@@ -402,7 +414,7 @@ pub struct InputMethodUserData<D: SeatHandler> {
     /// Handle to main keyboard for registering sub-keyboards
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     /// Currently bound keyboard filter, set by the keyboard_filter protocol.
-    pub(crate) keyboard_filter: Arc<Mutex<Option<keyboard_filter::Filter>>>,
+    pub(crate) keyboard_filter: Arc<Mutex<Option<ZwpKeyboardFilterV1>>>,
     /// This is just a copy from InputMethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup.
     pub(crate) dismiss_popup: fn(&mut D, ImPopupSurface),
 }

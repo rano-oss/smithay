@@ -19,10 +19,10 @@ use wayland_server::{
 };
 
 use crate::input::{
-    Seat, SeatHandler,
+    SeatHandler,
     keyboard::{KeyboardHandle, WlKeyboardApi},
 };
-use crate::wayland::Dispatch2;
+use crate::wayland::{Dispatch2, input_method::InputMethodV3UserData};
 
 use super::KeyboardFilterManagerUserDataInner;
 
@@ -132,51 +132,6 @@ impl WlKeyboardApi for FilterInterceptor {
     }
 }
 
-/// Handle stored in the input method, used to activate/deactivate the interceptor.
-#[derive(Debug, Clone)]
-pub(crate) struct Filter {
-    pub(crate) keyboard_filter: ZwpKeyboardFilterV1,
-    pub(crate) pending_events: Arc<Mutex<VecDeque<BufferedEvent>>>,
-    pub(crate) focused_surface: Arc<Mutex<Option<WlSurface>>>,
-}
-
-impl Filter {
-    /// Activate keyboard interception. Events will be forwarded to the IM keyboard
-    /// and buffered for filter decisions.
-    ///
-    /// `focused_surface` is the surface currently receiving text input (i.e. the app's surface).
-    /// Passthrough events will be forwarded to client keyboards focused on this surface.
-    pub fn activate_interceptor<D: SeatHandler + 'static>(
-        &self,
-        seat: &Seat<D>,
-        focused_surface: &WlSurface,
-    ) {
-        let keyboard_handle = seat.get_keyboard().unwrap();
-        let filter_data = self.keyboard_filter.data::<KeyboardFilterUserData<D>>().unwrap();
-
-        *self.focused_surface.lock().unwrap() = Some(focused_surface.clone());
-
-        let interceptor = FilterInterceptor {
-            im_keyboard: filter_data.im_keyboard.clone(),
-            im_surface: filter_data.im_surface.clone(),
-            client_keyboards: keyboard_handle.arc.known_kbds.clone(),
-            focused_surface: focused_surface.clone(),
-            pending_events: self.pending_events.clone(),
-        };
-
-        let mut slot = keyboard_handle.arc.kbd_interceptor.lock().unwrap();
-        *slot = Some(Box::new(interceptor));
-    }
-
-    /// Deactivate keyboard interception and drop buffered events.
-    pub fn deactivate_interceptor<D: SeatHandler + 'static>(&self, seat: &Seat<D>) {
-        let keyboard_handle = seat.get_keyboard().unwrap();
-        let mut pending = self.pending_events.lock().unwrap();
-        pending.clear();
-        keyboard_handle.arc.clear_kbd_interceptor();
-    }
-}
-
 /// Data accessible from the ZwpKeyboardFilterV1 object.
 #[derive(Debug)]
 pub struct KeyboardFilterUserData<D: SeatHandler> {
@@ -186,11 +141,36 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) manager_data: Arc<Mutex<KeyboardFilterManagerUserDataInner>>,
     pub(crate) bound_keyboard: WlKeyboard,
     pub(crate) bound_input_method: ZwpInputMethodV3,
-    pub(crate) im_keyboard: WlKeyboard,
     pub(crate) im_surface: WlSurface,
 }
 
-impl<D: SeatHandler> KeyboardFilterUserData<D> {
+impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
+    /// Activate keyboard interception. Events will be forwarded to the IM keyboard
+    /// and buffered for filter decisions.
+    ///
+    /// `focused_surface` is the surface currently receiving text input (i.e. the app's surface).
+    /// Passthrough events will be forwarded to client keyboards focused on this surface.
+    pub(crate) fn activate_interceptor(&self, focused_surface: &WlSurface) {
+        *self.focused_surface.lock().unwrap() = Some(focused_surface.clone());
+
+        let interceptor = FilterInterceptor {
+            im_keyboard: self.bound_keyboard.clone(),
+            im_surface: self.im_surface.clone(),
+            client_keyboards: self.keyboard_handle.arc.known_kbds.clone(),
+            focused_surface: focused_surface.clone(),
+            pending_events: self.pending_events.clone(),
+        };
+
+        let mut slot = self.keyboard_handle.arc.kbd_interceptor.lock().unwrap();
+        *slot = Some(Box::new(interceptor));
+    }
+
+    /// Deactivate keyboard interception and drop buffered events.
+    pub(crate) fn deactivate_interceptor(&self) {
+        self.pending_events.lock().unwrap().clear();
+        self.keyboard_handle.arc.clear_kbd_interceptor();
+    }
+
     fn flush_pending_passthrough(&self) {
         let mut pending = self.pending_events.lock().unwrap();
         if let Some(ref surface) = *self.focused_surface.lock().unwrap() {
@@ -212,10 +192,17 @@ impl<D: SeatHandler> KeyboardFilterUserData<D> {
     }
 
     fn detach(&self) {
-        self.keyboard_handle.arc.clear_kbd_interceptor();
+        self.deactivate_interceptor();
         let mut mgr = self.manager_data.lock().unwrap();
         mgr.bound_keyboards.remove(&self.bound_keyboard);
         mgr.bound_ims.remove(&self.bound_input_method);
+        *self
+            .bound_input_method
+            .data::<InputMethodV3UserData<D>>()
+            .unwrap()
+            .keyboard_filter
+            .lock()
+            .unwrap() = None;
     }
 }
 

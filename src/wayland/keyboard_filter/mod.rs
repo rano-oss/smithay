@@ -10,7 +10,6 @@
 
 mod keyboard_filter_handle;
 
-pub(crate) use keyboard_filter_handle::Filter;
 pub use keyboard_filter_handle::KeyboardFilterUserData;
 
 use std::{
@@ -190,18 +189,13 @@ where
                         manager_data: self.inner.clone(),
                         bound_keyboard: keyboard.clone(),
                         bound_input_method: input_method.clone(),
-                        im_keyboard: keyboard.clone(),
                         im_surface: surface,
                     },
                 );
 
                 {
                     let mut im_filter = imdata.keyboard_filter.lock().unwrap();
-                    *im_filter = Some(Filter {
-                        keyboard_filter,
-                        pending_events,
-                        focused_surface,
-                    });
+                    *im_filter = Some(keyboard_filter);
                 }
 
                 {
