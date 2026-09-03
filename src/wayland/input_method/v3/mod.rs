@@ -15,7 +15,7 @@ use crate::input::{Seat, SeatHandler};
 
 pub(crate) use input_method_handle::{InputMethodUserData, InputMethodV3Handle};
 
-use super::{InputMethodHandle, InputMethodHandler};
+use super::{InputMethodHandle, InputMethodHandler, InputMethodManagerGlobalData};
 use crate::wayland::text_input::TextInputHandle;
 
 const MANAGER_VERSION: u32 = 2;
@@ -30,12 +30,6 @@ mod positioner;
 
 pub use input_method_popup_surface::{InputMethodPopupSurfaceUserData, PopupSurface, PopupSurfaceState};
 pub use positioner::{PositionerState, PositionerUserData};
-
-/// Data associated with an InputMethodManager global (v3).
-#[allow(missing_debug_implementations)]
-pub struct InputMethodManagerGlobalData {
-    filter: Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
-}
 
 /// State of wp input method v3 protocol.
 #[derive(Debug)]
@@ -56,9 +50,7 @@ impl InputMethodManagerState {
         D: 'static,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
-        let data = InputMethodManagerGlobalData {
-            filter: Box::new(filter),
-        };
+        let data = InputMethodManagerGlobalData::new(filter);
         let global = display.create_global::<D, ZwpInputMethodManagerV3, _>(MANAGER_VERSION, data);
 
         Self { global }

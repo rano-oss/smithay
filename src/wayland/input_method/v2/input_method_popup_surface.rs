@@ -13,6 +13,8 @@ use crate::{
     wayland::Dispatch2,
 };
 
+use super::super::PopupParent;
+
 /// Handle to a popup surface
 #[derive(Debug, Clone, Default)]
 pub struct PopupHandle {
@@ -113,15 +115,6 @@ impl std::cmp::PartialEq for PopupSurface {
     fn eq(&self, other: &Self) -> bool {
         self.surface_role == other.surface_role
     }
-}
-
-/// Parent surface and location for the IME popup.
-#[derive(Debug, Clone)]
-pub struct PopupParent {
-    /// The surface IME popup is present over.
-    pub surface: WlSurface,
-    /// The location of the parent surface.
-    pub location: Rectangle<i32, Logical>,
 }
 
 /// User data of ZwpInputPopupSurfaceV2 object

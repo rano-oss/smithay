@@ -17,9 +17,9 @@ pub(crate) use input_method_handle::InputMethodV2Handle;
 
 pub use input_method_keyboard_grab::{InputMethodKeyboardGrab, InputMethodKeyboardUserData};
 pub use input_method_popup_surface::InputMethodPopupSurfaceUserData;
-pub use input_method_popup_surface::{PopupParent, PopupSurface};
+pub use input_method_popup_surface::PopupSurface;
 
-use super::{InputMethodHandle, InputMethodHandler};
+use super::{InputMethodHandle, InputMethodHandler, InputMethodManagerGlobalData};
 use crate::wayland::text_input::TextInputHandle;
 
 const MANAGER_VERSION: u32 = 1;
@@ -30,12 +30,6 @@ pub const INPUT_POPUP_SURFACE_ROLE: &str = "zwp_input_popup_surface_v2";
 mod input_method_handle;
 mod input_method_keyboard_grab;
 mod input_method_popup_surface;
-
-/// Data associated with an InputMethodManager global (v2).
-#[allow(missing_debug_implementations)]
-pub struct InputMethodManagerGlobalData {
-    filter: Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
-}
 
 /// State of wp input method v2 protocol.
 #[derive(Debug)]
@@ -54,9 +48,7 @@ impl InputMethodManagerState {
         D: 'static,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
-        let data = InputMethodManagerGlobalData {
-            filter: Box::new(filter),
-        };
+        let data = InputMethodManagerGlobalData::new(filter);
         let global = display.create_global::<D, ZwpInputMethodManagerV2, _>(MANAGER_VERSION, data);
 
         Self { global }

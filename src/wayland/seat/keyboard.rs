@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell,
-    fmt,
-};
+use std::{cell::RefCell, fmt};
 
 use tracing::{instrument, trace, warn};
 use wayland_server::{

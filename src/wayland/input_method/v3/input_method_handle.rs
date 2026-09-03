@@ -20,10 +20,10 @@ use crate::{
     wayland::{Dispatch2, compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle},
 };
 
-use super::super::{InputMethodHandler, PopupSurface as ImPopupSurface};
+use super::super::{InputMethodHandler, PopupParent, PopupSurface as ImPopupSurface};
 use super::{
     INPUT_POPUP_SURFACE_ROLE, InputMethodPopupSurfaceUserData,
-    input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
+    input_method_popup_surface::{ImPopupLocation, PopupSurface},
     positioner::PositionerUserData,
 };
 

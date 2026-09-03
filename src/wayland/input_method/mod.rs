@@ -63,21 +63,21 @@ use crate::{
 };
 
 mod handle;
+mod manager;
 mod popup;
 mod v2;
 mod v3;
 
 pub use handle::InputMethodHandle;
-pub use popup::PopupSurface;
+pub use manager::InputMethodManagerGlobalData;
+pub use popup::{PopupParent, PopupSurface};
 
 pub use v2::{
-    INPUT_POPUP_SURFACE_ROLE, InputMethodKeyboardGrab, InputMethodKeyboardUserData,
-    InputMethodManagerGlobalData, InputMethodManagerState, InputMethodPopupSurfaceUserData,
-    InputMethodUserData, PopupParent,
+    INPUT_POPUP_SURFACE_ROLE, InputMethodKeyboardGrab, InputMethodKeyboardUserData, InputMethodManagerState,
+    InputMethodPopupSurfaceUserData, InputMethodUserData,
 };
 
 pub use v3::{
-    InputMethodManagerGlobalData as InputMethodManagerGlobalDataV3,
     InputMethodManagerState as InputMethodManagerStateV3, PopupSurfaceState, PositionerState,
     PositionerUserData,
 };

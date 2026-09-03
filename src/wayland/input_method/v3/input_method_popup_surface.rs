@@ -14,6 +14,7 @@ use crate::utils::{
 };
 use crate::wayland::Dispatch2;
 
+use super::super::PopupParent;
 use super::{
     InputMethodHandler, InputMethodUserData,
     configure_tracker::PopupConfigureAttributes,
@@ -280,15 +281,6 @@ impl PopupSurfaceState {
     pub(super) fn set_configured(&mut self) {
         self.configured = true;
     }
-}
-
-/// Parent surface and location for the IME popup.
-#[derive(Debug, Clone)]
-pub struct PopupParent {
-    /// The surface over which the IME popup is shown.
-    pub surface: WlSurface,
-    /// The location of the parent surface relative to TODO.
-    pub location: Rectangle<i32, Logical>,
 }
 
 /// Data accessible from ZwpInputPopupSurfaceV3 object

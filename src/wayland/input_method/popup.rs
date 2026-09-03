@@ -2,8 +2,16 @@ use wayland_server::protocol::wl_surface::WlSurface;
 
 use crate::utils::{IsAlive, Logical, Point, Rectangle};
 
-use super::v2::PopupParent;
 use super::{v2, v3};
+
+/// Parent surface and location for an input method popup.
+#[derive(Debug, Clone)]
+pub struct PopupParent {
+    /// The surface over which the IME popup is shown.
+    pub surface: WlSurface,
+    /// The location of the parent surface in compositor space.
+    pub location: Rectangle<i32, Logical>,
+}
 
 /// Input-method popup surface from either protocol version.
 #[derive(Debug, Clone, PartialEq)]
@@ -38,13 +46,7 @@ impl PopupSurface {
     pub fn get_parent(&self) -> Option<PopupParent> {
         match self {
             PopupSurface::V2(popup) => popup.get_parent().cloned(),
-            PopupSurface::V3(popup) => {
-                let parent = popup.get_parent();
-                Some(PopupParent {
-                    surface: parent.surface.clone(),
-                    location: parent.location,
-                })
-            }
+            PopupSurface::V3(popup) => Some(popup.get_parent().clone()),
         }
     }
 
@@ -53,13 +55,9 @@ impl PopupSurface {
     }
 
     pub(crate) fn geometry(&self) -> Rectangle<i32, Logical> {
-        match self {
-            PopupSurface::V2(popup) => popup
-                .get_parent()
-                .map(|parent| parent.location)
-                .unwrap_or_default(),
-            PopupSurface::V3(popup) => popup.get_parent().location,
-        }
+        self.get_parent()
+            .map(|parent| parent.location)
+            .unwrap_or_default()
     }
 
     pub(crate) fn location(&self) -> Point<i32, Logical> {
