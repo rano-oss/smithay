@@ -17,13 +17,13 @@ use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 use crate::{
     input::{keyboard::KeyboardHandle, Seat, SeatHandler},
     utils::{Logical, Rectangle},
-    wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle},
+    wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle, Dispatch2},
 };
 
 use super::{
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
     positioner::PositionerUserData,
-    InputMethodHandler, InputMethodManagerState, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
+    InputMethodHandler, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
 /// Contains all input method instances and tracks which one is active.
@@ -155,6 +155,24 @@ impl InputMethodHandle {
         inner.active_input_method_id = None;
     }
 
+    /// Whether a text-input commit may need follow-up for a held preedit anchor probe.
+    pub(crate) fn has_preedit_commit_followup(&self) -> bool {
+        let inner = self.inner.lock().unwrap();
+        let active_id = match &inner.active_input_method_id {
+            Some(id) => id.clone(),
+            None => return false,
+        };
+        let instance = match inner.instances.iter().find(|i| i.object.id() == active_id) {
+            Some(inst) => inst,
+            None => return false,
+        };
+        instance.pending_preedit.is_some()
+            || instance
+                .popup_handles
+                .iter()
+                .any(|popup| popup.is_awaiting_preedit_anchor())
+    }
+
     pub(crate) fn set_cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,
@@ -168,47 +186,21 @@ impl InputMethodHandle {
         if let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) {
             instance.cursor_rectangle = cursor;
 
-            // Reposition popup(s) on cursor rectangle changes unless anchored at preedit start.
-            let mut anchor_captured = false;
             let popups_to_reposition: Vec<_> = instance
                 .popup_handles
                 .iter_mut()
                 .filter_map(|popup| {
-                    if popup.try_capture_preedit_anchor(cursor) {
-                        anchor_captured = true;
-                        let positioner = popup.positioner();
-                        let parent_surface = popup.get_parent().surface.clone();
-                        let anchor = popup.anchor_cursor().unwrap_or(cursor);
-                        let popup_geometry =
-                            state.popup_geometry(&parent_surface, &anchor, &positioner);
-                        popup.set_position(ImPopupLocation {
-                            anchor,
-                            geometry: popup_geometry,
-                        });
-                        return Some(popup.clone());
+                    if popup.try_capture_preedit_anchor(cursor) || popup.follows_cursor() {
+                        Some(reposition_popup_at_cursor(popup, cursor, state))
+                    } else {
+                        None
                     }
-                    if popup.follows_cursor() {
-                        let positioner = popup.positioner();
-                        let parent_surface = popup.get_parent().surface.clone();
-                        let anchor = popup.anchor_cursor().unwrap_or(cursor);
-                        let popup_geometry =
-                            state.popup_geometry(&parent_surface, &anchor, &positioner);
-                        popup.set_position(ImPopupLocation {
-                            anchor,
-                            geometry: popup_geometry,
-                        });
-                        return Some(popup.clone());
-                    }
-                    None
                 })
                 .collect();
 
             for popup in popups_to_reposition {
                 state.popup_repositioned(popup);
             }
-
-            drop(inner);
-            let _ = anchor_captured;
         }
     }
 
@@ -404,9 +396,8 @@ impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
     }
 }
 
-impl<D> Dispatch<ZwpInputMethodV3, InputMethodUserData<D>, D> for InputMethodManagerState
+impl<D> Dispatch2<ZwpInputMethodV3, D> for InputMethodUserData<D>
 where
-    D: Dispatch<ZwpInputMethodV3, InputMethodUserData<D>>,
     D: Dispatch<ZwpInputPopupSurfaceV3, InputMethodPopupSurfaceUserData>,
     D: SeatHandler,
     D: InputMethodHandler,
@@ -414,21 +405,21 @@ where
     D: 'static,
 {
     fn request(
+        &self,
         state: &mut D,
         _client: &Client,
         im: &ZwpInputMethodV3,
         request: zwp_input_method_v3::Request,
-        data: &InputMethodUserData<D>,
         _dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
         use zwp_input_method_v3::Request;
         match request {
             Request::CommitString { text } => {
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.commit_string(Some(text.clone()));
                 });
-                let mut inner = data.handle.inner.lock().unwrap();
+                let mut inner = self.handle.inner.lock().unwrap();
                 if let Some(active_id) = inner.active_input_method_id.clone() {
                     if let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id)
                     {
@@ -446,7 +437,7 @@ where
                 cursor_end,
             } => {
                 let (needs_anchor, needs_probe, cursor) = {
-                    let inner = data.handle.inner.lock().unwrap();
+                    let inner = self.handle.inner.lock().unwrap();
                     let active_id = match &inner.active_input_method_id {
                         Some(id) => id.clone(),
                         None => return,
@@ -467,7 +458,7 @@ where
                 };
 
                 if needs_anchor && needs_probe {
-                    let mut inner = data.handle.inner.lock().unwrap();
+                    let mut inner = self.handle.inner.lock().unwrap();
                     let active_id = inner.active_input_method_id.clone().unwrap();
                     let instance = inner
                         .instances
@@ -477,7 +468,7 @@ where
                     instance.pending_preedit = Some((text, cursor_begin, cursor_end));
                     for popup in &instance.popup_handles {
                         if popup.is_start_of_preedit() {
-                            popup.begin_preedit_anchor_probe(&data.text_input_handle);
+                            popup.begin_preedit_anchor_probe(&self.text_input_handle);
                         }
                     }
                     return;
@@ -485,7 +476,7 @@ where
 
                 if needs_anchor {
                     {
-                        let mut inner = data.handle.inner.lock().unwrap();
+                        let mut inner = self.handle.inner.lock().unwrap();
                         let active_id = inner.active_input_method_id.clone().unwrap();
                         let instance = inner
                             .instances
@@ -498,12 +489,12 @@ where
                             }
                         }
                     }
-                    data.handle
+                    self.handle
                         .reposition_start_of_preedit_popups::<D>(state);
-                    data.handle.done();
+                    self.handle.done();
                 }
 
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.preedit_string(Some(text.clone()), cursor_begin, cursor_end);
                 });
             }
@@ -511,23 +502,14 @@ where
                 before_length,
                 after_length,
             } => {
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.delete_surrounding_text(before_length, after_length);
                 });
             }
 
             Request::Commit { serial } => {
-                let current_serial = {
-                    let inner = data.handle.inner.lock().unwrap();
-                    let active_id = inner.active_input_method_id.clone();
-                    active_id
-                        .and_then(|id| inner.instances.iter().find(|i| i.object.id() == id))
-                        .map(|i| i.serial)
-                        .unwrap_or(0)
-                };
-                let discard = serial != current_serial;
-                let defer_done = {
-                    let inner = data.handle.inner.lock().unwrap();
+                let (current_serial, defer_done) = {
+                    let inner = self.handle.inner.lock().unwrap();
                     let active_id = match &inner.active_input_method_id {
                         Some(id) => id.clone(),
                         None => return,
@@ -536,19 +518,20 @@ where
                         Some(inst) => inst,
                         None => return,
                     };
-                    instance.pending_preedit.is_some()
+                    let defer_done = instance.pending_preedit.is_some()
                         && instance
                             .popup_handles
                             .iter()
-                            .any(|popup| popup.is_awaiting_preedit_anchor())
+                            .any(|popup| popup.is_awaiting_preedit_anchor());
+                    (instance.serial, defer_done)
                 };
                 if !defer_done {
-                    data.text_input_handle.done(discard);
+                    self.text_input_handle.done(serial != current_serial);
                 }
             }
             Request::PerformAction { action } => {
                 let serial = {
-                    let inner = data.handle.inner.lock().unwrap();
+                    let inner = self.handle.inner.lock().unwrap();
                     let active_id = inner.active_input_method_id.clone();
                     active_id
                         .and_then(|id| inner.instances.iter().find(|i| i.object.id() == id))
@@ -556,7 +539,7 @@ where
                         .unwrap_or(0)
                 };
                 let action = action.into_result().unwrap_or(Action::None);
-                data.text_input_handle.with_active_text_input(|ti, _surface| {
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
                     if ti.version() >= 2 {
                         ti.action(action, serial);
                     }
@@ -567,7 +550,7 @@ where
                 surface,
                 positioner,
             } => {
-                let mut input_method = data.handle.inner.lock().unwrap();
+                let mut input_method = self.handle.inner.lock().unwrap();
                 let active_id = match &input_method.active_input_method_id {
                     Some(id) => id.clone(),
                     None => return,
@@ -601,7 +584,7 @@ where
                         return;
                     }
 
-                    let parent_surface = match data.text_input_handle.focus().clone() {
+                    let parent_surface = match self.text_input_handle.focus().clone() {
                         Some(parent) => parent,
                         None => {
                             // Race condition: focus may have been lost after client decided to create popup.
@@ -654,21 +637,29 @@ where
         }
     }
 
-    fn destroyed(
-        _state: &mut D,
-        _client: ClientId,
-        input_method: &ZwpInputMethodV3,
-        data: &InputMethodUserData<D>,
-    ) {
+    fn destroyed(&self, _state: &mut D, _client: ClientId, input_method: &ZwpInputMethodV3) {
         let destroyed_id = input_method.id();
-        let mut inner = data.handle.inner.lock().unwrap();
+        let mut inner = self.handle.inner.lock().unwrap();
         // Clear active ID if this was the active instance
         if inner.active_input_method_id.as_ref() == Some(&destroyed_id) {
             inner.active_input_method_id = None;
         }
         inner.instances.retain(|inst| inst.object.id() != destroyed_id);
-        let keyboards = &data.keyboard_handle.arc.known_kbds;
+        let keyboards = &self.keyboard_handle.arc.known_kbds;
         keyboards.clear_interceptor();
-        data.text_input_handle.leave();
+        self.text_input_handle.leave();
     }
+}
+
+fn reposition_popup_at_cursor<D: SeatHandler + InputMethodHandler>(
+    popup: &mut PopupSurface,
+    cursor: Rectangle<i32, Logical>,
+    state: &mut D,
+) -> PopupSurface {
+    let positioner = popup.positioner();
+    let parent_surface = popup.get_parent().surface.clone();
+    let anchor = popup.anchor_cursor().unwrap_or(cursor);
+    let geometry = state.popup_geometry(&parent_surface, &anchor, &positioner);
+    popup.set_position(ImPopupLocation { anchor, geometry });
+    popup.clone()
 }

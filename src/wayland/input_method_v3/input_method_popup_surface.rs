@@ -5,21 +5,22 @@ use wayland_protocols::wp::input_method::zv3::server::zwp_input_method_v3::ZwpIn
 use wayland_protocols::wp::input_method::zv3::server::zwp_input_popup_surface_v3::{
     self, PopupPositionMode, ZwpInputPopupSurfaceV3,
 };
-use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface, Dispatch, Resource};
+use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface, Resource};
 
 use crate::input::SeatHandler;
 use crate::utils::{
     alive_tracker::{AliveTracker, IsAlive},
     Logical, Point, Rectangle, Serial,
 };
+use crate::wayland::Dispatch2;
 
 use super::{
-    configure_tracker::ConfigureTracker,
+    configure_tracker::PopupConfigureAttributes,
     positioner::{PositionerState, PositionerUserData},
-    InputMethodHandler, InputMethodManagerState, InputMethodUserData,
+    InputMethodHandler, InputMethodUserData,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ImPopupLocation {
     /// Area for the positioner, relative to parent
     pub anchor: Rectangle<i32, Logical>,
@@ -36,11 +37,9 @@ pub struct PopupSurface {
     /// Surface containing the text input. This surface doesn't change within the lifetime of the popup.
     parent: PopupParent,
     /// Tracks configures and serials
-    configure_tracker: Arc<Mutex<ConfigureTracker<PopupSurfaceState>>>,
+    configure: Arc<Mutex<PopupConfigureAttributes>>,
     /// The compositor-assigned state acknowledged by client.
-    state: Arc<Mutex<PopupSurfaceState>>,
-    /// The compositor-assigned state, not sent to client yet
-    state_pending: Option<PopupSurfaceState>,
+    acked_state: Arc<Mutex<PopupSurfaceState>>,
 }
 
 impl PopupSurface {
@@ -55,26 +54,27 @@ impl PopupSurface {
         geometry: Rectangle<i32, Logical>,
         positioner_data: PositionerState,
     ) -> Self {
-        let configure_tracker = Arc::new(Mutex::new(Default::default()));
-        let state = Arc::new(Mutex::new(PopupSurfaceState::new_uninit()));
+        let configure = Arc::new(Mutex::new(PopupConfigureAttributes::with_server_pending(
+            PopupSurfaceState {
+                position: ImPopupLocation { anchor, geometry },
+                configured: false,
+                repositioned: None,
+            },
+        )));
+        let acked_state = Arc::new(Mutex::new(PopupSurfaceState::default()));
 
         let instance = InputMethodPopupSurfaceUserData::new(
             input_method.clone(),
             surface.clone(),
-            configure_tracker.clone(),
-            state.clone(),
+            configure.clone(),
+            acked_state.clone(),
             Mutex::new(positioner_data),
         );
         let surface_role = init(instance);
         Self {
             surface_role,
-            configure_tracker,
-            state,
-            state_pending: Some(PopupSurfaceState {
-                position: ImPopupLocation { anchor, geometry },
-                configured: false,
-                repositioned: None,
-            }),
+            configure,
+            acked_state,
             surface,
             parent,
         }
@@ -176,7 +176,6 @@ impl PopupSurface {
     /// Is the input method popup surface referred by this handle still alive?
     #[inline]
     pub fn alive(&self) -> bool {
-        // TODO other things to check? This may not sufice.
         let role_data: &InputMethodPopupSurfaceUserData = self.surface_role.data().unwrap();
         self.surface.alive() && role_data.alive_tracker.alive()
     }
@@ -200,34 +199,30 @@ impl PopupSurface {
 
     /// Used to access the location of an input popup surface relative to the parent
     pub fn location(&self) -> Point<i32, Logical> {
-        self.state.lock().unwrap().position.geometry.loc
+        self.acked_state.lock().unwrap().position.geometry.loc
     }
 
     /// `true` if the surface sent a
     /// configure sequence since creating the popup object.
-    ///
-    /// Calls [`compositor::with_states`] internally.
     pub fn is_initial_configure_sent(&self) -> bool {
-        self.state.lock().unwrap().configured
+        self.configure.lock().unwrap().initial_configure_sent
     }
 
     /// Set position information that should take effect when mapping.
     /// Updates pending state.
     pub fn set_position(&mut self, position: ImPopupLocation) {
-        let pending = &mut self.state_pending;
-        if pending.is_none() {
-            *pending = Some(self.state.lock().unwrap().clone());
-        }
-        pending.as_mut().unwrap().position = position;
+        self.configure
+            .lock()
+            .unwrap()
+            .with_pending_state(|state| state.position = position);
     }
 
     /// Adds the repositioned token to pending state.
     pub fn set_repositioned(&mut self, token: u32) {
-        let pending = &mut self.state_pending;
-        if pending.is_none() {
-            *pending = Some(self.state.lock().unwrap().clone());
-        }
-        pending.as_mut().unwrap().repositioned = Some(token);
+        self.configure
+            .lock()
+            .unwrap()
+            .with_pending_state(|state| state.repositioned = Some(token));
     }
 
     /// Send a configure event to this popup surface to suggest it a new configuration
@@ -235,47 +230,28 @@ impl PopupSurface {
     /// The serial of this configure will be tracked waiting for the client to ACK it.
     /// Call this from input_method.done
     pub fn send_pending_configure(&mut self) {
-        let new_state = {
-            let state = &mut self.state_pending;
-            if let Some(state) = state.as_mut() {
-                state.configured = true;
-                state.clone()
-            } else {
-                // there's nothing to update
-                return;
-            }
-        };
+        let surface_role = self.surface_role.clone();
+        self.configure.lock().unwrap().send_pending_configure(
+            |new_state, sent_state, serial| {
+                let ImPopupLocation { anchor, geometry } = new_state.position.clone();
+                let relative_to_popup = anchor.loc - geometry.loc;
+                surface_role.start_configure(
+                    geometry.size.w as u32,
+                    geometry.size.h as u32,
+                    relative_to_popup.x,
+                    relative_to_popup.y,
+                    anchor.size.w as u32,
+                    anchor.size.h as u32,
+                    serial.into(),
+                );
 
-        // TODO: there's too much locking here but too early to optimize...
-        let sent_state = {
-            let tracker = self.configure_tracker.lock().unwrap();
-            tracker.last_pending_state().cloned()
-        }
-        .unwrap_or_else(|| self.state.lock().unwrap().clone());
-
-        // start_configure should be sent on any server-side change. Other events should follow with more granularity.
-        if new_state != sent_state {
-            let mut tracker = self.configure_tracker.lock().unwrap();
-            let serial = tracker.assign_serial(new_state.clone());
-
-            let ImPopupLocation { anchor, geometry } = new_state.position.clone();
-            let relative_to_popup = anchor.loc - geometry.loc;
-            self.surface_role.start_configure(
-                geometry.size.w as u32,
-                geometry.size.h as u32,
-                relative_to_popup.x,
-                relative_to_popup.y,
-                anchor.size.w as u32,
-                anchor.size.h as u32,
-                serial.into(),
-            );
-
-            if let (Some(new), sent) = (new_state.repositioned, sent_state.repositioned) {
-                if Some(new) != sent {
-                    self.surface_role.repositioned(new);
+                if let (Some(new), sent) = (new_state.repositioned, sent_state.repositioned) {
+                    if Some(new) != sent {
+                        surface_role.repositioned(new);
+                    }
                 }
-            }
-        }
+            },
+        );
     }
 }
 
@@ -287,7 +263,7 @@ impl PartialEq for PopupSurface {
 }
 
 /// Compositor-defined state
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PopupSurfaceState {
     /// Positioning information
     position: ImPopupLocation,
@@ -300,16 +276,8 @@ pub struct PopupSurfaceState {
 }
 
 impl PopupSurfaceState {
-    /// Creates an initial state with uninitialized values. The values are never read in normal protocol usage.
-    fn new_uninit() -> Self {
-        PopupSurfaceState {
-            position: ImPopupLocation {
-                anchor: Default::default(),
-                geometry: Default::default(),
-            },
-            configured: false,
-            repositioned: None,
-        }
+    pub(super) fn set_configured(&mut self) {
+        self.configured = true;
     }
 }
 
@@ -329,10 +297,9 @@ pub struct InputMethodPopupSurfaceUserData {
     input_method: ZwpInputMethodV3,
     pub(super) alive_tracker: AliveTracker,
     pub(super) surface: WlSurface,
-    pub(super) configure_tracker: Arc<Mutex<ConfigureTracker<PopupSurfaceState>>>,
+    pub(super) configure: Arc<Mutex<PopupConfigureAttributes>>,
     /// State acknowledged by client.
-    pub(super) state: Arc<Mutex<PopupSurfaceState>>,
-    // State supplied by client.
+    pub(super) acked_state: Arc<Mutex<PopupSurfaceState>>,
     /// Computes the position of the popup according to provided rules
     pub(super) positioner: Mutex<PositionerState>,
     pub(super) position_mode: Mutex<PopupPositionMode>,
@@ -346,16 +313,16 @@ impl InputMethodPopupSurfaceUserData {
     fn new(
         input_method: ZwpInputMethodV3,
         surface: WlSurface,
-        configure_tracker: Arc<Mutex<ConfigureTracker<PopupSurfaceState>>>,
-        popup_state: Arc<Mutex<PopupSurfaceState>>,
+        configure: Arc<Mutex<PopupConfigureAttributes>>,
+        acked_state: Arc<Mutex<PopupSurfaceState>>,
         positioner: Mutex<PositionerState>,
     ) -> Self {
         Self {
             input_method,
             alive_tracker: AliveTracker::default(),
             surface,
-            configure_tracker,
-            state: popup_state,
+            configure,
+            acked_state,
             positioner,
             position_mode: Mutex::new(PopupPositionMode::FollowCursor),
             anchored_cursor_rectangle: Mutex::new(None),
@@ -365,26 +332,26 @@ impl InputMethodPopupSurfaceUserData {
     }
 }
 
-impl<D> Dispatch<ZwpInputPopupSurfaceV3, InputMethodPopupSurfaceUserData, D> for InputMethodManagerState
+impl<D> Dispatch2<ZwpInputPopupSurfaceV3, D> for InputMethodPopupSurfaceUserData
 where
     D: InputMethodHandler + SeatHandler,
 {
     fn request(
+        &self,
         state: &mut D,
         _client: &wayland_server::Client,
         popup: &ZwpInputPopupSurfaceV3,
         request: zwp_input_popup_surface_v3::Request,
-        data: &InputMethodPopupSurfaceUserData,
         _dhandle: &wayland_server::DisplayHandle,
         _data_init: &mut wayland_server::DataInit<'_, D>,
     ) {
         use zwp_input_popup_surface_v3::Request;
         match request {
             Request::AckConfigure { serial } => {
-                let surface = &data.surface;
+                let surface = &self.surface;
 
                 let serial = Serial::from(serial);
-                let client_state = data.configure_tracker.lock().unwrap().ack_serial(serial);
+                let client_state = self.configure.lock().unwrap().ack_configure(serial);
 
                 let client_state = match client_state {
                     Some(state) => state,
@@ -396,11 +363,11 @@ where
                         return;
                     }
                 };
-                *data.state.lock().unwrap() = client_state.clone();
+                *self.acked_state.lock().unwrap() = client_state.clone();
                 state.popup_ack_configure(surface, serial, client_state);
             }
             Request::Reposition { positioner, token } => {
-                let im: &InputMethodUserData<D> = data.input_method.data().unwrap();
+                let im: &InputMethodUserData<D> = self.input_method.data().unwrap();
                 let popup = {
                     let positioner: &PositionerUserData = positioner.data().unwrap();
                     let positioner = *positioner.inner.lock().unwrap();
@@ -412,7 +379,7 @@ where
                         .iter_mut()
                         .find(|i| i.object.id() == active_id)
                         .unwrap();
-                    let cursor = data
+                    let cursor = self
                         .anchored_cursor_rectangle
                         .lock()
                         .unwrap()
@@ -424,7 +391,7 @@ where
                         .expect("This popup not tracked by its input method");
                     let parent_surface = popup.get_parent().surface.clone();
                     let popup_geometry = state.popup_geometry(&parent_surface, &cursor, &positioner);
-                    *data.positioner.lock().unwrap() = positioner;
+                    *self.positioner.lock().unwrap() = positioner;
 
                     popup.set_repositioned(token);
                     popup.set_position(ImPopupLocation {
@@ -440,7 +407,7 @@ where
             }
             Request::SetPopupPositionMode { mode } => {
                 let mode = mode.into_result().unwrap_or(PopupPositionMode::FollowCursor);
-                let im: &InputMethodUserData<D> = data.input_method.data().unwrap();
+                let im: &InputMethodUserData<D> = self.input_method.data().unwrap();
                 let popup = {
                     let inner = im.handle.inner.lock().unwrap();
                     let active_id = inner.active_input_method_id.clone().unwrap();
@@ -469,12 +436,7 @@ where
         }
     }
 
-    fn destroyed(
-        _state: &mut D,
-        _client: ClientId,
-        _object: &ZwpInputPopupSurfaceV3,
-        data: &InputMethodPopupSurfaceUserData,
-    ) {
-        data.alive_tracker.destroy_notify();
+    fn destroyed(&self, _state: &mut D, _client: ClientId, _object: &ZwpInputPopupSurfaceV3) {
+        self.alive_tracker.destroy_notify();
     }
 }

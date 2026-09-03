@@ -36,6 +36,7 @@ use crate::{
     wayland::{
         input_method_v3::InputMethodUserData,
         seat::{KeyboardUserData, WaylandFocus},
+        Dispatch2, GlobalDispatch2,
     },
 };
 
@@ -90,19 +91,19 @@ impl KeyboardFilterManagerState {
     }
 }
 
-impl<D> GlobalDispatch<ZwpKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData, D>
-    for KeyboardFilterManagerState
+impl<D> GlobalDispatch2<ZwpKeyboardFilterManagerV1, D> for KeyboardFilterManagerGlobalData
 where
-    D: GlobalDispatch<ZwpKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData>,
     D: Dispatch<ZwpKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
+    D: Dispatch<ZwpKeyboardFilterV1, KeyboardFilterUserData<D>>,
+    D: SeatHandler,
     D: 'static,
 {
     fn bind(
+        &self,
         _: &mut D,
         _: &DisplayHandle,
         _: &Client,
         resource: New<ZwpKeyboardFilterManagerV1>,
-        _: &KeyboardFilterManagerGlobalData,
         data_init: &mut DataInit<'_, D>,
     ) {
         data_init.init(
@@ -113,25 +114,24 @@ where
         );
     }
 
-    fn can_view(client: Client, global_data: &KeyboardFilterManagerGlobalData) -> bool {
-        (global_data.filter)(&client)
+    fn can_view(&self, client: &Client) -> bool {
+        (self.filter)(client)
     }
 }
 
-impl<D> Dispatch<ZwpKeyboardFilterManagerV1, KeyboardFilterManagerUserData, D> for KeyboardFilterManagerState
+impl<D> Dispatch2<ZwpKeyboardFilterManagerV1, D> for KeyboardFilterManagerUserData
 where
-    D: Dispatch<ZwpKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
     D: Dispatch<ZwpKeyboardFilterV1, KeyboardFilterUserData<D>>,
     D: SeatHandler,
     <D as SeatHandler>::KeyboardFocus: WaylandFocus,
     D: 'static,
 {
     fn request(
+        &self,
         _state: &mut D,
         _client: &Client,
         resource: &ZwpKeyboardFilterManagerV1,
         request: zwp_keyboard_filter_manager_v1::Request,
-        data: &KeyboardFilterManagerUserData,
         _dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
@@ -143,7 +143,7 @@ where
                 extensions,
             } => {
                 {
-                    let bind = data.inner.lock().unwrap();
+                    let bind = self.inner.lock().unwrap();
                     if bind.bound_keyboards.contains(&keyboard) {
                         resource.post_error(
                             zwp_keyboard_filter_manager_v1::Error::AlreadyBound,
@@ -187,7 +187,7 @@ where
                         keyboard_handle: kb_handle.clone(),
                         pending_events: pending_events.clone(),
                         focused_surface: focused_surface.clone(),
-                        manager_data: data.inner.clone(),
+                        manager_data: self.inner.clone(),
                         bound_keyboard: keyboard.clone(),
                         bound_input_method: input_method.clone(),
                         im_keyboard: keyboard.clone(),
@@ -205,7 +205,7 @@ where
                 }
 
                 {
-                    let mut bind = data.inner.lock().unwrap();
+                    let mut bind = self.inner.lock().unwrap();
                     bind.bound_keyboards.insert(keyboard);
                     bind.bound_ims.insert(input_method);
                 }
@@ -224,11 +224,5 @@ macro_rules! delegate_keyboard_filter_manager_v1 {
             $crate::reexports::wayland_protocols::wp::keyboard_filter::zv1::server::zwp_keyboard_filter_manager_v1::ZwpKeyboardFilterManagerV1:
             $crate::wayland::keyboard_filter::KeyboardFilterManagerGlobalData
         ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
-        $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::keyboard_filter::zv1::server::zwp_keyboard_filter_manager_v1::ZwpKeyboardFilterManagerV1: $crate::wayland::keyboard_filter::KeyboardFilterManagerUserData
-        ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
-        $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::keyboard_filter::zv1::server::zwp_keyboard_filter_v1::ZwpKeyboardFilterV1: $crate::wayland::keyboard_filter::KeyboardFilterUserData<Self>
-        ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
-    }
+    };
 }

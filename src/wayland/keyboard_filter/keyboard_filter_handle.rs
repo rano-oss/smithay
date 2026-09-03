@@ -22,8 +22,9 @@ use crate::input::{
     keyboard::{KeyboardHandle, KnownKbds, WlKeyboardApi},
     Seat, SeatHandler,
 };
+use crate::wayland::Dispatch2;
 
-use super::{KeyboardFilterManagerState, KeyboardFilterManagerUserDataInner};
+use super::KeyboardFilterManagerUserDataInner;
 
 #[derive(Debug)]
 pub(crate) struct BufferedEvent {
@@ -158,7 +159,7 @@ impl Filter {
         *slot = Some(Box::new(interceptor));
     }
 
-    /// Deactivate keyboard interception. Flush all pending events as passthrough.
+    /// Deactivate keyboard interception and drop buffered events.
     pub fn deactivate_interceptor<D: SeatHandler + 'static>(&self, seat: &Seat<D>) {
         let keyboard_handle = seat.get_keyboard().unwrap();
         let mut pending = self.pending_events.lock().unwrap();
@@ -180,45 +181,48 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) im_surface: WlSurface,
 }
 
-impl<D> Dispatch<ZwpKeyboardFilterV1, KeyboardFilterUserData<D>, D> for KeyboardFilterManagerState
+impl<D: SeatHandler> KeyboardFilterUserData<D> {
+    fn flush_pending_passthrough(&self) {
+        let mut pending = self.pending_events.lock().unwrap();
+        if let Some(ref surface) = *self.focused_surface.lock().unwrap() {
+            let keyboards = self.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
+            for event in pending.drain(..) {
+                KnownKbds::for_each_focused_kbd(&keyboards, surface, |kbd| {
+                    kbd.key(event.serial, event.time, event.key, event.state);
+                });
+            }
+        } else {
+            pending.clear();
+        }
+    }
+
+    fn detach(&self) {
+        self.keyboard_handle.arc.known_kbds.clear_interceptor();
+        let mut mgr = self.manager_data.lock().unwrap();
+        mgr.bound_keyboards.remove(&self.bound_keyboard);
+        mgr.bound_ims.remove(&self.bound_input_method);
+    }
+}
+
+impl<D> Dispatch2<ZwpKeyboardFilterV1, D> for KeyboardFilterUserData<D>
 where
-    D: Dispatch<ZwpKeyboardFilterV1, KeyboardFilterUserData<D>>,
     D: SeatHandler,
     D: 'static,
 {
     fn request(
+        &self,
         _state: &mut D,
         _client: &Client,
         resource: &ZwpKeyboardFilterV1,
         request: <ZwpKeyboardFilterV1 as Resource>::Request,
-        data: &KeyboardFilterUserData<D>,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
         use zwp_keyboard_filter_v1::Request;
         match request {
             Request::Unbind => {
-                // Flush all pending events as passthrough
-                let mut pending = data.pending_events.lock().unwrap();
-                if let Some(ref surface) = *data.focused_surface.lock().unwrap() {
-                    let keyboards = data.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
-                    for event in pending.drain(..) {
-                        KnownKbds::for_each_focused_kbd(&keyboards, surface, |kbd| {
-                            kbd.key(event.serial, event.time, event.key, event.state);
-                        });
-                    }
-                } else {
-                    pending.clear();
-                }
-                drop(pending);
-
-                // Remove interceptor
-                data.keyboard_handle.arc.known_kbds.clear_interceptor();
-
-                // Clean up bindings
-                let mut mgr = data.manager_data.lock().unwrap();
-                mgr.bound_keyboards.remove(&data.bound_keyboard);
-                mgr.bound_ims.remove(&data.bound_input_method);
+                self.flush_pending_passthrough();
+                self.detach();
             }
             Request::Filter { serial, action } => {
                 let action = match action {
@@ -234,15 +238,15 @@ where
                     }
                 };
 
-                let mut pending = data.pending_events.lock().unwrap();
+                let mut pending = self.pending_events.lock().unwrap();
                 // Find the event matching this serial (events are in reverse order, newest first)
                 if let Some(pos) = pending.iter().position(|e| e.serial == serial) {
                     let event = pending.remove(pos).unwrap();
                     if action {
                         // Passthrough: forward to real client
-                        let focused = data.focused_surface.lock().unwrap();
+                        let focused = self.focused_surface.lock().unwrap();
                         if let Some(ref surface) = *focused {
-                            let keyboards = data.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
+                            let keyboards = self.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
                             KnownKbds::for_each_focused_kbd(&keyboards, surface, |kbd| {
                                 kbd.key(event.serial, event.time, event.key, event.state);
                             });
@@ -264,26 +268,12 @@ where
     }
 
     fn destroyed(
+        &self,
         _state: &mut D,
         _client: wayland_server::backend::ClientId,
         _resource: &ZwpKeyboardFilterV1,
-        data: &KeyboardFilterUserData<D>,
     ) {
-        // Flush pending as passthrough
-        let mut pending = data.pending_events.lock().unwrap();
-        if let Some(ref surface) = *data.focused_surface.lock().unwrap() {
-            let keyboards = data.keyboard_handle.arc.known_kbds.keyboards.lock().unwrap();
-            for event in pending.drain(..) {
-                KnownKbds::for_each_focused_kbd(&keyboards, surface, |kbd| {
-                    kbd.key(event.serial, event.time, event.key, event.state);
-                });
-            }
-        } else {
-            pending.clear();
-        }
-        data.keyboard_handle.arc.known_kbds.clear_interceptor();
-        let mut mgr = data.manager_data.lock().unwrap();
-        mgr.bound_keyboards.remove(&data.bound_keyboard);
-        mgr.bound_ims.remove(&data.bound_input_method);
+        self.flush_pending_passthrough();
+        self.detach();
     }
 }

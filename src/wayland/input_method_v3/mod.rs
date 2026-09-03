@@ -8,6 +8,7 @@
 //!     delegate_seat, delegate_input_method_manager_v3, delegate_text_input_manager,
 //! #   delegate_compositor,
 //! };
+//! use smithay::delegate_dispatch2;
 //! use smithay::input::{Seat, SeatState, SeatHandler, pointer::CursorImageStatus};
 //! # use smithay::wayland::compositor::{CompositorHandler, CompositorState, CompositorClientState};
 //! use smithay::wayland::input_method_v3::{InputMethodManagerState, InputMethodHandler, PopupSurface, PositionerState};
@@ -20,6 +21,7 @@
 //!
 //! delegate_seat!(State);
 //! # delegate_compositor!(State);
+//! delegate_dispatch2!(State);
 //!
 //! impl InputMethodHandler for State {
 //!     fn new_popup(&mut self, surface: PopupSurface) {}
@@ -75,10 +77,13 @@ use wayland_server::{
     GlobalDispatch, New,
 };
 
+use crate::wayland::{Dispatch2, GlobalData, GlobalDispatch2};
+
 use wayland_protocols::wp::input_method::zv3::server::{
     zwp_input_method_manager_v3::{self, ZwpInputMethodManagerV3},
     zwp_input_method_v3::ZwpInputMethodV3,
     zwp_input_popup_positioner_v3::ZwpInputPopupPositionerV3,
+    zwp_input_popup_surface_v3::ZwpInputPopupSurfaceV3,
 };
 
 use crate::{
@@ -141,8 +146,7 @@ pub trait InputMethodHandler {
     /// This allows the compositor to sync state (e.g. activate the correct IME for the current layout).
     fn input_method_instance_registered(&mut self) {}
 
-    /// Copied from wl_layer_surface.
-    /// What is this for? What arguments make sense?
+    /// Optional hook when the client acknowledges a popup configure sequence.
     fn popup_ack_configure(
         &mut self,
         _surface: &WlSurface,
@@ -184,8 +188,10 @@ impl InputMethodManagerState {
     pub fn new<D, F>(display: &DisplayHandle, filter: F) -> Self
     where
         D: GlobalDispatch<ZwpInputMethodManagerV3, InputMethodManagerGlobalData>,
-        D: Dispatch<ZwpInputMethodManagerV3, ()>,
+        D: Dispatch<ZwpInputMethodManagerV3, GlobalData>,
         D: Dispatch<ZwpInputMethodV3, InputMethodUserData<D>>,
+        D: Dispatch<ZwpInputPopupSurfaceV3, InputMethodPopupSurfaceUserData>,
+        D: Dispatch<ZwpInputPopupPositionerV3, PositionerUserData>,
         D: SeatHandler,
         D: 'static,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
@@ -204,44 +210,44 @@ impl InputMethodManagerState {
     }
 }
 
-impl<D> GlobalDispatch<ZwpInputMethodManagerV3, InputMethodManagerGlobalData, D> for InputMethodManagerState
+impl<D> GlobalDispatch2<ZwpInputMethodManagerV3, D> for InputMethodManagerGlobalData
 where
-    D: GlobalDispatch<ZwpInputMethodManagerV3, InputMethodManagerGlobalData>,
-    D: Dispatch<ZwpInputMethodManagerV3, ()>,
+    D: Dispatch<ZwpInputMethodManagerV3, GlobalData>,
     D: Dispatch<ZwpInputMethodV3, InputMethodUserData<D>>,
+    D: Dispatch<ZwpInputPopupSurfaceV3, InputMethodPopupSurfaceUserData>,
+    D: Dispatch<ZwpInputPopupPositionerV3, PositionerUserData>,
     D: SeatHandler,
     D: 'static,
 {
     fn bind(
+        &self,
         _: &mut D,
         _: &DisplayHandle,
         _: &Client,
         resource: New<ZwpInputMethodManagerV3>,
-        _: &InputMethodManagerGlobalData,
         data_init: &mut DataInit<'_, D>,
     ) {
-        data_init.init(resource, ());
+        data_init.init(resource, GlobalData);
     }
 
-    fn can_view(client: Client, global_data: &InputMethodManagerGlobalData) -> bool {
-        (global_data.filter)(&client)
+    fn can_view(&self, client: &Client) -> bool {
+        (self.filter)(client)
     }
 }
 
-impl<D> Dispatch<ZwpInputMethodManagerV3, (), D> for InputMethodManagerState
+impl<D> Dispatch2<ZwpInputMethodManagerV3, D> for GlobalData
 where
-    D: Dispatch<ZwpInputMethodManagerV3, ()>,
     D: Dispatch<ZwpInputMethodV3, InputMethodUserData<D>>,
     D: Dispatch<ZwpInputPopupPositionerV3, PositionerUserData>,
     D: SeatHandler + InputMethodHandler,
     D: 'static,
 {
     fn request(
+        &self,
         state: &mut D,
         client: &Client,
         _: &ZwpInputMethodManagerV3,
         request: zwp_input_method_manager_v3::Request,
-        _: &(),
         dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
@@ -309,21 +315,6 @@ macro_rules! delegate_input_method_manager_v3 {
         $crate::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             $crate::reexports::wayland_protocols::wp::input_method::zv3::server::zwp_input_method_manager_v3::ZwpInputMethodManagerV3:
             $crate::wayland::input_method_v3::InputMethodManagerGlobalData
-        ] => $crate::wayland::input_method_v3::InputMethodManagerState);
-        $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::input_method::zv3::server::zwp_input_method_manager_v3::ZwpInputMethodManagerV3: ()
-        ] => $crate::wayland::input_method_v3::InputMethodManagerState);
-        $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::input_method::zv3::server::zwp_input_method_v3::ZwpInputMethodV3:
-            $crate::wayland::input_method_v3::InputMethodUserData<Self>
-        ] => $crate::wayland::input_method_v3::InputMethodManagerState);
-        $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::input_method::zv3::server::zwp_input_popup_surface_v3::ZwpInputPopupSurfaceV3:
-            $crate::wayland::input_method_v3::InputMethodPopupSurfaceUserData
-        ] => $crate::wayland::input_method_v3::InputMethodManagerState);
-        $crate::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::input_method::zv3::server::zwp_input_popup_positioner_v3::ZwpInputPopupPositionerV3:
-            $crate::wayland::input_method_v3::PositionerUserData
         ] => $crate::wayland::input_method_v3::InputMethodManagerState);
     };
 }

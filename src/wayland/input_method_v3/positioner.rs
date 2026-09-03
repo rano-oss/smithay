@@ -1,13 +1,13 @@
-use super::InputMethodManagerState;
+use crate::input::SeatHandler;
 use crate::utils::{Logical, Point, Rectangle, Size};
+use crate::wayland::Dispatch2;
 use std::cmp::min;
 use std::sync::Mutex;
 use wayland_protocols::wp::input_method::zv3::server::zwp_input_popup_positioner_v3::{
     self, Anchor, ConstraintAdjustment, Gravity, ZwpInputPopupPositionerV3,
 };
-use wayland_server::{Dispatch, Resource, WEnum};
+use wayland_server::{Resource, WEnum};
 
-/// Not sure what to write here. I just copied the pattern of UserData without analyzing it.
 #[derive(Default, Debug)]
 pub struct PositionerUserData {
     pub(crate) inner: Mutex<PositionerState>,
@@ -316,33 +316,22 @@ impl PositionerState {
 
         geo
     }
-
-    /// Return the popup geometry computed based on the cursor anchor.
-    pub fn get_geometry_from_anchor(
-        &self,
-        cursor: Rectangle<i32, Logical>,
-        target: Rectangle<i32, Logical>,
-    ) -> Rectangle<i32, Logical> {
-        self.get_unconstrained_geometry(cursor, target)
-    }
 }
 
-impl<D> Dispatch<ZwpInputPopupPositionerV3, PositionerUserData, D> for InputMethodManagerState
+impl<D> Dispatch2<ZwpInputPopupPositionerV3, D> for PositionerUserData
 where
-/*D: Dispatch<XdgPositioner, XdgPositionerUserData>,
-D: XdgShellHandler,
-D: 'static,*/
+    D: SeatHandler + 'static,
 {
     fn request(
+        &self,
         _state: &mut D,
         _client: &wayland_server::Client,
         positioner: &ZwpInputPopupPositionerV3,
         request: zwp_input_popup_positioner_v3::Request,
-        data: &PositionerUserData,
         _dhandle: &wayland_server::DisplayHandle,
         _data_init: &mut wayland_server::DataInit<'_, D>,
     ) {
-        let mut state = data.inner.lock().unwrap();
+        let mut state = self.inner.lock().unwrap();
         use zwp_input_popup_positioner_v3::Request;
         match request {
             Request::SetSize { width, height } => {

@@ -70,6 +70,7 @@ pub mod idle_notify;
 pub mod image_capture_source;
 pub mod image_copy_capture;
 pub mod input_method;
+pub(crate) mod input_method_forwarding;
 pub mod input_method_v3;
 pub mod keyboard_filter;
 pub mod keyboard_shortcuts_inhibit;
