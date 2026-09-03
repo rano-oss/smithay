@@ -18,7 +18,7 @@ use wayland_server::{
 };
 
 use crate::{
-    input::{Seat, SeatHandler, keyboard::KeyboardHandle},
+    input::{SeatHandler, keyboard::KeyboardHandle},
     utils::{Logical, Rectangle},
     wayland::{
         Dispatch2, compositor, keyboard_filter::KeyboardFilterUserData, seat::WaylandFocus,
@@ -408,7 +408,6 @@ impl InputMethodV3Handle {
 /// User data of ZwpInputMethodV3 object
 #[derive(Clone)]
 pub struct InputMethodUserData<D: SeatHandler> {
-    pub(crate) seat: Seat<D>,
     pub(super) handle: InputMethodV3Handle,
     pub(crate) text_input_handle: TextInputHandle,
     /// Handle to main keyboard for registering sub-keyboards

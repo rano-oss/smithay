@@ -122,7 +122,6 @@ where
                         let instance = data_init.init(
                             input_method,
                             InputMethodUserData {
-                                seat: seat.clone(),
                                 handle: input_method_handle.v3().clone(),
                                 text_input_handle: text_input_handle.clone(),
                                 keyboard_handle: seat.get_keyboard().unwrap(),
@@ -139,7 +138,6 @@ where
                 let instance = data_init.init(
                     input_method,
                     InputMethodUserData {
-                        seat: seat.clone(),
                         handle: input_method_handle.v3().clone(),
                         text_input_handle: text_input_handle.clone(),
                         keyboard_handle: seat.get_keyboard().unwrap(),
