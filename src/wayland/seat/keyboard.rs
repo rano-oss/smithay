@@ -1,12 +1,11 @@
 use std::{
     cell::RefCell,
     fmt,
-    sync::{Arc, Mutex},
 };
 
 use tracing::{instrument, trace, warn};
 use wayland_server::{
-    Client, DisplayHandle, Resource, Weak,
+    Client, DisplayHandle, Resource,
     backend::{ClientId, ObjectId},
     protocol::{
         wl_keyboard::{self, KeyState as WlKeyState, WlKeyboard},
@@ -160,23 +159,15 @@ pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
             f(kbd.as_ref());
             return;
         }
-        for_each_focused_kbd_resource(&keyboard.arc.known_kbds, surface, f);
-    }
-}
+        let known_kbds = &keyboard.arc.known_kbds;
+        for kbd in &*known_kbds.lock().unwrap() {
+            let Ok(kbd) = kbd.upgrade() else {
+                continue;
+            };
 
-pub(crate) fn for_each_focused_kbd_resource(
-    keyboards: &Arc<Mutex<Vec<Weak<WlKeyboard>>>>,
-    surface: &WlSurface,
-    mut f: impl FnMut(&dyn WlKeyboardApi),
-) {
-    let known_kbds = keyboards;
-    for kbd in &*known_kbds.lock().unwrap() {
-        let Ok(kbd) = kbd.upgrade() else {
-            continue;
-        };
-
-        if kbd.id().same_client_as(&surface.id()) {
-            f(&kbd);
+            if kbd.id().same_client_as(&surface.id()) {
+                f(&kbd);
+            }
         }
     }
 }

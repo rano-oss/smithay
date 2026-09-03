@@ -366,7 +366,7 @@ pub(crate) trait WlKeyboardApi {
     fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState);
     fn modifiers(&self, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32);
     fn repeat_info(&self, rate: i32, delay: i32);
-    fn version(&self) -> u32;
+    fn protocol_version(&self) -> u32;
 }
 
 #[cfg(feature = "wayland_frontend")]
@@ -395,7 +395,7 @@ impl WlKeyboardApi for wl_keyboard::WlKeyboard {
         Self::repeat_info(self, rate, delay)
     }
 
-    fn version(&self) -> u32 {
+    fn protocol_version(&self) -> u32 {
         Resource::version(self)
     }
 }
@@ -811,7 +811,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         // Update keymap for every wl_keyboard.
         let kbd_interceptor = &self.arc.kbd_interceptor;
         if let Some(kbd) = kbd_interceptor.lock().unwrap().as_ref() {
-            let res = keymap_file.with_fd(kbd.version() >= 7, |fd, size| {
+            let res = keymap_file.with_fd(kbd.protocol_version() >= 7, |fd, size| {
                 kbd.keymap(KeymapFormat::XkbV1, fd.as_fd(), size as u32)
             });
             if let Err(e) = res {
@@ -824,7 +824,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                     continue;
                 };
 
-                let res = keymap_file.with_fd(Resource::version(&kbd) >= 7, |fd, size| {
+                let res = keymap_file.with_fd(kbd.version() >= 7, |fd, size| {
                     kbd.keymap(KeymapFormat::XkbV1, fd.as_fd(), size as u32)
                 });
                 if let Err(e) = res {
@@ -1242,7 +1242,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         {
             let kbd_interceptor = &self.arc.kbd_interceptor;
             if let Some(kbd) = kbd_interceptor.lock().unwrap().as_ref() {
-                if kbd.version() >= 4 {
+                if kbd.protocol_version() >= 4 {
                     kbd.repeat_info(rate, delay);
                 }
             } else {
@@ -1251,7 +1251,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                     let Ok(kbd) = kbd.upgrade() else {
                         continue;
                     };
-                    if Resource::version(&kbd) >= 4 {
+                    if kbd.version() >= 4 {
                         kbd.repeat_info(rate, delay);
                     }
                 }

@@ -22,7 +22,7 @@ use crate::input::{
     Seat, SeatHandler,
     keyboard::{KeyboardHandle, WlKeyboardApi},
 };
-use crate::wayland::{Dispatch2, seat::keyboard::for_each_focused_kbd_resource};
+use crate::wayland::Dispatch2;
 
 use super::KeyboardFilterManagerUserDataInner;
 
@@ -56,6 +56,21 @@ struct FilterInterceptor {
     pending_events: Arc<Mutex<VecDeque<BufferedEvent>>>,
 }
 
+impl FilterInterceptor {
+    fn for_each_client_kbd(&self, mut f: impl FnMut(&WlKeyboard)) {
+        let known_kbds = &self.client_keyboards;
+        for kbd in &*known_kbds.lock().unwrap() {
+            let Ok(kbd) = kbd.upgrade() else {
+                continue;
+            };
+
+            if kbd.id().same_client_as(&self.focused_surface.id()) {
+                f(&kbd);
+            }
+        }
+    }
+}
+
 impl WlKeyboardApi for FilterInterceptor {
     fn keymap(
         &self,
@@ -64,21 +79,21 @@ impl WlKeyboardApi for FilterInterceptor {
         size: u32,
     ) {
         self.im_keyboard.keymap(format, fd, size);
-        for_each_focused_kbd_resource(&self.client_keyboards, &self.focused_surface, |kbd| {
+        self.for_each_client_kbd(|kbd| {
             kbd.keymap(format, fd, size);
         });
     }
 
     fn enter(&self, serial: u32, surface: &WlSurface, keys: Vec<u8>) {
         self.im_keyboard.enter(serial, &self.im_surface, keys.clone());
-        for_each_focused_kbd_resource(&self.client_keyboards, &self.focused_surface, |kbd| {
+        self.for_each_client_kbd(|kbd| {
             kbd.enter(serial, surface, keys.clone());
         });
     }
 
     fn leave(&self, serial: u32, surface: &WlSurface) {
         self.im_keyboard.leave(serial, &self.im_surface);
-        for_each_focused_kbd_resource(&self.client_keyboards, &self.focused_surface, |kbd| {
+        self.for_each_client_kbd(|kbd| {
             kbd.leave(serial, surface);
         });
     }
@@ -96,21 +111,21 @@ impl WlKeyboardApi for FilterInterceptor {
     fn modifiers(&self, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) {
         self.im_keyboard
             .modifiers(serial, mods_depressed, mods_latched, mods_locked, group);
-        for_each_focused_kbd_resource(&self.client_keyboards, &self.focused_surface, |kbd| {
+        self.for_each_client_kbd(|kbd| {
             kbd.modifiers(serial, mods_depressed, mods_latched, mods_locked, group);
         });
     }
 
     fn repeat_info(&self, rate: i32, delay: i32) {
         self.im_keyboard.repeat_info(rate, delay);
-        for_each_focused_kbd_resource(&self.client_keyboards, &self.focused_surface, |kbd| {
+        self.for_each_client_kbd(|kbd| {
             kbd.repeat_info(rate, delay);
         });
     }
 
-    fn version(&self) -> u32 {
+    fn protocol_version(&self) -> u32 {
         let mut v = None;
-        for_each_focused_kbd_resource(&self.client_keyboards, &self.focused_surface, |kbd| {
+        self.for_each_client_kbd(|kbd| {
             v = Some(kbd.version());
         });
         v.unwrap_or(Resource::version(&self.im_keyboard))
@@ -180,9 +195,16 @@ impl<D: SeatHandler> KeyboardFilterUserData<D> {
         let mut pending = self.pending_events.lock().unwrap();
         if let Some(ref surface) = *self.focused_surface.lock().unwrap() {
             for event in pending.drain(..) {
-                for_each_focused_kbd_resource(&self.keyboard_handle.arc.known_kbds, surface, |kbd| {
-                    kbd.key(event.serial, event.time, event.key, event.state);
-                });
+                let known_kbds = &self.keyboard_handle.arc.known_kbds;
+                for kbd in &*known_kbds.lock().unwrap() {
+                    let Ok(kbd) = kbd.upgrade() else {
+                        continue;
+                    };
+
+                    if kbd.id().same_client_as(&surface.id()) {
+                        kbd.key(event.serial, event.time, event.key, event.state);
+                    }
+                }
             }
         } else {
             pending.clear();
@@ -239,13 +261,16 @@ where
                         // Passthrough: forward to real client
                         let focused = self.focused_surface.lock().unwrap();
                         if let Some(ref surface) = *focused {
-                            for_each_focused_kbd_resource(
-                                &self.keyboard_handle.arc.known_kbds,
-                                surface,
-                                |kbd| {
+                            let known_kbds = &self.keyboard_handle.arc.known_kbds;
+                            for kbd in &*known_kbds.lock().unwrap() {
+                                let Ok(kbd) = kbd.upgrade() else {
+                                    continue;
+                                };
+
+                                if kbd.id().same_client_as(&surface.id()) {
                                     kbd.key(event.serial, event.time, event.key, event.state);
-                                },
-                            );
+                                }
+                            }
                         } else {
                             tracing::warn!("Passthrough failed: no focused_surface!");
                         }
