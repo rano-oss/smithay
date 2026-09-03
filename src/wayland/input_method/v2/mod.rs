@@ -115,7 +115,7 @@ where
                 let user_data = seat.user_data();
                 user_data.insert_if_missing(TextInputHandle::default);
                 user_data.insert_if_missing(InputMethodHandle::default);
-                let seat_handle = user_data.get::<InputMethodHandle>().unwrap();
+                let input_method_handle = user_data.get::<InputMethodHandle>().unwrap();
                 let text_input_handle = user_data.get::<TextInputHandle>().unwrap();
                 text_input_handle.with_focused_text_input(|ti, surface| {
                     ti.enter(surface);
@@ -124,7 +124,7 @@ where
                 let instance = data_init.init(
                     input_method,
                     InputMethodUserData {
-                        handle: seat_handle.v2().clone(),
+                        handle: input_method_handle.v2().clone(),
                         text_input_handle: text_input_handle.clone(),
                         keyboard_handle,
                         popup_geometry_callback: D::parent_geometry,
@@ -133,7 +133,7 @@ where
                         dismiss_popup: D::dismiss_popup,
                     },
                 );
-                seat_handle.v2().add_instance(&instance);
+                input_method_handle.v2().add_instance(&instance);
             }
             zwp_input_method_manager_v2::Request::Destroy => {}
             _ => unreachable!(),

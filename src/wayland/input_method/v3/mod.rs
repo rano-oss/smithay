@@ -124,7 +124,7 @@ where
                 let user_data = seat.user_data();
                 user_data.insert_if_missing(TextInputHandle::default);
                 user_data.insert_if_missing(InputMethodHandle::default);
-                let seat_handle = user_data.get::<InputMethodHandle>().unwrap();
+                let input_method_handle = user_data.get::<InputMethodHandle>().unwrap();
                 let text_input_handle = user_data.get::<TextInputHandle>().unwrap();
 
                 let app_id = match state.input_method_app_id(client, dh) {
@@ -135,7 +135,7 @@ where
                             input_method,
                             InputMethodUserData {
                                 seat: seat.clone(),
-                                handle: seat_handle.v3().clone(),
+                                handle: input_method_handle.v3().clone(),
                                 text_input_handle: text_input_handle.clone(),
                                 keyboard_handle: seat.get_keyboard().unwrap(),
                                 keyboard_filter: Default::default(),
@@ -152,14 +152,14 @@ where
                     input_method,
                     InputMethodUserData {
                         seat: seat.clone(),
-                        handle: seat_handle.v3().clone(),
+                        handle: input_method_handle.v3().clone(),
                         text_input_handle: text_input_handle.clone(),
                         keyboard_handle: seat.get_keyboard().unwrap(),
                         keyboard_filter: Default::default(),
                         dismiss_popup: D::dismiss_popup,
                     },
                 );
-                seat_handle.v3().add_instance(&instance, app_id);
+                input_method_handle.v3().add_instance(&instance, app_id);
                 state.input_method_instance_registered();
             }
             zwp_input_method_manager_v3::Request::GetPositioner { id } => {

@@ -85,7 +85,7 @@ impl InputMethodHandle {
         });
     }
 
-    pub(crate) fn set_text_input_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
+    pub(crate) fn cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,
         rect: Rectangle<i32, Logical>,
@@ -94,20 +94,13 @@ impl InputMethodHandle {
         self.v3.set_text_input_rectangle::<D>(state, rect);
     }
 
-    pub(crate) fn text_input_commit_followup<D: SeatHandler + InputMethodHandler + 'static>(
-        &self,
-        state: &mut D,
-        text_input_handle: &TextInputHandle,
-    ) {
+    pub(crate) fn text_input_done(&self) {
+        self.v2.with_instance(|input_method| input_method.done());
         if self.v3.has_preedit_commit_followup() {
             self.v3
                 .capture_pending_preedit_anchor_from_last_cursor::<D>(state);
             self.v3.flush_pending_preedit(text_input_handle);
         }
-    }
-
-    pub(crate) fn text_input_done(&self) {
-        self.v2.with_instance(|input_method| input_method.done());
         self.v3.done();
     }
 

@@ -26,6 +26,7 @@ impl IsAlive for PopupSurface {
 
 impl PopupSurface {
     #[inline]
+    /// Access to the underlying wl_surface of this popup
     pub fn wl_surface(&self) -> &WlSurface {
         match self {
             PopupSurface::V2(popup) => popup.wl_surface(),

@@ -146,14 +146,3 @@ impl<D: SeatHandler + 'static> InputMethodSeat for Seat<D> {
         user_data.get::<InputMethodHandle>().unwrap()
     }
 }
-
-#[allow(missing_docs)]
-#[macro_export]
-macro_rules! delegate_input_method_manager_v3 {
-    ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
-        $crate::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::input_method::zv3::server::zwp_input_method_manager_v3::ZwpInputMethodManagerV3:
-            $crate::wayland::input_method::InputMethodManagerGlobalDataV3
-        ] => $crate::wayland::input_method::InputMethodManagerStateV3);
-    };
-}

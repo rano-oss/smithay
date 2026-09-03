@@ -10,7 +10,7 @@ use wayland_server::{Resource, protocol::wl_surface::WlSurface};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::{Dispatch2, input_method::InputMethodHandler};
+use crate::wayland::{Dispatch2, input_method::InputMethodHandle};
 
 #[derive(Default, Debug)]
 pub(crate) struct TextInput {
@@ -183,12 +183,12 @@ impl TextInputHandle {
 #[derive(Debug)]
 pub struct TextInputUserData {
     pub(super) handle: TextInputHandle,
-    pub(crate) input_method: crate::wayland::input_method::InputMethodHandle,
+    pub(crate) input_method_handle: InputMethodHandle,
 }
 
 impl<D> Dispatch2<ZwpTextInputV3, D> for TextInputUserData
 where
-    D: SeatHandler + InputMethodHandler,
+    D: SeatHandler,
     D: 'static,
 {
     fn request(
@@ -206,7 +206,7 @@ where
         }
 
         // Discard requests without any active input method instance.
-        if !self.input_method.has_instance() {
+        if !self.input_method_handle.has_instance() {
             debug!("discarding text-input request without IME running");
             return;
         }
@@ -273,13 +273,13 @@ where
                         *active_text_input_id = Some(resource.id());
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
-                        self.input_method.activate_input_method(state, &focus);
+                        self.input_method_handle.activate_input_method(state, &focus);
                     }
                     Some(false) => {
                         *active_text_input_id = None;
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
-                        self.input_method.deactivate_input_method(state);
+                        self.input_method_handle.deactivate_input_method(state);
                         return;
                     }
                     None => {
@@ -294,25 +294,22 @@ where
                 }
 
                 if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
-                    self.input_method.surrounding_text(text, cursor, anchor);
+                    self.input_method_handle.surrounding_text(text, cursor, anchor);
                 }
 
                 if let Some(cause) = new_state.text_change_cause.take() {
-                    self.input_method.text_change_cause(cause);
+                    self.input_method_handle.text_change_cause(cause);
                 }
 
                 if let Some((hint, purpose)) = new_state.content_type.take() {
-                    self.input_method.content_type(hint, purpose);
+                    self.input_method_handle.content_type(hint, purpose);
                 }
 
                 if let Some(rect) = new_state.cursor_rectangle.take() {
-                    self.input_method.set_text_input_rectangle::<D>(state, rect);
+                    self.input_method_handle.cursor_rectangle::<D>(state, rect);
                 }
 
-                self.input_method
-                    .text_input_commit_followup::<D>(state, &self.handle);
-
-                self.input_method.text_input_done();
+                self.input_method_handle.text_input_done();
             }
             zwp_text_input_v3::Request::Destroy => {
                 // Nothing to do
@@ -342,7 +339,7 @@ where
         };
 
         if deactivate_im {
-            self.input_method.deactivate_input_method(state);
+            self.input_method_handle.deactivate_input_method(state);
         }
     }
 }

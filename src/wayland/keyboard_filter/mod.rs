@@ -215,14 +215,3 @@ where
         }
     }
 }
-
-#[allow(missing_docs)]
-#[macro_export]
-macro_rules! delegate_keyboard_filter_manager_v1 {
-    ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
-        $crate::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::keyboard_filter::zv1::server::zwp_keyboard_filter_manager_v1::ZwpKeyboardFilterManagerV1:
-            $crate::wayland::keyboard_filter::KeyboardFilterManagerGlobalData
-        ] => $crate::wayland::keyboard_filter::KeyboardFilterManagerState);
-    };
-}

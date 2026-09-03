@@ -95,11 +95,6 @@ impl V3InputMethodHandle {
         }
     }
 
-    /// Whether there's any registered input method instance available.
-    pub(crate) fn has_instance(&self) -> bool {
-        !self.inner.lock().unwrap().instances.is_empty()
-    }
-
     /// Whether an input method instance is selected to receive protocol traffic.
     pub(crate) fn has_active_instance(&self) -> bool {
         let inner = self.inner.lock().unwrap();
