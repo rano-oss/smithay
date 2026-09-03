@@ -15,13 +15,14 @@ use crate::{
     backend::input::{KeyState, Keycode},
     input::{
         Seat, SeatHandler, WeakSeat,
-        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState},
+        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
     },
     utils::{HookId, Serial, iter::new_locked_obj_iter_from_vec},
     wayland::{
         Dispatch2,
         compositor::{add_destruction_hook, remove_destruction_hook, with_states},
         input_method::InputMethodSeat,
+        input_method_v3::InputMethodSeat as InputMethodV3Seat,
         text_input::TextInputSeat,
     },
 };
@@ -45,7 +46,7 @@ where
 
     /// Return all raw [`WlKeyboard`] instances for a particular [`Client`]
     pub fn client_keyboards<'a>(&'a self, client: &Client) -> impl Iterator<Item = WlKeyboard> + 'a {
-        let guard = self.arc.known_kbds.lock().unwrap();
+        let guard = self.arc.known_kbds.keyboards.lock().unwrap();
 
         new_locked_obj_iter_from_vec(guard, client.id())
     }
@@ -72,7 +73,7 @@ where
         };
 
         let guard = self.arc.internal.lock().unwrap();
-        if kbd.version() >= 4 {
+        if Resource::version(&kbd) >= 4 {
             kbd.repeat_info(guard.repeat_rate, guard.repeat_delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {
@@ -90,7 +91,12 @@ where
                 );
             }
         }
-        self.arc.known_kbds.lock().unwrap().push(kbd.downgrade());
+        self.arc
+            .known_kbds
+            .keyboards
+            .lock()
+            .unwrap()
+            .push(kbd.downgrade());
     }
 }
 
@@ -138,6 +144,7 @@ where
             handle
                 .arc
                 .known_kbds
+                .keyboards
                 .lock()
                 .unwrap()
                 .retain(|k| k.id() != keyboard.id())
@@ -148,19 +155,10 @@ where
 pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
     seat: &Seat<D>,
     surface: &WlSurface,
-    mut f: impl FnMut(WlKeyboard),
+    f: impl FnMut(&dyn WlKeyboardApi),
 ) {
     if let Some(keyboard) = seat.get_keyboard() {
-        let inner = keyboard.arc.known_kbds.lock().unwrap();
-        for kbd in &*inner {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
-
-            if kbd.id().same_client_as(&surface.id()) {
-                f(kbd.clone())
-            }
-        }
+        keyboard.arc.known_kbds.for_each_focused(surface, f);
     }
 }
 
@@ -221,7 +219,7 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     let hook_id = add_destruction_hook::<D, _>(surface, move |_, surface| {
         if let Some(client) = surface.client() {
             let keyboard = seat_clone.get_keyboard().unwrap();
-            let inner = keyboard.arc.known_kbds.lock().unwrap();
+            let inner = keyboard.arc.known_kbds.keyboards.lock().unwrap();
             for kbd in &*inner {
                 let Ok(kbd) = kbd.upgrade() else {
                     continue;
@@ -249,12 +247,16 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
         input_method.deactivate_input_method(state);
     }
 
+    let input_method_v3 = seat.input_method_v3();
+    if input_method_v3.has_instance() {
+        input_method_v3.deactivate_input_method(state);
+    }
+
     // NOTE: Always set focus regardless whether the client actually has the
     // text-input global bound due to clients doing lazy global binding.
     text_input.set_focus(Some(surface.clone()));
 
-    // Only notify on `enter` once we have an actual IME.
-    if input_method.has_instance() {
+    if input_method.has_instance() || input_method_v3.has_instance() {
         text_input.enter();
     }
 }
@@ -281,6 +283,14 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
 
         if input_method.has_instance() {
             input_method.deactivate_input_method(state);
+        }
+
+        let input_method_v3 = seat.input_method_v3();
+        if input_method_v3.has_instance() {
+            input_method_v3.deactivate_input_method(state);
+        }
+
+        if input_method.has_instance() || input_method_v3.has_instance() {
             text_input.leave();
         }
 

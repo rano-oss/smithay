@@ -10,7 +10,7 @@ use wayland_server::{Resource, protocol::wl_surface::WlSurface};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::{Dispatch2, input_method::InputMethodHandle};
+use crate::wayland::{Dispatch2, input_method, input_method_v3};
 
 #[derive(Default, Debug)]
 pub(crate) struct TextInput {
@@ -183,12 +183,13 @@ impl TextInputHandle {
 #[derive(Debug)]
 pub struct TextInputUserData {
     pub(super) handle: TextInputHandle,
-    pub(crate) input_method_handle: InputMethodHandle,
+    pub(crate) input_method_handle: input_method::InputMethodHandle,
+    pub(crate) input_method_v3_handle: input_method_v3::InputMethodHandle,
 }
 
 impl<D> Dispatch2<ZwpTextInputV3, D> for TextInputUserData
 where
-    D: SeatHandler,
+    D: SeatHandler + input_method_v3::InputMethodHandler,
     D: 'static,
 {
     fn request(
@@ -206,7 +207,7 @@ where
         }
 
         // Discard requests without any active input method instance.
-        if !self.input_method_handle.has_instance() {
+        if !self.input_method_handle.has_instance() && !self.input_method_v3_handle.has_instance() {
             debug!("discarding text-input request without IME running");
             return;
         }
@@ -274,12 +275,14 @@ where
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
                         self.input_method_handle.activate_input_method(state, &focus);
+                        self.input_method_v3_handle.activate_input_method(state, &focus);
                     }
                     Some(false) => {
                         *active_text_input_id = None;
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
                         self.input_method_handle.deactivate_input_method(state);
+                        self.input_method_v3_handle.deactivate_input_method(state);
                         return;
                     }
                     None => {
@@ -294,7 +297,13 @@ where
                 }
 
                 if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
-                    self.input_method_handle.with_instance(move |input_method| {
+                    self.input_method_handle.with_instance({
+                        let text = text.clone();
+                        move |input_method| {
+                            input_method.object.surrounding_text(text, cursor, anchor)
+                        }
+                    });
+                    self.input_method_v3_handle.with_instance(move |input_method| {
                         input_method.object.surrounding_text(text, cursor, anchor)
                     });
                 }
@@ -303,10 +312,16 @@ where
                     self.input_method_handle.with_instance(move |input_method| {
                         input_method.object.text_change_cause(cause);
                     });
+                    self.input_method_v3_handle.with_instance(move |input_method| {
+                        input_method.object.text_change_cause(cause);
+                    });
                 }
 
                 if let Some((hint, purpose)) = new_state.content_type.take() {
                     self.input_method_handle.with_instance(move |input_method| {
+                        input_method.object.content_type(hint, purpose);
+                    });
+                    self.input_method_v3_handle.with_instance(move |input_method| {
                         input_method.object.content_type(hint, purpose);
                     });
                 }
@@ -314,11 +329,19 @@ where
                 if let Some(rect) = new_state.cursor_rectangle.take() {
                     self.input_method_handle
                         .set_text_input_rectangle::<D>(state, rect);
+                    self.input_method_v3_handle
+                        .set_cursor_rectangle::<D>(state, rect);
                 }
+
+                self.input_method_v3_handle
+                    .capture_pending_preedit_anchor_from_last_cursor::<D>(state);
+                self.input_method_v3_handle
+                    .flush_pending_preedit(&self.handle);
 
                 self.input_method_handle.with_instance(|input_method| {
                     input_method.done();
                 });
+                self.input_method_v3_handle.done();
             }
             zwp_text_input_v3::Request::Destroy => {
                 // Nothing to do
@@ -349,6 +372,7 @@ where
 
         if deactivate_im {
             self.input_method_handle.deactivate_input_method(state);
+            self.input_method_v3_handle.deactivate_input_method(state);
         }
     }
 }

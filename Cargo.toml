@@ -60,7 +60,7 @@ wayland-egl = { version = "0.32.11", optional = true }
 wayland-protocols = { version = "0.32.12", features = ["unstable", "staging", "server"], optional = true }
 wayland-protocols-wlr = { version = "0.3.12", features = ["server"], optional = true }
 wayland-protocols-misc = { version = "0.3.12", features = ["server"], optional = true }
-wayland-server = { version = "0.31.13", optional = true }
+wayland-server = { version = "0.31.14", optional = true }
 wayland-sys = { version = "0.31.11", optional = true }
 wayland-backend = { version = "0.3.15", optional = true }
 winit = { version = "0.30.0", default-features = false, features = ["wayland", "wayland-dlopen", "x11", "rwh_06"], optional = true }
@@ -145,3 +145,6 @@ harness = false
 [profile.release-with-debug]
 inherits = "release"
 debug = true
+
+[patch.crates-io]
+wayland-protocols = { git = "https://github.com/rano-oss/wayland-rs.git", branch = "input-method-unstable-v3" }

@@ -10,6 +10,7 @@ use crate::{
     wayland::{
         compositor::with_states,
         input_method,
+        input_method_v3,
         shell::xdg::{self, SurfaceCachedState},
     },
 };
@@ -21,6 +22,8 @@ pub enum PopupKind {
     Xdg(xdg::PopupSurface),
     /// input-method [`PopupSurface`](input_method::PopupSurface)
     InputMethod(input_method::PopupSurface),
+    /// input-method v3 [`PopupSurface`](input_method_v3::PopupSurface)
+    InputMethodV3(input_method_v3::PopupSurface),
 }
 
 impl IsAlive for PopupKind {
@@ -29,6 +32,7 @@ impl IsAlive for PopupKind {
         match self {
             PopupKind::Xdg(p) => p.alive(),
             PopupKind::InputMethod(p) => p.alive(),
+            PopupKind::InputMethodV3(p) => p.alive(),
         }
     }
 }
@@ -47,6 +51,7 @@ impl PopupKind {
         match *self {
             PopupKind::Xdg(ref t) => t.wl_surface(),
             PopupKind::InputMethod(ref t) => t.wl_surface(),
+            PopupKind::InputMethodV3(ref t) => t.wl_surface(),
         }
     }
 
@@ -54,6 +59,7 @@ impl PopupKind {
         match *self {
             PopupKind::Xdg(ref t) => t.get_parent_surface(),
             PopupKind::InputMethod(ref t) => t.get_parent().map(|parent| parent.surface.clone()),
+            PopupKind::InputMethodV3(ref t) => Some(t.get_parent().surface.clone()),
         }
     }
 
@@ -70,6 +76,7 @@ impl PopupKind {
                     .unwrap_or_default()
             }),
             PopupKind::InputMethod(ref t) => t.get_parent().map(|parent| parent.location).unwrap_or_default(),
+            PopupKind::InputMethodV3(ref t) => t.get_parent().location,
         }
     }
 
@@ -77,6 +84,7 @@ impl PopupKind {
         match *self {
             PopupKind::Xdg(ref t) => t.send_popup_done(),
             PopupKind::InputMethod(_) => {} //Nothing to do the IME takes care of this itself
+            PopupKind::InputMethodV3(_) => {} // The IME receives a deactivate event which already indicates that the popup is destroyed.
         }
     }
 
@@ -86,6 +94,7 @@ impl PopupKind {
                 t.with_committed_state(|current| current.map(|state| state.geometry.loc).unwrap_or_default())
             }
             PopupKind::InputMethod(ref t) => t.location(),
+            PopupKind::InputMethodV3(ref t) => t.location(),
         }
     }
 }
@@ -101,5 +110,12 @@ impl From<input_method::PopupSurface> for PopupKind {
     #[inline]
     fn from(p: input_method::PopupSurface) -> PopupKind {
         PopupKind::InputMethod(p)
+    }
+}
+
+impl From<input_method_v3::PopupSurface> for PopupKind {
+    #[inline]
+    fn from(p: input_method_v3::PopupSurface) -> PopupKind {
+        PopupKind::InputMethodV3(p)
     }
 }
