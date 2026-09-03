@@ -660,8 +660,7 @@ where
             inner.active_input_method_id = None;
         }
         inner.instances.retain(|inst| inst.object.id() != destroyed_id);
-        let keyboards = &self.keyboard_handle.arc.known_kbds;
-        keyboards.clear_interceptor();
+        self.keyboard_handle.arc.clear_kbd_interceptor();
         self.text_input_handle.leave();
     }
 }

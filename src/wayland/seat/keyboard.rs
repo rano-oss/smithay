@@ -1,8 +1,8 @@
-use std::{cell::RefCell, fmt};
+use std::{cell::RefCell, fmt, sync::{Arc, Mutex}};
 
 use tracing::{instrument, trace, warn};
 use wayland_server::{
-    Client, DisplayHandle, Resource,
+    Client, DisplayHandle, Resource, Weak,
     backend::{ClientId, ObjectId},
     protocol::{
         wl_keyboard::{self, KeyState as WlKeyState, WlKeyboard},
@@ -45,7 +45,7 @@ where
 
     /// Return all raw [`WlKeyboard`] instances for a particular [`Client`]
     pub fn client_keyboards<'a>(&'a self, client: &Client) -> impl Iterator<Item = WlKeyboard> + 'a {
-        let guard = self.arc.known_kbds.keyboards.lock().unwrap();
+        let guard = self.arc.known_kbds.lock().unwrap();
 
         new_locked_obj_iter_from_vec(guard, client.id())
     }
@@ -92,7 +92,6 @@ where
         }
         self.arc
             .known_kbds
-            .keyboards
             .lock()
             .unwrap()
             .push(kbd.downgrade());
@@ -143,7 +142,6 @@ where
             handle
                 .arc
                 .known_kbds
-                .keyboards
                 .lock()
                 .unwrap()
                 .retain(|k| k.id() != keyboard.id())
@@ -154,11 +152,29 @@ where
 pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
     seat: &Seat<D>,
     surface: &WlSurface,
-    f: impl FnMut(&dyn WlKeyboardApi),
+    mut f: impl FnMut(&dyn WlKeyboardApi),
 ) {
     if let Some(keyboard) = seat.get_keyboard() {
-        keyboard.arc.known_kbds.for_each_focused(surface, f);
+        if let Some(kbd) = keyboard.arc.kbd_interceptor.lock().unwrap().as_ref() {
+            f(kbd.as_ref());
+            return;
+        }
+        for_each_focused_kbd_resource(&keyboard.arc.known_kbds, surface, f);
     }
+}
+
+pub(crate) fn for_each_focused_kbd_resource(
+    keyboards: &Arc<Mutex<Vec<Weak<WlKeyboard>>>>,
+    surface: &WlSurface,
+    mut f: impl FnMut(&dyn WlKeyboardApi),
+) {
+    keyboards
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|k| k.upgrade().ok())
+        .filter(|k| k.id().same_client_as(&surface.id()))
+        .for_each(|k| f(&k));
 }
 
 /// Serialize keycodes for the `WlKeyboard` interface
@@ -218,7 +234,7 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     let hook_id = add_destruction_hook::<D, _>(surface, move |_, surface| {
         if let Some(client) = surface.client() {
             let keyboard = seat_clone.get_keyboard().unwrap();
-            let inner = keyboard.arc.known_kbds.keyboards.lock().unwrap();
+            let inner = keyboard.arc.known_kbds.lock().unwrap();
             for kbd in &*inner {
                 let Ok(kbd) = kbd.upgrade() else {
                     continue;
