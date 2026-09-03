@@ -5,19 +5,19 @@ use wayland_protocols::wp::input_method::zv3::server::zwp_input_method_v3::ZwpIn
 use wayland_protocols::wp::input_method::zv3::server::zwp_input_popup_surface_v3::{
     self, PopupPositionMode, ZwpInputPopupSurfaceV3,
 };
-use wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface, Resource};
+use wayland_server::{Resource, backend::ClientId, protocol::wl_surface::WlSurface};
 
 use crate::input::SeatHandler;
 use crate::utils::{
-    alive_tracker::{AliveTracker, IsAlive},
     Logical, Point, Rectangle, Serial,
+    alive_tracker::{AliveTracker, IsAlive},
 };
 use crate::wayland::Dispatch2;
 
 use super::{
+    InputMethodHandler, InputMethodUserData,
     configure_tracker::PopupConfigureAttributes,
     positioner::{PositionerState, PositionerUserData},
-    InputMethodHandler, InputMethodUserData,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -231,8 +231,10 @@ impl PopupSurface {
     /// Call this from input_method.done
     pub fn send_pending_configure(&mut self) {
         let surface_role = self.surface_role.clone();
-        self.configure.lock().unwrap().send_pending_configure(
-            |new_state, sent_state, serial| {
+        self.configure
+            .lock()
+            .unwrap()
+            .send_pending_configure(|new_state, sent_state, serial| {
                 let ImPopupLocation { anchor, geometry } = new_state.position.clone();
                 let relative_to_popup = anchor.loc - geometry.loc;
                 surface_role.start_configure(
@@ -250,8 +252,7 @@ impl PopupSurface {
                         surface_role.repositioned(new);
                     }
                 }
-            },
-        );
+            });
     }
 }
 

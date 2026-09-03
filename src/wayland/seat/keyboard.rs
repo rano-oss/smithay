@@ -1,4 +1,8 @@
-use std::{cell::RefCell, fmt, sync::{Arc, Mutex}};
+use std::{
+    cell::RefCell,
+    fmt,
+    sync::{Arc, Mutex},
+};
 
 use tracing::{instrument, trace, warn};
 use wayland_server::{
@@ -90,11 +94,7 @@ where
                 );
             }
         }
-        self.arc
-            .known_kbds
-            .lock()
-            .unwrap()
-            .push(kbd.downgrade());
+        self.arc.known_kbds.lock().unwrap().push(kbd.downgrade());
     }
 }
 

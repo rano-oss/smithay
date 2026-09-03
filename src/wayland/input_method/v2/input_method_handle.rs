@@ -22,9 +22,9 @@ use crate::{
 
 use super::super::{InputMethodHandler, PopupSurface as ImPopupSurface};
 use super::{
+    INPUT_POPUP_SURFACE_ROLE, InputMethodKeyboardUserData, InputMethodPopupSurfaceUserData,
     input_method_keyboard_grab::InputMethodKeyboardGrab,
     input_method_popup_surface::{PopupHandle, PopupParent, PopupSurface},
-    InputMethodKeyboardUserData, InputMethodPopupSurfaceUserData, INPUT_POPUP_SURFACE_ROLE,
 };
 
 #[derive(Default, Debug)]
@@ -237,8 +237,7 @@ where
                     .map(|i| i.serial)
                     .unwrap_or(0);
 
-                self.text_input_handle
-                    .done(serial != current_serial);
+                self.text_input_handle.done(serial != current_serial);
             }
             zwp_input_method_v2::Request::GetInputPopupSurface { id, surface } => {
                 if compositor::give_role(&surface, INPUT_POPUP_SURFACE_ROLE).is_err()

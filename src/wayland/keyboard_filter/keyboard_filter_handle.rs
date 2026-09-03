@@ -11,18 +11,18 @@ use wayland_protocols::wp::{
 };
 use wayland_server::WEnum;
 use wayland_server::{
+    Client, DataInit, DisplayHandle, Resource, Weak,
     protocol::{
         wl_keyboard::{KeyState, WlKeyboard},
         wl_surface::WlSurface,
     },
-    Client, DataInit, DisplayHandle, Resource, Weak,
 };
 
 use crate::input::{
-    keyboard::{KeyboardHandle, WlKeyboardApi},
     Seat, SeatHandler,
+    keyboard::{KeyboardHandle, WlKeyboardApi},
 };
-use crate::wayland::{seat::keyboard::for_each_focused_kbd_resource, Dispatch2};
+use crate::wayland::{Dispatch2, seat::keyboard::for_each_focused_kbd_resource};
 
 use super::KeyboardFilterManagerUserDataInner;
 

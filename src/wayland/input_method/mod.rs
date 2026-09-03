@@ -71,9 +71,9 @@ pub use handle::InputMethodHandle;
 pub use popup::PopupSurface;
 
 pub use v2::{
-    InputMethodKeyboardGrab, InputMethodKeyboardUserData, InputMethodManagerGlobalData,
-    InputMethodManagerState, InputMethodPopupSurfaceUserData, InputMethodUserData, PopupParent,
-    INPUT_POPUP_SURFACE_ROLE,
+    INPUT_POPUP_SURFACE_ROLE, InputMethodKeyboardGrab, InputMethodKeyboardUserData,
+    InputMethodManagerGlobalData, InputMethodManagerState, InputMethodPopupSurfaceUserData,
+    InputMethodUserData, PopupParent,
 };
 
 pub use v3::{

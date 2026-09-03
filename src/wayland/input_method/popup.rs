@@ -2,8 +2,8 @@ use wayland_server::protocol::wl_surface::WlSurface;
 
 use crate::utils::{IsAlive, Logical, Point, Rectangle};
 
-use super::{v2, v3};
 use super::v2::PopupParent;
+use super::{v2, v3};
 
 /// Input-method popup surface from either protocol version.
 #[derive(Debug, Clone, PartialEq)]

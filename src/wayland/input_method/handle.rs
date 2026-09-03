@@ -7,11 +7,10 @@ use wayland_server::protocol::wl_surface::WlSurface;
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::text_input::TextInputHandle;
 
+use super::InputMethodHandler;
 use super::v2::V2InputMethodHandle;
 use super::v3::V3InputMethodHandle;
-use super::InputMethodHandler;
 
 /// Handle to input method state for a seat, covering both protocol versions.
 ///
@@ -90,18 +89,13 @@ impl InputMethodHandle {
         state: &mut D,
         rect: Rectangle<i32, Logical>,
     ) {
-        self.v2.set_text_input_rectangle::<D>(state, rect);
-        self.v3.set_text_input_rectangle::<D>(state, rect);
+        self.v2.set_text_input_rectangle(state, rect);
+        self.v3.set_text_input_rectangle(state, rect);
     }
 
-    pub(crate) fn text_input_done(&self) {
+    pub(crate) fn text_input_done<D: SeatHandler + InputMethodHandler + 'static>(&self, state: &mut D) {
         self.v2.with_instance(|input_method| input_method.done());
-        if self.v3.has_preedit_commit_followup() {
-            self.v3
-                .capture_pending_preedit_anchor_from_last_cursor::<D>(state);
-            self.v3.flush_pending_preedit(text_input_handle);
-        }
-        self.v3.done();
+        self.v3.text_input_done(state);
     }
 
     /// Indicates that an input method has grabbed a keyboard

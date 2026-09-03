@@ -1,4 +1,4 @@
-use crate::utils::{Serial, SERIAL_COUNTER};
+use crate::utils::{SERIAL_COUNTER, Serial};
 
 use super::input_method_popup_surface::PopupSurfaceState;
 
@@ -36,7 +36,8 @@ impl PopupConfigureAttributes {
             .clone();
 
         self.last_acked = Some(configure.clone());
-        self.pending_configures.retain(|configure| configure.serial > serial);
+        self.pending_configures
+            .retain(|configure| configure.serial > serial);
         Some(configure.state)
     }
 
@@ -86,11 +87,10 @@ impl PopupConfigureAttributes {
         }
 
         let serial = SERIAL_COUNTER.next_serial();
-        self.pending_configures
-            .push(PopupConfigure {
-                state: new_state.clone(),
-                serial,
-            });
+        self.pending_configures.push(PopupConfigure {
+            state: new_state.clone(),
+            serial,
+        });
         self.initial_configure_sent = true;
         send(new_state, sent_state, serial);
     }

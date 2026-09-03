@@ -1,8 +1,6 @@
 //! Input method v3 protocol support.
 
-use wayland_server::{
-    backend::GlobalId, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
-};
+use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId};
 
 use crate::wayland::{Dispatch2, GlobalData, GlobalDispatch2};
 
@@ -13,9 +11,7 @@ use wayland_protocols::wp::input_method::zv3::server::{
     zwp_input_popup_surface_v3::ZwpInputPopupSurfaceV3,
 };
 
-use crate::{
-    input::{Seat, SeatHandler},
-};
+use crate::input::{Seat, SeatHandler};
 
 pub(crate) use input_method_handle::{InputMethodUserData, V3InputMethodHandle};
 
@@ -32,9 +28,7 @@ mod input_method_handle;
 mod input_method_popup_surface;
 mod positioner;
 
-pub use input_method_popup_surface::{
-    InputMethodPopupSurfaceUserData, PopupSurface, PopupSurfaceState,
-};
+pub use input_method_popup_surface::{InputMethodPopupSurfaceUserData, PopupSurface, PopupSurfaceState};
 pub use positioner::{PositionerState, PositionerUserData};
 
 /// Data associated with an InputMethodManager global (v3).
@@ -130,7 +124,9 @@ where
                 let app_id = match state.input_method_app_id(client, dh) {
                     Some(id) => id,
                     None => {
-                        tracing::warn!("Input method client has no app_id (no security context?), rejecting registration");
+                        tracing::warn!(
+                            "Input method client has no app_id (no security context?), rejecting registration"
+                        );
                         let instance = data_init.init(
                             input_method,
                             InputMethodUserData {

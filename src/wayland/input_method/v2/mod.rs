@@ -1,8 +1,6 @@
 //! Input method v2 protocol support.
 
-use wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId,
-};
+use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId};
 
 use wayland_protocols_misc::zwp_input_method_v2::server::{
     zwp_input_method_manager_v2::{self, ZwpInputMethodManagerV2},
@@ -14,8 +12,8 @@ use crate::{
     wayland::{Dispatch2, GlobalData, GlobalDispatch2},
 };
 
-pub(crate) use input_method_handle::V2InputMethodHandle;
 pub use input_method_handle::InputMethodUserData;
+pub(crate) use input_method_handle::V2InputMethodHandle;
 
 pub use input_method_keyboard_grab::{InputMethodKeyboardGrab, InputMethodKeyboardUserData};
 pub use input_method_popup_surface::InputMethodPopupSurfaceUserData;

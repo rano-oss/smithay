@@ -360,35 +360,18 @@ use wayland_server::protocol::{wl_keyboard, wl_surface};
 
 #[cfg(feature = "wayland_frontend")]
 pub(crate) trait WlKeyboardApi {
-    fn keymap(
-        &self,
-        format: wl_keyboard::KeymapFormat,
-        fd: ::std::os::unix::io::BorrowedFd<'_>,
-        size: u32,
-    );
+    fn keymap(&self, format: wl_keyboard::KeymapFormat, fd: ::std::os::unix::io::BorrowedFd<'_>, size: u32);
     fn enter(&self, serial: u32, surface: &wl_surface::WlSurface, keys: Vec<u8>);
     fn leave(&self, serial: u32, surface: &wl_surface::WlSurface);
     fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState);
-    fn modifiers(
-        &self,
-        serial: u32,
-        mods_depressed: u32,
-        mods_latched: u32,
-        mods_locked: u32,
-        group: u32,
-    );
+    fn modifiers(&self, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32);
     fn repeat_info(&self, rate: i32, delay: i32);
     fn version(&self) -> u32;
 }
 
 #[cfg(feature = "wayland_frontend")]
 impl WlKeyboardApi for wl_keyboard::WlKeyboard {
-    fn keymap(
-        &self,
-        format: wl_keyboard::KeymapFormat,
-        fd: ::std::os::unix::io::BorrowedFd<'_>,
-        size: u32,
-    ) {
+    fn keymap(&self, format: wl_keyboard::KeymapFormat, fd: ::std::os::unix::io::BorrowedFd<'_>, size: u32) {
         Self::keymap(self, format, fd, size)
     }
 
@@ -404,14 +387,7 @@ impl WlKeyboardApi for wl_keyboard::WlKeyboard {
         Self::key(self, serial, time, key, state)
     }
 
-    fn modifiers(
-        &self,
-        serial: u32,
-        mods_depressed: u32,
-        mods_latched: u32,
-        mods_locked: u32,
-        group: u32,
-    ) {
+    fn modifiers(&self, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) {
         Self::modifiers(self, serial, mods_depressed, mods_latched, mods_locked, group)
     }
 
@@ -783,6 +759,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 internal: Mutex::new(internal),
                 #[cfg(feature = "wayland_frontend")]
                 known_kbds: Arc::new(Mutex::new(Vec::new())),
+                #[cfg(feature = "wayland_frontend")]
                 kbd_interceptor: Mutex::new(None),
                 #[cfg(feature = "wayland_frontend")]
                 last_enter: Mutex::new(None),
@@ -822,7 +799,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     ) -> bool {
         use std::os::unix::io::AsFd;
         use tracing::warn;
-        use wayland_server::{protocol::wl_keyboard::KeymapFormat, Resource};
+        use wayland_server::{Resource, protocol::wl_keyboard::KeymapFormat};
 
         // Ignore request which do not change the keymap.
         let new_id = keymap_file.id();

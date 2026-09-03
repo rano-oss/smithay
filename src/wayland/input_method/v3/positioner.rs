@@ -8,6 +8,7 @@ use wayland_protocols::wp::input_method::zv3::server::zwp_input_popup_positioner
 };
 use wayland_server::{Resource, WEnum};
 
+#[allow(missing_docs)]
 #[derive(Default, Debug)]
 pub struct PositionerUserData {
     pub(crate) inner: Mutex<PositionerState>,
