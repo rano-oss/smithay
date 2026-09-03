@@ -20,7 +20,7 @@ use crate::{
     wayland::{Dispatch2, compositor, seat::WaylandFocus, text_input::TextInputHandle},
 };
 
-use super::super::{text_input_sync, InputMethodHandler, InputMethodPopup};
+use super::super::{InputMethodHandler, InputMethodPopup};
 use super::{
     input_method_keyboard_grab::InputMethodKeyboardGrab,
     input_method_popup_surface::{PopupHandle, PopupParent, PopupSurface},
@@ -205,29 +205,26 @@ where
     ) {
         match request {
             zwp_input_method_v2::Request::CommitString { text } => {
-                text_input_sync::commit_string(&self.text_input_handle, text);
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
+                    ti.commit_string(Some(text.clone()));
+                });
             }
             zwp_input_method_v2::Request::SetPreeditString {
                 text,
                 cursor_begin,
                 cursor_end,
             } => {
-                text_input_sync::set_preedit_string(
-                    &self.text_input_handle,
-                    text,
-                    cursor_begin,
-                    cursor_end,
-                );
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
+                    ti.preedit_string(Some(text.clone()), cursor_begin, cursor_end);
+                });
             }
             zwp_input_method_v2::Request::DeleteSurroundingText {
                 before_length,
                 after_length,
             } => {
-                text_input_sync::delete_surrounding_text(
-                    &self.text_input_handle,
-                    before_length,
-                    after_length,
-                );
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
+                    ti.delete_surrounding_text(before_length, after_length);
+                });
             }
             zwp_input_method_v2::Request::Commit { serial } => {
                 let current_serial = self
@@ -240,7 +237,8 @@ where
                     .map(|i| i.serial)
                     .unwrap_or(0);
 
-                text_input_sync::commit_done(&self.text_input_handle, serial, current_serial);
+                self.text_input_handle
+                    .done(serial != current_serial);
             }
             zwp_input_method_v2::Request::GetInputPopupSurface { id, surface } => {
                 if compositor::give_role(&surface, INPUT_POPUP_SURFACE_ROLE).is_err()

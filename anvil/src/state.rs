@@ -58,8 +58,7 @@ use smithay::{
         image_copy_capture::{
             BufferConstraints, Frame, ImageCopyCaptureHandler, ImageCopyCaptureState, Session, SessionRef,
         },
-        input_method::{InputMethodHandler, InputMethodManagerState},
-        input_method_v3::PositionerState,
+        input_method::{InputMethodHandler, InputMethodManagerState, PositionerState},
         keyboard_shortcuts_inhibit::{
             KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
         },

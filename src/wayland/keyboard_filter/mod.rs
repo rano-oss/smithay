@@ -34,7 +34,7 @@ use wayland_server::{
 use crate::{
     input::SeatHandler,
     wayland::{
-        input_method_v3::InputMethodUserData,
+        input_method::InputMethodV3UserData,
         seat::{KeyboardUserData, WaylandFocus},
         Dispatch2, GlobalDispatch2,
     },
@@ -160,7 +160,7 @@ where
                     }
                 }
 
-                let imdata = input_method.data::<InputMethodUserData<D>>().unwrap();
+                let imdata = input_method.data::<InputMethodV3UserData<D>>().unwrap();
                 let keyboard_data = keyboard.data::<KeyboardUserData<D>>().unwrap();
 
                 let kb_handle = keyboard_data

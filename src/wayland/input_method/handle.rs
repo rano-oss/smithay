@@ -55,7 +55,7 @@ impl InputMethodHandle {
         }
     }
 
-    pub(crate) fn forward_surrounding_text(&self, text: String, cursor: u32, anchor: u32) {
+    pub(crate) fn surrounding_text(&self, text: String, cursor: u32, anchor: u32) {
         let text_v2 = text.clone();
         self.v2.with_instance(move |input_method| {
             input_method.object.surrounding_text(text_v2, cursor, anchor);
@@ -65,7 +65,7 @@ impl InputMethodHandle {
         });
     }
 
-    pub(crate) fn forward_text_change_cause(&self, cause: ChangeCause) {
+    pub(crate) fn text_change_cause(&self, cause: ChangeCause) {
         self.v2.with_instance(move |input_method| {
             input_method.object.text_change_cause(cause);
         });
@@ -74,7 +74,7 @@ impl InputMethodHandle {
         });
     }
 
-    pub(crate) fn forward_content_type(&self, hint: ContentHint, purpose: ContentPurpose) {
+    pub(crate) fn content_type(&self, hint: ContentHint, purpose: ContentPurpose) {
         self.v2.with_instance(move |input_method| {
             input_method.object.content_type(hint, purpose);
         });
@@ -83,7 +83,7 @@ impl InputMethodHandle {
         });
     }
 
-    pub(crate) fn forward_cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
+    pub(crate) fn cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,
         rect: Rectangle<i32, Logical>,

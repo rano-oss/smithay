@@ -1,8 +1,4 @@
 //! Input method v3 protocol support.
-//!
-//! This submodule is re-exported as [`crate::wayland::input_method_v3`] for
-//! backward compatibility. Compositors should prefer the unified
-//! [`super::InputMethodHandle`] and [`super::InputMethodHandler`].
 
 use wayland_server::{
     backend::GlobalId, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
@@ -23,9 +19,7 @@ use crate::{
 
 pub(crate) use input_method_handle::{InputMethodUserData, V3InputMethodHandle};
 
-pub use super::InputMethodHandler;
-
-use super::InputMethodHandle;
+use super::{InputMethodHandle, InputMethodHandler};
 use crate::wayland::text_input::TextInputHandle;
 
 const MANAGER_VERSION: u32 = 2;
@@ -39,7 +33,7 @@ mod input_method_popup_surface;
 mod positioner;
 
 pub use input_method_popup_surface::{
-    InputMethodPopupSurfaceUserData, PopupParent, PopupSurface, PopupSurfaceState,
+    InputMethodPopupSurfaceUserData, PopupSurface, PopupSurfaceState,
 };
 pub use positioner::{PositionerState, PositionerUserData};
 
@@ -175,15 +169,4 @@ where
             _ => unreachable!(),
         }
     }
-}
-
-#[allow(missing_docs)]
-#[macro_export]
-macro_rules! delegate_input_method_manager_v3 {
-    ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
-        $crate::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::reexports::wayland_protocols::wp::input_method::zv3::server::zwp_input_method_manager_v3::ZwpInputMethodManagerV3:
-            $crate::wayland::input_method::v3::InputMethodManagerGlobalData
-        ] => $crate::wayland::input_method::v3::InputMethodManagerState);
-    };
 }

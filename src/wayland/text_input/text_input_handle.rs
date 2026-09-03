@@ -294,21 +294,19 @@ where
                 }
 
                 if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
-                    self.input_method
-                        .forward_surrounding_text(text, cursor, anchor);
+                    self.input_method.surrounding_text(text, cursor, anchor);
                 }
 
                 if let Some(cause) = new_state.text_change_cause.take() {
-                    self.input_method.forward_text_change_cause(cause);
+                    self.input_method.text_change_cause(cause);
                 }
 
                 if let Some((hint, purpose)) = new_state.content_type.take() {
-                    self.input_method.forward_content_type(hint, purpose);
+                    self.input_method.content_type(hint, purpose);
                 }
 
                 if let Some(rect) = new_state.cursor_rectangle.take() {
-                    self.input_method
-                        .forward_cursor_rectangle::<D>(state, rect);
+                    self.input_method.cursor_rectangle::<D>(state, rect);
                 }
 
                 self.input_method

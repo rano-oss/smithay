@@ -1,10 +1,59 @@
 //! Utilities for input method support
 //!
-//! This module provides utilities to handle input methods (v2 and v3 protocols).
-//! It must be used in conjunction with the text input module.
+//! This module provides you with utilities to handle input methods,
+//! it must be used in conjunction with the text input module to work.
 //!
-//! Compositors interact with a single [`InputMethodHandle`] per seat; individual
-//! protocol versions live in [`v2`] and [`v3`].
+//! ```
+//! use smithay::input::{Seat, SeatState, SeatHandler, pointer::CursorImageStatus};
+//! # use smithay::wayland::compositor::{CompositorHandler, CompositorState, CompositorClientState};
+//! use smithay::wayland::input_method::{InputMethodHandler, InputMethodManagerState, InputMethodPopup};
+//! use smithay::wayland::text_input::TextInputManagerState;
+//! use smithay::reexports::wayland_server::{Display, protocol::wl_surface::WlSurface};
+//! # use smithay::reexports::wayland_server::Client;
+//! use smithay::utils::{Rectangle, Logical};
+//!
+//! # struct State { seat_state: SeatState<Self> };
+//!
+//! impl InputMethodHandler for State {
+//!     fn new_popup(&mut self, surface: InputMethodPopup) {}
+//!     fn dismiss_popup(&mut self, surface: InputMethodPopup) {}
+//!     fn popup_repositioned(&mut self, surface: InputMethodPopup) {}
+//!     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, Logical> {
+//!         Rectangle::default()
+//!     }
+//! }
+//!
+//! smithay::delegate_dispatch2!(State);
+//!
+//! # let mut display = wayland_server::Display::<State>::new().unwrap();
+//! # let display_handle = display.handle();
+//!
+//! let mut seat_state = SeatState::<State>::new();
+//!
+//! // implement the required traits
+//! impl SeatHandler for State {
+//!     type KeyboardFocus = WlSurface;
+//!     type PointerFocus = WlSurface;
+//!     type TouchFocus = WlSurface;
+//!     fn seat_state(&mut self) -> &mut SeatState<Self> {
+//!         &mut self.seat_state
+//!     }
+//!     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) { unimplemented!() }
+//!     fn cursor_image(&mut self, seat: &Seat<Self>, image: CursorImageStatus) { unimplemented!() }
+//! }
+//!
+//! # impl CompositorHandler for State {
+//! #     fn compositor_state(&mut self) -> &mut CompositorState { unimplemented!() }
+//! #     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState { unimplemented!() }
+//! #     fn commit(&mut self, surface: &WlSurface) {}
+//! # }
+//!
+//! // Add the seat state to your state and create manager globals
+//! InputMethodManagerState::new::<State, _>(&display_handle, |_client| true);
+//! // Add text input capabilities, needed for the input method to work
+//! TextInputManagerState::new::<State>(&display_handle);
+//!
+//! ```
 
 use wayland_server::{Client, DisplayHandle, protocol::wl_surface::WlSurface};
 
@@ -15,22 +64,27 @@ use crate::{
 
 mod handle;
 mod popup;
-mod text_input_sync;
-
-pub mod v2;
-pub mod v3;
+mod v2;
+mod v3;
 
 pub use handle::InputMethodHandle;
 pub use popup::InputMethodPopup;
 
-// Backward-compatible re-exports of v2 types at the module root.
 pub use v2::{
     InputMethodKeyboardGrab, InputMethodKeyboardUserData, InputMethodManagerGlobalData,
     InputMethodManagerState, InputMethodPopupSurfaceUserData, InputMethodUserData, PopupParent,
     PopupSurface, INPUT_POPUP_SURFACE_ROLE,
 };
 
-/// Compositor hooks for input-method popup surfaces from either protocol version.
+pub use v3::{
+    InputMethodManagerGlobalData as InputMethodManagerGlobalDataV3,
+    InputMethodManagerState as InputMethodManagerStateV3, PopupSurfaceState, PositionerState,
+    PositionerUserData,
+};
+
+pub(crate) use v3::InputMethodUserData as InputMethodV3UserData;
+
+/// Adds input method popup to compositor state
 pub trait InputMethodHandler {
     /// Add a popup surface to compositor state.
     fn new_popup(&mut self, surface: InputMethodPopup);
@@ -41,40 +95,47 @@ pub trait InputMethodHandler {
     /// Popup location has changed.
     fn popup_repositioned(&mut self, surface: InputMethodPopup);
 
-    /// Sets the parent location so the popup surface can be placed correctly.
+    /// Sets the parent location so the popup surface can be placed correctly
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, Logical>;
 
-    /// v3: compute popup geometry from cursor rect and positioner.
+    /// Returns the position of the popup, given the cursor rectangle expressed in position relative to surface.
+    /// This may be called while locks on some input-method objects are held.
     fn popup_geometry(
         &self,
         _parent: &WlSurface,
         _cursor: &Rectangle<i32, Logical>,
-        _positioner: &v3::PositionerState,
+        _positioner: &PositionerState,
     ) -> Rectangle<i32, Logical> {
         Rectangle::default()
     }
 
-    /// v3: resolve app_id for an input method client from security context.
+    /// Returns the app_id for an input method client.
+    ///
+    /// Typically resolved from the client's security context.
+    /// If `None` is returned, the input method instance will not be registered.
     fn input_method_app_id(&self, _client: &Client, _dh: &DisplayHandle) -> Option<String> {
         None
     }
 
-    /// v3: called when a new input method instance registers.
+    /// Called when a new input method instance registers with the compositor.
+    ///
+    /// This allows the compositor to sync state (e.g. activate the correct IME for the current layout).
     fn input_method_instance_registered(&mut self) {}
 
-    /// v3: optional hook when the client acknowledges a popup configure sequence.
+    /// Optional hook when the client acknowledges a popup configure sequence.
     fn popup_ack_configure(
         &mut self,
         _surface: &WlSurface,
         _serial: Serial,
-        _client_state: v3::PopupSurfaceState,
+        _client_state: PopupSurfaceState,
     ) {
+        // the compositor doesn't need to implement this if it doesn't have a use for it
     }
 }
 
-/// Extends [`Seat`] with input method functionality.
+/// Extends [Seat] with input method functionality
 pub trait InputMethodSeat {
-    /// Get the input method handle associated with this seat.
+    /// Get an input method associated with this seat
     fn input_method(&self) -> &InputMethodHandle;
 }
 
@@ -84,4 +145,15 @@ impl<D: SeatHandler + 'static> InputMethodSeat for Seat<D> {
         user_data.insert_if_missing(InputMethodHandle::default);
         user_data.get::<InputMethodHandle>().unwrap()
     }
+}
+
+#[allow(missing_docs)]
+#[macro_export]
+macro_rules! delegate_input_method_manager_v3 {
+    ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
+        $crate::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
+            $crate::reexports::wayland_protocols::wp::input_method::zv3::server::zwp_input_method_manager_v3::ZwpInputMethodManagerV3:
+            $crate::wayland::input_method::InputMethodManagerGlobalDataV3
+        ] => $crate::wayland::input_method::InputMethodManagerStateV3);
+    };
 }

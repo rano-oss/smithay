@@ -20,7 +20,7 @@ use crate::{
     wayland::{compositor, keyboard_filter, seat::WaylandFocus, text_input::TextInputHandle, Dispatch2},
 };
 
-use super::super::{text_input_sync, InputMethodHandler, InputMethodPopup};
+use super::super::{InputMethodHandler, InputMethodPopup};
 use super::{
     input_method_popup_surface::{ImPopupLocation, PopupParent, PopupSurface},
     positioner::PositionerUserData,
@@ -430,7 +430,9 @@ where
         use zwp_input_method_v3::Request;
         match request {
             Request::CommitString { text } => {
-                text_input_sync::commit_string(&self.text_input_handle, text);
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
+                    ti.commit_string(Some(text.clone()));
+                });
                 let mut inner = self.handle.inner.lock().unwrap();
                 if let Some(active_id) = inner.active_input_method_id.clone() {
                     if let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id)
@@ -506,22 +508,17 @@ where
                     self.handle.done();
                 }
 
-                text_input_sync::set_preedit_string(
-                    &self.text_input_handle,
-                    text,
-                    cursor_begin,
-                    cursor_end,
-                );
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
+                    ti.preedit_string(Some(text.clone()), cursor_begin, cursor_end);
+                });
             }
             Request::DeleteSurroundingText {
                 before_length,
                 after_length,
             } => {
-                text_input_sync::delete_surrounding_text(
-                    &self.text_input_handle,
-                    before_length,
-                    after_length,
-                );
+                self.text_input_handle.with_active_text_input(|ti, _surface| {
+                    ti.delete_surrounding_text(before_length, after_length);
+                });
             }
 
             Request::Commit { serial } => {
@@ -543,11 +540,8 @@ where
                     (instance.serial, defer_done)
                 };
                 if !defer_done {
-                    text_input_sync::commit_done(
-                        &self.text_input_handle,
-                        serial,
-                        current_serial,
-                    );
+                    self.text_input_handle
+                        .done(serial != current_serial);
                 }
             }
             Request::PerformAction { action } => {

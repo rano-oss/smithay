@@ -106,16 +106,9 @@ impl From<InputMethodPopup> for PopupKind {
     }
 }
 
-impl From<input_method::v2::PopupSurface> for PopupKind {
+impl From<input_method::PopupSurface> for PopupKind {
     #[inline]
-    fn from(p: input_method::v2::PopupSurface) -> PopupKind {
-        PopupKind::InputMethod(p.into())
-    }
-}
-
-impl From<input_method::v3::PopupSurface> for PopupKind {
-    #[inline]
-    fn from(p: input_method::v3::PopupSurface) -> PopupKind {
+    fn from(p: input_method::PopupSurface) -> PopupKind {
         PopupKind::InputMethod(p.into())
     }
 }
