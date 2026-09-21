@@ -422,17 +422,72 @@ pub enum Error {
     IoError(io::Error),
 }
 
+#[cfg(feature = "wayland_frontend")]
+use wayland_server::protocol::{wl_keyboard, wl_surface};
+
+#[cfg(feature = "wayland_frontend")]
+pub(crate) trait WlKeyboardApi {
+    fn keymap(&self, format: wl_keyboard::KeymapFormat, fd: ::std::os::unix::io::BorrowedFd<'_>, size: u32);
+    fn enter(&self, serial: u32, surface: &wl_surface::WlSurface, keys: Vec<u8>);
+    fn leave(&self, serial: u32, surface: &wl_surface::WlSurface);
+    fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState);
+    fn modifiers(&self, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32);
+    fn repeat_info(&self, rate: i32, delay: i32);
+    fn protocol_version(&self) -> u32;
+}
+
+#[cfg(feature = "wayland_frontend")]
+impl WlKeyboardApi for wl_keyboard::WlKeyboard {
+    fn keymap(&self, format: wl_keyboard::KeymapFormat, fd: ::std::os::unix::io::BorrowedFd<'_>, size: u32) {
+        Self::keymap(self, format, fd, size)
+    }
+
+    fn enter(&self, serial: u32, surface: &wl_surface::WlSurface, keys: Vec<u8>) {
+        Self::enter(self, serial, surface, keys)
+    }
+
+    fn leave(&self, serial: u32, surface: &wl_surface::WlSurface) {
+        Self::leave(self, serial, surface)
+    }
+
+    fn key(&self, serial: u32, time: u32, key: u32, state: wl_keyboard::KeyState) {
+        Self::key(self, serial, time, key, state)
+    }
+
+    fn modifiers(&self, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) {
+        Self::modifiers(self, serial, mods_depressed, mods_latched, mods_locked, group)
+    }
+
+    fn repeat_info(&self, rate: i32, delay: i32) {
+        Self::repeat_info(self, rate, delay)
+    }
+
+    fn protocol_version(&self) -> u32 {
+        Resource::version(self)
+    }
+}
+
 pub(crate) struct KbdRc<D: SeatHandler> {
     pub(crate) internal: Mutex<KbdInternal<D>>,
     #[cfg(feature = "wayland_frontend")]
     pub(crate) keymap: Mutex<KeymapFile>,
     #[cfg(feature = "wayland_frontend")]
-    pub(crate) known_kbds: Mutex<Vec<Weak<wayland_server::protocol::wl_keyboard::WlKeyboard>>>,
+    pub(crate) known_kbds: Arc<Mutex<Vec<Weak<wl_keyboard::WlKeyboard>>>>,
+    /// When set, keyboard events are routed through this object (used by IME keyboard filtering).
+    #[cfg(feature = "wayland_frontend")]
+    pub(crate) kbd_interceptor: Mutex<Option<Box<dyn WlKeyboardApi + Send + Sync>>>,
     #[cfg(feature = "wayland_frontend")]
     pub(crate) last_enter: Mutex<Option<Serial>>,
     pub(crate) span: tracing::Span,
     #[cfg(feature = "wayland_frontend")]
     pub(crate) active_keymap: RwLock<KeymapFileId>,
+}
+
+#[cfg(feature = "wayland_frontend")]
+impl<D: SeatHandler> KbdRc<D> {
+    pub(crate) fn clear_kbd_interceptor(&self) {
+        *self.kbd_interceptor.lock().unwrap() = None;
+    }
 }
 
 #[cfg(not(feature = "wayland_frontend"))]
@@ -770,7 +825,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 keymap: Mutex::new(keymap_file),
                 internal: Mutex::new(internal),
                 #[cfg(feature = "wayland_frontend")]
-                known_kbds: Mutex::new(Vec::new()),
+                known_kbds: Arc::new(Mutex::new(Vec::new())),
+                #[cfg(feature = "wayland_frontend")]
+                kbd_interceptor: Mutex::new(None),
                 #[cfg(feature = "wayland_frontend")]
                 last_enter: Mutex::new(None),
                 #[cfg(feature = "wayland_frontend")]
@@ -819,13 +876,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         *self.arc.active_keymap.write().unwrap() = new_id;
 
         // Update keymap for every wl_keyboard.
-        let known_kbds = &self.arc.known_kbds;
-        for kbd in &*known_kbds.lock().unwrap() {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
-
-            let res = keymap_file.with_fd(kbd.version() >= 7, |fd, size| {
+        let kbd_interceptor = &self.arc.kbd_interceptor;
+        if let Some(kbd) = kbd_interceptor.lock().unwrap().as_ref() {
+            let res = keymap_file.with_fd(kbd.protocol_version() >= 7, |fd, size| {
                 kbd.keymap(KeymapFormat::XkbV1, fd.as_fd(), size as u32)
             });
             if let Err(e) = res {
@@ -833,6 +886,23 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                     err = ?e,
                     "Failed to send keymap to client"
                 );
+            }
+        } else {
+            let known_kbds = &self.arc.known_kbds;
+            for kbd in &*known_kbds.lock().unwrap() {
+                let Ok(kbd) = kbd.upgrade() else {
+                    continue;
+                };
+
+                let res = keymap_file.with_fd(kbd.version() >= 7, |fd, size| {
+                    kbd.keymap(KeymapFormat::XkbV1, fd.as_fd(), size as u32)
+                });
+                if let Err(e) = res {
+                    warn!(
+                        err = ?e,
+                        "Failed to send keymap to client"
+                    );
+                }
             }
         }
 
@@ -1324,12 +1394,22 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         guard.repeat_delay = delay;
         guard.repeat_rate = rate;
         #[cfg(feature = "wayland_frontend")]
-        for kbd in &*self.arc.known_kbds.lock().unwrap() {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
-            if kbd.version() >= 4 {
-                kbd.repeat_info(rate, delay);
+        {
+            let kbd_interceptor = &self.arc.kbd_interceptor;
+            if let Some(kbd) = kbd_interceptor.lock().unwrap().as_ref() {
+                if kbd.protocol_version() >= 4 {
+                    kbd.repeat_info(rate, delay);
+                }
+            } else {
+                let known_kbds = &self.arc.known_kbds;
+                for kbd in &*known_kbds.lock().unwrap() {
+                    let Ok(kbd) = kbd.upgrade() else {
+                        continue;
+                    };
+                    if kbd.version() >= 4 {
+                        kbd.repeat_info(rate, delay);
+                    }
+                }
             }
         }
     }

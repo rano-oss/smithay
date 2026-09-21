@@ -15,7 +15,7 @@ use crate::{
     backend::input::{InputTime, KeyState, Keycode},
     input::{
         Seat, SeatHandler, WeakSeat,
-        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState},
+        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
     },
     utils::{HookId, Serial, iter::new_locked_obj_iter_from_vec},
     wayland::{
@@ -148,17 +148,22 @@ where
 pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
     seat: &Seat<D>,
     surface: &WlSurface,
-    mut f: impl FnMut(WlKeyboard),
+    mut f: impl FnMut(&dyn WlKeyboardApi),
 ) {
     if let Some(keyboard) = seat.get_keyboard() {
-        let inner = keyboard.arc.known_kbds.lock().unwrap();
-        for kbd in &*inner {
+        let kbd_interceptor = &keyboard.arc.kbd_interceptor;
+        if let Some(kbd) = kbd_interceptor.lock().unwrap().as_ref() {
+            f(kbd.as_ref());
+            return;
+        }
+        let known_kbds = &keyboard.arc.known_kbds;
+        for kbd in &*known_kbds.lock().unwrap() {
             let Ok(kbd) = kbd.upgrade() else {
                 continue;
             };
 
             if kbd.id().same_client_as(&surface.id()) {
-                f(kbd.clone())
+                f(&kbd);
             }
         }
     }
@@ -245,10 +250,6 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     let text_input = seat.text_input();
     let input_method = seat.input_method();
 
-    if input_method.has_instance() {
-        input_method.deactivate_input_method(state);
-    }
-
     // NOTE: Always set focus regardless whether the client actually has the
     // text-input global bound due to clients doing lazy global binding.
     text_input.set_focus(Some(surface.clone()));
@@ -257,6 +258,7 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     // as the input method for this seat.
     if input_method.has_instance() || text_input.compositor_input_method() {
         text_input.enter();
+        input_method.activate_input_method(state, surface);
     }
 }
 
@@ -279,6 +281,8 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
 
         let text_input = seat.text_input();
         let input_method = seat.input_method();
+
+        input_method.deactivate_input_method(state);
 
         if input_method.has_instance() {
             input_method.deactivate_input_method(state);

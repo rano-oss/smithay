@@ -10,7 +10,10 @@ use wayland_server::{Resource, protocol::wl_surface::WlSurface};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::{Dispatch2, input_method::InputMethodHandle};
+use crate::wayland::{
+    Dispatch2,
+    input_method::{InputMethodHandle, InputMethodHandler},
+};
 
 #[derive(Default, Debug)]
 pub(crate) struct TextInput {
@@ -35,18 +38,18 @@ impl TextInput {
         };
     }
 
-    fn with_active_text_input<F>(&mut self, mut f: F)
+    fn with_active_text_input<F>(&mut self, mut f: F) -> bool
     where
         F: FnMut(&ZwpTextInputV3, &WlSurface, u32),
     {
         let active_id = match &self.active_text_input_id {
             Some(active_text_input_id) => active_text_input_id,
-            None => return,
+            None => return false,
         };
 
         let surface = match self.focus.as_ref().filter(|surface| surface.is_alive()) {
             Some(surface) => surface,
-            None => return,
+            None => return false,
         };
 
         let surface_id = surface.id();
@@ -57,6 +60,9 @@ impl TextInput {
             .find(|instance| &instance.instance.id() == active_id)
         {
             f(&text_input.instance, surface, text_input.serial);
+            true
+        } else {
+            false
         }
     }
 }
@@ -216,7 +222,7 @@ pub struct TextInputUserData {
 
 impl<D> Dispatch2<ZwpTextInputV3, D> for TextInputUserData
 where
-    D: SeatHandler,
+    D: SeatHandler + InputMethodHandler,
     D: 'static,
 {
     fn request(
@@ -294,9 +300,16 @@ where
                 let _ = pending_state;
                 let active_text_input_id = &mut guard.active_text_input_id;
 
-                if active_text_input_id.is_some() && *active_text_input_id != Some(resource.id()) {
-                    debug!("discarding text_input request since we already have an active one");
-                    return;
+                // Only one text-input may be active, but a stale active_id from a
+                // previous focus client must not block the newly focused client.
+                if let Some(active_id) = active_text_input_id.clone() {
+                    if active_id != resource.id() {
+                        if active_id.same_client_as(&resource.id()) {
+                            debug!("discarding text_input request since we already have an active one");
+                            return;
+                        }
+                        *active_text_input_id = None;
+                    }
                 }
 
                 match new_state.enable {
@@ -304,7 +317,14 @@ where
                         *active_text_input_id = Some(resource.id());
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
-                        self.input_method_handle.activate_input_method(state, &focus);
+                        if self.input_method_handle.has_instance() {
+                            // IME activate + filter are already installed on keyboard
+                            // focus enter; avoid a second activate() which clears the
+                            // IME client's composition buffer. Only (re)install the
+                            // filter when it is missing (e.g. bound after activate).
+                            self.input_method_handle
+                                .activate_keyboard_filter_interceptor::<D>(&focus);
+                        }
                     }
                     Some(false) => {
                         *active_text_input_id = None;
@@ -325,31 +345,22 @@ where
                 }
 
                 if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
-                    self.input_method_handle.with_instance(move |input_method| {
-                        input_method.object.surrounding_text(text, cursor, anchor)
-                    });
+                    self.input_method_handle.surrounding_text(text, cursor, anchor);
                 }
 
                 if let Some(cause) = new_state.text_change_cause.take() {
-                    self.input_method_handle.with_instance(move |input_method| {
-                        input_method.object.text_change_cause(cause);
-                    });
+                    self.input_method_handle.text_change_cause(cause);
                 }
 
                 if let Some((hint, purpose)) = new_state.content_type.take() {
-                    self.input_method_handle.with_instance(move |input_method| {
-                        input_method.object.content_type(hint, purpose);
-                    });
+                    self.input_method_handle.content_type(hint, purpose);
                 }
 
                 if let Some(rect) = new_state.cursor_rectangle.take() {
-                    self.input_method_handle
-                        .set_text_input_rectangle::<D>(state, rect);
+                    self.input_method_handle.cursor_rectangle::<D>(state, rect);
                 }
 
-                self.input_method_handle.with_instance(|input_method| {
-                    input_method.done();
-                });
+                self.input_method_handle.done();
             }
             zwp_text_input_v3::Request::Destroy => {
                 // Nothing to do

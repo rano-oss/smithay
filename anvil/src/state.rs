@@ -59,7 +59,7 @@ use smithay::{
         image_copy_capture::{
             BufferConstraints, Frame, ImageCopyCaptureHandler, ImageCopyCaptureState, Session, SessionRef,
         },
-        input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface},
+        input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface, PositionerState},
         keyboard_shortcuts_inhibit::{
             KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
         },
@@ -346,7 +346,7 @@ impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
     fn popup_repositioned(&mut self, _: PopupSurface) {}
 
     fn dismiss_popup(&mut self, surface: PopupSurface) {
-        if let Some(parent) = surface.get_parent().map(|parent| parent.surface.clone()) {
+        if let Some(parent) = surface.get_parent().map(|parent| parent.surface) {
             let _ = PopupManager::dismiss_popup(&parent, &PopupKind::from(surface));
         }
     }
@@ -356,6 +356,29 @@ impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
             .elements()
             .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
             .unwrap_or_default()
+    }
+
+    fn popup_geometry(
+        &self,
+        parent: &WlSurface,
+        cursor: &Rectangle<i32, smithay::utils::Logical>,
+        positioner: &PositionerState,
+    ) -> Rectangle<i32, smithay::utils::Logical> {
+        let parent_geo = self
+            .space
+            .elements()
+            .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
+            .unwrap_or_default();
+        let target = Rectangle::new((0, 0).into(), parent_geo.size);
+        positioner.get_unconstrained_geometry(*cursor, target)
+    }
+
+    fn input_method_app_id(
+        &self,
+        _client: &smithay::reexports::wayland_server::Client,
+        _dh: &DisplayHandle,
+    ) -> Option<String> {
+        None
     }
 }
 
