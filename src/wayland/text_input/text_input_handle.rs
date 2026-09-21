@@ -248,13 +248,10 @@ where
             return;
         }
 
-        let _focus = match self.handle.focus() {
-            Some(focus) if focus.id().same_client_as(&resource.id()) => focus,
-            _ => {
-                debug!("discarding text-input request for unfocused client");
-                return;
-            }
-        };
+        if let Some(focus) = self.handle.focus().is_some_and(|focus| !focus.id().same_client_as(&resource.id())) {
+            debug!("discarding text-input request for unfocused client");
+            return;
+        }
 
         let mut guard = self.handle.inner.lock().unwrap();
         let pending_state = match guard.instances.iter_mut().find_map(|instance| {
@@ -309,8 +306,6 @@ where
                     Some(true) => {
                         *active_text_input_id = Some(resource.id());
                         // Drop the guard before calling to other subsystem.
-                        // Keyboard filter is installed by input-method activate /
-                        // keyboard-filter bind; do not activate() again here.
                         drop(guard);
                     }
                     Some(false) => {
