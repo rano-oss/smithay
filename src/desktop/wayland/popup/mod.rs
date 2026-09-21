@@ -69,10 +69,7 @@ impl PopupKind {
                     .geometry
                     .unwrap_or_default()
             }),
-            PopupKind::InputMethod(ref t) => t
-                .get_parent()
-                .map(|parent| parent.location)
-                .unwrap_or_default(),
+            PopupKind::InputMethod(ref t) => t.get_parent().map(|parent| parent.location).unwrap_or_default(),
         }
     }
 
