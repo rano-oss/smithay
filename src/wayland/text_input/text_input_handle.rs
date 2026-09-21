@@ -300,21 +300,15 @@ where
                 let _ = pending_state;
                 let active_text_input_id = &mut guard.active_text_input_id;
 
-                // Only one text-input may be active, but a stale active_id from a
-                // previous focus client must not block the newly focused client.
-                if let Some(active_id) = active_text_input_id.clone() {
-                    if active_id != resource.id() {
-                        if active_id.same_client_as(&resource.id()) {
-                            debug!("discarding text_input request since we already have an active one");
-                            return;
-                        }
-                        *active_text_input_id = None;
-                    }
+                if active_text_input_id.is_some() && *active_text_input_id != Some(resource.id()) {
+                    debug!("discarding text_input request since we already have an active one");
+                    return;
                 }
 
                 match new_state.enable {
                     Some(true) => {
                         *active_text_input_id = Some(resource.id());
+                        // Drop the guard before calling to other subsystem.
                         // Keyboard filter is installed by input-method activate /
                         // keyboard-filter bind; do not activate() again here.
                         drop(guard);
