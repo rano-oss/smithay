@@ -3,7 +3,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use wayland_protocols::wp::{input_method::zv3::server::zwp_input_popup_surface_v3::PopupPositionMode, text_input::zv3::server::zwp_text_input_v3::Action};
+use wayland_protocols::wp::{
+    input_method::zv3::server::zwp_input_popup_surface_v3::PopupPositionMode,
+    text_input::zv3::server::zwp_text_input_v3::Action,
+};
 use wayland_protocols::wp::{
     input_method::zv3::server::{
         zwp_input_method_v3::{self, ZwpInputMethodV3},
@@ -97,17 +100,12 @@ impl InputMethodV3Handle {
         let mut inner = self.inner.lock().unwrap();
         inner.instances.retain(|i| i.app_id != app_id);
         if let Some(active_id) = inner.active_input_method_id.clone() {
-            let active_still_exists = inner
-                .instances
-                .iter()
-                .any(|i| i.object.id() == active_id);
+            let active_still_exists = inner.instances.iter().any(|i| i.object.id() == active_id);
             if !active_still_exists {
                 inner.active_input_method_id = None;
             }
         }
-        let cursor = inner
-            .last_cursor_rectangle
-            .unwrap_or_default();
+        let cursor = inner.last_cursor_rectangle.unwrap_or_default();
         inner.instances.push(InputMethod {
             object: instance.clone(),
             serial: 0,
@@ -214,11 +212,7 @@ impl InputMethodV3Handle {
         let Some(active_id) = inner.active_input_method_id.clone() else {
             return;
         };
-        let Some(instance) = inner
-            .instances
-            .iter_mut()
-            .find(|i| i.object.id() == active_id)
-        else {
+        let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
             return;
         };
         instance.text_input_rectangle = cursor;
@@ -263,11 +257,7 @@ impl InputMethodV3Handle {
         let Some(active_id) = inner.active_input_method_id.clone() else {
             return;
         };
-        let Some(instance) = inner
-            .instances
-            .iter_mut()
-            .find(|i| i.object.id() == active_id)
-        else {
+        let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
             return;
         };
 
@@ -297,11 +287,7 @@ impl InputMethodV3Handle {
         let Some(active_id) = inner.active_input_method_id.clone() else {
             return;
         };
-        let Some(instance) = inner
-            .instances
-            .iter_mut()
-            .find(|i| i.object.id() == active_id)
-        else {
+        let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
             return;
         };
         for popup_surface in &mut instance.popup_handles {
@@ -475,11 +461,7 @@ where
                 let Some(active_id) = inner.active_input_method_id.clone() else {
                     return;
                 };
-                let Some(instance) = inner
-                    .instances
-                    .iter_mut()
-                    .find(|i| i.object.id() == active_id)
-                else {
+                let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
                     return;
                 };
 
@@ -517,10 +499,7 @@ where
                         let Some(active_id) = inner.active_input_method_id.clone() else {
                             continue;
                         };
-                        let Some(instance) = inner
-                            .instances
-                            .iter_mut()
-                            .find(|i| i.object.id() == active_id)
+                        let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id)
                         else {
                             continue;
                         };
@@ -590,9 +569,7 @@ where
 
                 // Race: focus may have been lost after the client decided to create a popup.
                 let Some(parent_surface) = self.text_input_handle.focus().clone() else {
-                    tracing::warn!(
-                        "Ignoring popup creation: no surface in text input focus (likely race)"
-                    );
+                    tracing::warn!("Ignoring popup creation: no surface in text input focus (likely race)");
                     return;
                 };
 
@@ -622,11 +599,7 @@ where
                 };
 
                 let mut inner = self.handle.inner.lock().unwrap();
-                let Some(instance) = inner
-                    .instances
-                    .iter_mut()
-                    .find(|i| i.object.id() == active_id)
-                else {
+                let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
                     return;
                 };
                 instance.text_input_rectangle = cursor;
@@ -683,7 +656,5 @@ where
             });
             self.text_input_handle.done(false);
         }
-
     }
 }
-

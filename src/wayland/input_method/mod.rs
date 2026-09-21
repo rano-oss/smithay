@@ -80,9 +80,7 @@ pub use v2::{
     InputMethodUserData,
 };
 
-pub use v3::{
-    InputMethodManagerState, PopupSurfaceState, PositionerState, PositionerUserData,
-};
+pub use v3::{InputMethodManagerState, PopupSurfaceState, PositionerState, PositionerUserData};
 
 pub(crate) use v3::InputMethodUserData as InputMethodV3UserData;
 
@@ -127,11 +125,8 @@ pub trait InputMethodHandler {
     /// Use this to select the active instance for compositor policy (e.g. layout → IME map)
     /// via [`InputMethodHandle::set_active_instance`] with `sync: false`.
     /// Smithay calls [`InputMethodHandle::sync_activation`] after this hook.
-    fn input_method_instance_registered(
-        &mut self,
-        _seat: &crate::input::Seat<Self>,
-        _app_id: &str,
-    ) where
+    fn input_method_instance_registered(&mut self, _seat: &crate::input::Seat<Self>, _app_id: &str)
+    where
         Self: crate::input::SeatHandler,
     {
     }
