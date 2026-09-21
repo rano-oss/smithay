@@ -26,12 +26,12 @@ pub struct InputMethodHandle {
 
 impl InputMethodHandle {
     /// Whether there's an active instance of input-method.
-    pub(crate) fn has_instance(&self) -> bool {
+    pub fn has_instance(&self) -> bool {
         self.v2.has_instance() || self.v3.has_active_instance()
     }
 
     /// Whether any input method client has registered, even if not currently selected.
-    pub(crate) fn has_registered_instance(&self) -> bool {
+    pub fn has_registered_instance(&self) -> bool {
         self.v2.has_instance() || self.v3.has_registered_instances()
     }
 

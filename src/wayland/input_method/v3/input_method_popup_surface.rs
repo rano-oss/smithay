@@ -251,7 +251,7 @@ impl InputMethodPopupSurfaceUserData {
             surface,
             configure,
             acked_state,
-            positioner
+            positioner,
         }
     }
 }
@@ -297,8 +297,7 @@ where
 
                 let mut inner = im.handle.inner.lock().unwrap();
                 let owner_id = self.input_method.id();
-                let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == owner_id)
-                else {
+                let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == owner_id) else {
                     return;
                 };
                 let Some(popup) = instance
@@ -318,15 +317,12 @@ where
                 } else {
                     popup.anchored_cursor_rectangle
                 };
-                let parent_surface = cursor
-                    .as_ref()
-                    .map(|_| popup.get_parent().surface.clone());
+                let parent_surface = cursor.as_ref().map(|_| popup.get_parent().surface.clone());
                 let popup = popup.clone();
                 drop(inner);
 
                 if let (Some(cursor), Some(parent_surface)) = (cursor, parent_surface) {
-                    let popup_geometry =
-                        state.popup_geometry(&parent_surface, &cursor, &positioner);
+                    let popup_geometry = state.popup_geometry(&parent_surface, &cursor, &positioner);
                     popup.set_position(PopupLocation {
                         anchor: cursor,
                         geometry: popup_geometry,
@@ -341,8 +337,7 @@ where
                 let im: &InputMethodUserData<D> = self.input_method.data().unwrap();
                 let mut inner = im.handle.inner.lock().unwrap();
                 let owner_id = self.input_method.id();
-                let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == owner_id)
-                else {
+                let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == owner_id) else {
                     return;
                 };
                 let Some(popup) = instance
