@@ -55,15 +55,6 @@ impl InputMethodHandle {
         }
     }
 
-    /// Ensure the keyboard filter interceptor after text-input has been enabled.
-    ///
-    /// No-op when the interceptor is already active for this surface.
-    pub fn activate_keyboard_filter_interceptor<D: SeatHandler + 'static>(&self, surface: &WlSurface) {
-        if self.v3.has_active_instance() {
-            self.v3.activate_keyboard_filter_interceptor::<D>(surface);
-        }
-    }
-
     pub(crate) fn surrounding_text(&self, text: String, cursor: u32, anchor: u32) {
         let text_clone = text.clone();
         self.v2.with_instance(move |input_method| {

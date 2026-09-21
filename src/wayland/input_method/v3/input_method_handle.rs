@@ -337,7 +337,7 @@ impl InputMethodV3Handle {
                 keyboard_filter
                     .data::<KeyboardFilterUserData<D>>()
                     .unwrap()
-                    .activate_interceptor(surface);
+                    .ensure_interceptor(surface);
             }
         });
     }
@@ -347,7 +347,10 @@ impl InputMethodV3Handle {
     /// Skips reinstall when already active for the same surface (common after
     /// keyboard-enter activate). Still installs when activate ran before the
     /// filter was bound.
-    pub fn activate_keyboard_filter_interceptor<D: SeatHandler + 'static>(&self, surface: &WlSurface) {
+    pub(crate) fn ensure_keyboard_filter_interceptor<D: SeatHandler + 'static>(
+        &self,
+        surface: &WlSurface,
+    ) {
         self.with_instance(|im| {
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
             if let Some(keyboard_filter) = data.keyboard_filter.lock().unwrap().as_ref() {
@@ -393,7 +396,7 @@ impl InputMethodV3Handle {
 /// User data of ZwpInputMethodV3 object
 #[derive(Clone)]
 pub struct InputMethodUserData<D: SeatHandler> {
-    pub(super) handle: InputMethodV3Handle,
+    pub(crate) handle: InputMethodV3Handle,
     pub(crate) text_input_handle: TextInputHandle,
     /// Handle to main keyboard for registering sub-keyboards
     pub(crate) keyboard_handle: KeyboardHandle<D>,
