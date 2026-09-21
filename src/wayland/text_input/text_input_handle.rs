@@ -38,18 +38,18 @@ impl TextInput {
         };
     }
 
-    fn with_active_text_input<F>(&mut self, mut f: F) -> bool
+    fn with_active_text_input<F>(&mut self, mut f: F)
     where
         F: FnMut(&ZwpTextInputV3, &WlSurface, u32),
     {
         let active_id = match &self.active_text_input_id {
             Some(active_text_input_id) => active_text_input_id,
-            None => return false,
+            None => return,
         };
 
         let surface = match self.focus.as_ref().filter(|surface| surface.is_alive()) {
             Some(surface) => surface,
-            None => return false,
+            None => return,
         };
 
         let surface_id = surface.id();
@@ -60,9 +60,6 @@ impl TextInput {
             .find(|instance| &instance.instance.id() == active_id)
         {
             f(&text_input.instance, surface, text_input.serial);
-            true
-        } else {
-            false
         }
     }
 }
