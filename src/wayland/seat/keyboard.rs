@@ -282,8 +282,6 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
         let text_input = seat.text_input();
         let input_method = seat.input_method();
 
-        input_method.deactivate_input_method(state);
-
         if input_method.has_instance() {
             input_method.deactivate_input_method(state);
         }
