@@ -51,20 +51,6 @@ impl PopupSurface {
         }
     }
 
-    pub(crate) fn parent(&self) -> Option<WlSurface> {
-        self.get_parent().map(|parent| parent.surface)
-    }
-
-    /// Geometry hook used by generic popup rendering.
-    ///
-    /// Returns the parent location rectangle so compositors can use
-    /// `window_loc + popup_offset - geometry().loc` for both v2 and v3.
-    pub(crate) fn geometry(&self) -> Rectangle<i32, Logical> {
-        self.get_parent()
-            .map(|parent| parent.location)
-            .unwrap_or_default()
-    }
-
     /// Location of the popup relative to its parent surface
     pub fn location(&self) -> Point<i32, Logical> {
         match self {
