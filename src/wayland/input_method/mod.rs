@@ -6,7 +6,7 @@
 //! ```
 //! use smithay::input::{Seat, SeatState, SeatHandler, pointer::CursorImageStatus};
 //! # use smithay::wayland::compositor::{CompositorHandler, CompositorState, CompositorClientState};
-//! use smithay::wayland::input_method::{InputMethodManagerState, InputMethodHandler, PopupSurface};
+//! use smithay::wayland::input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface};
 //! use smithay::wayland::text_input::TextInputManagerState;
 //! use smithay::reexports::wayland_server::{Display, protocol::wl_surface::WlSurface};
 //! # use smithay::wayland::pointer_constraints::PointerConstraintsHandler;
@@ -57,37 +57,34 @@
 //!
 //! ```
 
-use wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId,
-    protocol::wl_surface::WlSurface,
-};
-
-use wayland_protocols_misc::zwp_input_method_v2::server::{
-    zwp_input_method_manager_v2::{self, ZwpInputMethodManagerV2},
-    zwp_input_method_v2::ZwpInputMethodV2,
-};
+use wayland_server::{Client, DisplayHandle, protocol::wl_surface::WlSurface};
 
 use crate::{
     input::{Seat, SeatHandler},
-    utils::{Logical, Rectangle},
-    wayland::{Dispatch2, GlobalData, GlobalDispatch2},
+    utils::{Logical, Rectangle, Serial},
 };
 
-pub use input_method_handle::{InputMethodHandle, InputMethodUserData};
-pub use input_method_keyboard_grab::{InputMethodKeyboardGrab, InputMethodKeyboardUserData};
-pub use input_method_popup_surface::InputMethodPopupSurfaceUserData;
+mod handle;
+mod manager;
+mod popup;
+mod v2;
+mod v3;
 
-use super::text_input::TextInputHandle;
+pub use handle::InputMethodHandle;
+pub use manager::InputMethodManagerGlobalData;
+pub use popup::{PopupParent, PopupSurface};
 
-const MANAGER_VERSION: u32 = 1;
+pub use v2::{
+    INPUT_POPUP_SURFACE_ROLE, InputMethodKeyboardGrab, InputMethodKeyboardUserData,
+    InputMethodManagerState as InputMethodManagerStateV2, InputMethodPopupSurfaceUserData,
+    InputMethodUserData,
+};
 
-/// The role of the input method popup.
-pub const INPUT_POPUP_SURFACE_ROLE: &str = "zwp_input_popup_surface_v2";
+pub use v3::{
+    InputMethodManagerState, PopupSurfaceState, PositionerState, PositionerUserData,
+};
 
-mod input_method_handle;
-mod input_method_keyboard_grab;
-mod input_method_popup_surface;
-pub use input_method_popup_surface::{PopupParent, PopupSurface};
+pub(crate) use v3::InputMethodUserData as InputMethodV3UserData;
 
 /// Adds input method popup to compositor state
 pub trait InputMethodHandler {
@@ -100,8 +97,54 @@ pub trait InputMethodHandler {
     /// Popup location has changed.
     fn popup_repositioned(&mut self, surface: PopupSurface);
 
+    /// Called after the compositor sends a popup configure due to cursor movement.
+    fn ime_popup_configure_sent(&mut self, _surface: PopupSurface) {}
+
     /// Sets the parent location so the popup surface can be placed correctly
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, Logical>;
+
+    /// Returns the position of the popup, given the cursor rectangle expressed in position relative to surface.
+    /// This may be called while locks on some input-method objects are held.
+    fn popup_geometry(
+        &self,
+        _parent: &WlSurface,
+        _cursor: &Rectangle<i32, Logical>,
+        _positioner: &PositionerState,
+    ) -> Rectangle<i32, Logical> {
+        Rectangle::default()
+    }
+
+    /// Returns the app_id for an input method client.
+    ///
+    /// Typically resolved from the client's security context.
+    /// If `None` is returned, the input method instance will not be registered.
+    fn input_method_app_id(&self, _client: &Client, _dh: &DisplayHandle) -> Option<String> {
+        None
+    }
+
+    /// Called when a new input method instance registers on `seat`.
+    ///
+    /// Use this to select the active instance for compositor policy (e.g. layout → IME map)
+    /// via [`InputMethodHandle::set_active_instance`] with `sync: false`.
+    /// Smithay calls [`InputMethodHandle::sync_activation`] after this hook.
+    fn input_method_instance_registered(
+        &mut self,
+        _seat: &crate::input::Seat<Self>,
+        _app_id: &str,
+    ) where
+        Self: crate::input::SeatHandler,
+    {
+    }
+
+    /// Optional hook when the client acknowledges a popup configure sequence.
+    fn popup_ack_configure(
+        &mut self,
+        _surface: &WlSurface,
+        _serial: Serial,
+        _client_state: PopupSurfaceState,
+    ) {
+        // the compositor doesn't need to implement this if it doesn't have a use for it
+    }
 }
 
 /// Extends [Seat] with input method functionality
@@ -115,115 +158,5 @@ impl<D: SeatHandler + 'static> InputMethodSeat for Seat<D> {
         let user_data = self.user_data();
         user_data.insert_if_missing(InputMethodHandle::default);
         user_data.get::<InputMethodHandle>().unwrap()
-    }
-}
-
-/// Data associated with a InputMethodManager global.
-#[allow(missing_debug_implementations)]
-pub struct InputMethodManagerGlobalData {
-    filter: Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
-}
-
-/// State of wp misc input method protocol
-#[derive(Debug)]
-pub struct InputMethodManagerState {
-    global: GlobalId,
-}
-
-impl InputMethodManagerState {
-    /// Initialize a text input manager global.
-    pub fn new<D, F>(display: &DisplayHandle, filter: F) -> Self
-    where
-        D: GlobalDispatch<ZwpInputMethodManagerV2, InputMethodManagerGlobalData>,
-        D: Dispatch<ZwpInputMethodManagerV2, GlobalData>,
-        D: Dispatch<ZwpInputMethodV2, InputMethodUserData<D>>,
-        D: SeatHandler,
-        D: 'static,
-        F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
-    {
-        let data = InputMethodManagerGlobalData {
-            filter: Box::new(filter),
-        };
-        let global = display.create_global::<D, ZwpInputMethodManagerV2, _>(MANAGER_VERSION, data);
-
-        Self { global }
-    }
-
-    /// Get the id of ZwpTextInputManagerV3 global
-    pub fn global(&self) -> GlobalId {
-        self.global.clone()
-    }
-}
-
-impl<D> GlobalDispatch2<ZwpInputMethodManagerV2, D> for InputMethodManagerGlobalData
-where
-    D: Dispatch<ZwpInputMethodManagerV2, GlobalData>,
-    D: Dispatch<ZwpInputMethodV2, InputMethodUserData<D>>,
-    D: SeatHandler,
-    D: 'static,
-{
-    fn bind(
-        &self,
-        _: &mut D,
-        _: &DisplayHandle,
-        _: &Client,
-        resource: New<ZwpInputMethodManagerV2>,
-        data_init: &mut DataInit<'_, D>,
-    ) {
-        data_init.init(resource, GlobalData);
-    }
-
-    fn can_view(&self, client: &Client) -> bool {
-        (self.filter)(client)
-    }
-}
-
-impl<D> Dispatch2<ZwpInputMethodManagerV2, D> for GlobalData
-where
-    D: Dispatch<ZwpInputMethodV2, InputMethodUserData<D>>,
-    D: SeatHandler + InputMethodHandler,
-    D: 'static,
-{
-    fn request(
-        &self,
-        _state: &mut D,
-        _client: &Client,
-        _: &ZwpInputMethodManagerV2,
-        request: zwp_input_method_manager_v2::Request,
-        _dh: &DisplayHandle,
-        data_init: &mut DataInit<'_, D>,
-    ) {
-        match request {
-            zwp_input_method_manager_v2::Request::GetInputMethod { seat, input_method } => {
-                let seat = Seat::<D>::from_resource(&seat).unwrap();
-
-                let user_data = seat.user_data();
-                user_data.insert_if_missing(TextInputHandle::default);
-                user_data.insert_if_missing(InputMethodHandle::default);
-                let handle = user_data.get::<InputMethodHandle>().unwrap();
-                let text_input_handle = user_data.get::<TextInputHandle>().unwrap();
-                text_input_handle.with_focused_text_input(|ti, surface| {
-                    ti.enter(surface);
-                });
-                let keyboard_handle = seat.get_keyboard().unwrap();
-                let instance = data_init.init(
-                    input_method,
-                    InputMethodUserData {
-                        handle: handle.clone(),
-                        text_input_handle: text_input_handle.clone(),
-                        keyboard_handle,
-                        popup_geometry_callback: D::parent_geometry,
-                        popup_repositioned: D::popup_repositioned,
-                        new_popup: D::new_popup,
-                        dismiss_popup: D::dismiss_popup,
-                    },
-                );
-                handle.add_instance(&instance);
-            }
-            zwp_input_method_manager_v2::Request::Destroy => {
-                // Nothing to do
-            }
-            _ => unreachable!(),
-        }
     }
 }

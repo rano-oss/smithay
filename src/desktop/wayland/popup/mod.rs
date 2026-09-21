@@ -19,7 +19,7 @@ use crate::{
 pub enum PopupKind {
     /// xdg-shell [`PopupSurface`](xdg::PopupSurface)
     Xdg(xdg::PopupSurface),
-    /// input-method [`PopupSurface`](input_method::PopupSurface)
+    /// input-method popup from v2 or v3
     InputMethod(input_method::PopupSurface),
 }
 
@@ -53,7 +53,7 @@ impl PopupKind {
     fn parent(&self) -> Option<WlSurface> {
         match *self {
             PopupKind::Xdg(ref t) => t.get_parent_surface(),
-            PopupKind::InputMethod(ref t) => t.get_parent().map(|parent| parent.surface.clone()),
+            PopupKind::InputMethod(ref t) => t.parent(),
         }
     }
 
@@ -69,14 +69,14 @@ impl PopupKind {
                     .geometry
                     .unwrap_or_default()
             }),
-            PopupKind::InputMethod(ref t) => t.get_parent().map(|parent| parent.location).unwrap_or_default(),
+            PopupKind::InputMethod(ref t) => t.geometry(),
         }
     }
 
     fn send_done(&self) {
         match *self {
             PopupKind::Xdg(ref t) => t.send_popup_done(),
-            PopupKind::InputMethod(_) => {} //Nothing to do the IME takes care of this itself
+            PopupKind::InputMethod(_) => {} // The IME receives a deactivate event which already indicates that the popup is destroyed.
         }
     }
 
