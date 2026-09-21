@@ -248,7 +248,7 @@ where
             return;
         }
 
-        let focus = match self.handle.focus() {
+        let _focus = match self.handle.focus() {
             Some(focus) if focus.id().same_client_as(&resource.id()) => focus,
             _ => {
                 debug!("discarding text-input request for unfocused client");
@@ -315,16 +315,9 @@ where
                 match new_state.enable {
                     Some(true) => {
                         *active_text_input_id = Some(resource.id());
-                        // Drop the guard before calling to other subsystem.
+                        // Keyboard filter is installed by input-method activate /
+                        // keyboard-filter bind; do not activate() again here.
                         drop(guard);
-                        if self.input_method_handle.has_instance() {
-                            // IME activate + filter are already installed on keyboard
-                            // focus enter; avoid a second activate() which clears the
-                            // IME client's composition buffer. Only (re)install the
-                            // filter when it is missing (e.g. bound after activate).
-                            self.input_method_handle
-                                .activate_keyboard_filter_interceptor::<D>(&focus);
-                        }
                     }
                     Some(false) => {
                         *active_text_input_id = None;
