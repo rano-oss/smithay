@@ -324,6 +324,18 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
             );
         })
     }
+
+    fn repeat(&self, seat: &Seat<D>, _data: &mut D, keycode: Keycode, serial: Serial, time: InputTime) {
+        let raw_key = keycode.raw() - 8;
+        for_each_focused_kbds(seat, self, |kbd| {
+            if kbd.protocol_version() >= 10 {
+                kbd.key(serial.into(), time.millis(), raw_key, WlKeyState::Repeated);
+            } else {
+                kbd.key(serial.into(), time.millis(), raw_key, WlKeyState::Pressed);
+                kbd.key(serial.into(), time.millis(), raw_key, WlKeyState::Released);
+            }
+        });
+    }
 }
 
 impl From<KeyState> for WlKeyState {
