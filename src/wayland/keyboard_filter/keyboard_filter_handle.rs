@@ -80,7 +80,7 @@ impl WlKeyboardApi for FilterInterceptor {
 
     fn key(&self, serial: u32, time: u32, key: u32, state: KeyState) {
         self.im_keyboard.key(serial, time, key, state);
-        self.pending_events.lock().unwrap().push_front(BufferedEvent {
+        self.pending_events.lock().unwrap().push_back(BufferedEvent {
             serial,
             time,
             key,
@@ -102,9 +102,7 @@ impl WlKeyboardApi for FilterInterceptor {
     }
 
     fn protocol_version(&self) -> u32 {
-        let mut v = None;
-        self.for_each_client_kbd(|kbd| v = Some(kbd.version()));
-        v.unwrap_or(Resource::version(&self.im_keyboard))
+        Resource::version(&self.im_keyboard)
     }
 }
 
@@ -176,24 +174,20 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
             if !kbd.id().same_client_as(&surface.id()) {
                 continue;
             }
-                match event.state {
+            match event.state {
                 KeyState::Pressed => {
                     held.insert(event.key);
                     kbd.key(event.serial, event.time, event.key, KeyState::Pressed);
                 }
                 KeyState::Released => {
-                    // Skip orphan releases when the press was consumed by the IME.
                     if held.remove(&event.key) {
                         kbd.key(event.serial, event.time, event.key, KeyState::Released);
                     }
                 }
                 KeyState::Repeated => {
                     if held.contains(&event.key) {
-                        // Client already has this key down — Repeated is valid.
                         kbd.key(event.serial, event.time, event.key, KeyState::Repeated);
                     } else {
-                        // Press was consumed by the IME; client never saw Pressed.
-                        // Synthesize one press+release so the app still gets the repeat.
                         kbd.key(event.serial, event.time, event.key, KeyState::Pressed);
                         kbd.key(event.serial, event.time, event.key, KeyState::Released);
                     }
