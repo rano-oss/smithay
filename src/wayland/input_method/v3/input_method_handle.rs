@@ -191,17 +191,14 @@ impl InputMethodV3Handle {
     ///
     /// Needed after layout switches: the newly active IME instance starts with a default
     /// rectangle unless we replay the last cursor position from the focused text field.
-    pub(crate) fn replay_last_cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
-        &self,
-        state: &mut D,
-    ) {
+    pub(crate) fn replay_last_cursor_rectangle<D: SeatHandler + 'static>(&self, state: &mut D) {
         let cursor = self.inner.lock().unwrap().last_cursor_rectangle;
         if let Some(cursor) = cursor {
             self.set_text_input_rectangle(state, cursor);
         }
     }
 
-    pub(crate) fn set_text_input_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
+    pub(crate) fn set_text_input_rectangle<D: SeatHandler + 'static>(
         &self,
         state: &mut D,
         cursor: Rectangle<i32, Logical>,
@@ -217,6 +214,8 @@ impl InputMethodV3Handle {
         };
         instance.text_input_rectangle = cursor;
 
+        let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
+        let popup_geometry = data.popup_geometry;
         // Parent/positioner snapshots only — geometry needs the compositor without this lock.
         let mut pending: Vec<(usize, WlSurface, PositionerState, bool)> = Vec::new();
         for (index, popup) in instance.popup_handles.iter().enumerate() {
@@ -242,7 +241,7 @@ impl InputMethodV3Handle {
 
         let mut applied: Vec<(usize, PopupLocation, bool)> = Vec::new();
         for (index, parent, positioner, set_anchor) in pending {
-            let geometry = state.popup_geometry(&parent, &cursor, &positioner);
+            let geometry = popup_geometry(state, &parent, &cursor, &positioner);
             applied.push((
                 index,
                 PopupLocation {
@@ -282,7 +281,7 @@ impl InputMethodV3Handle {
     }
 
     /// Send pending popup configures and notify the compositor handler.
-    fn send_popup_configures<D: SeatHandler + InputMethodHandler + 'static>(&self, state: &mut D) {
+    fn send_popup_configures<D: SeatHandler + 'static>(&self, state: &mut D) {
         let mut inner = self.inner.lock().unwrap();
         let Some(active_id) = inner.active_input_method_id.clone() else {
             return;
@@ -293,6 +292,11 @@ impl InputMethodV3Handle {
         for popup_surface in &mut instance.popup_handles {
             popup_surface.send_pending_configure();
         }
+        let configure_sent = instance
+            .object
+            .data::<InputMethodUserData<D>>()
+            .unwrap()
+            .ime_popup_configure_sent;
         let popups: Vec<_> = instance
             .popup_handles
             .iter()
@@ -302,7 +306,7 @@ impl InputMethodV3Handle {
         drop(inner);
 
         for popup in popups {
-            state.ime_popup_configure_sent(popup);
+            configure_sent(state, popup);
         }
     }
 
@@ -347,10 +351,7 @@ impl InputMethodV3Handle {
     /// Skips reinstall when already active for the same surface (common after
     /// keyboard-enter activate). Still installs when activate ran before the
     /// filter was bound.
-    pub(crate) fn ensure_keyboard_filter_interceptor<D: SeatHandler + 'static>(
-        &self,
-        surface: &WlSurface,
-    ) {
+    pub(crate) fn ensure_keyboard_filter_interceptor<D: SeatHandler + 'static>(&self, surface: &WlSurface) {
         self.with_instance(|im| {
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
             if let Some(keyboard_filter) = data.keyboard_filter.lock().unwrap().as_ref() {
@@ -402,8 +403,10 @@ pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     /// Currently bound keyboard filter, set by the keyboard_filter protocol.
     pub(crate) keyboard_filter: Arc<Mutex<Option<ZwpKeyboardFilterV1>>>,
-    /// This is just a copy from InputMethodHandler. It's here in order to break the requirement for D: InputMethodHandler on functions that call dismiss_popup.
     pub(crate) dismiss_popup: fn(&mut D, ImPopupSurface),
+    pub(crate) popup_geometry:
+        fn(&D, &WlSurface, &Rectangle<i32, Logical>, &PositionerState) -> Rectangle<i32, Logical>,
+    pub(crate) ime_popup_configure_sent: fn(&mut D, ImPopupSurface),
 }
 
 impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {

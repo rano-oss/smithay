@@ -10,10 +10,7 @@ use wayland_server::{Resource, protocol::wl_surface::WlSurface};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::{
-    Dispatch2,
-    input_method::{InputMethodHandle, InputMethodHandler},
-};
+use crate::wayland::{Dispatch2, input_method::InputMethodHandle};
 
 #[derive(Default, Debug)]
 pub(crate) struct TextInput {
@@ -219,7 +216,7 @@ pub struct TextInputUserData {
 
 impl<D> Dispatch2<ZwpTextInputV3, D> for TextInputUserData
 where
-    D: SeatHandler + InputMethodHandler,
+    D: SeatHandler,
     D: 'static,
 {
     fn request(
@@ -245,7 +242,7 @@ where
             return;
         }
 
-        if let Some(focus) = self.handle.focus().is_some_and(|focus| !focus.id().same_client_as(&resource.id())) {
+        if self.handle.focus().is_none_or(|focus| !focus.id().same_client_as(&resource.id())) {
             debug!("discarding text-input request for unfocused client");
             return;
         }
