@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     sync::{Arc, Mutex},
 };
 
@@ -118,6 +118,8 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) bound_keyboard: WlKeyboard,
     pub(crate) bound_input_method: ZwpInputMethodV3,
     pub(crate) im_surface: WlSurface,
+    /// Keys whose press was forwarded to the focused client (so Repeated is valid).
+    pub(crate) client_held_keys: Mutex<HashSet<u32>>,
 }
 
 impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
@@ -150,6 +152,7 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
     /// Remove interceptor and drop buffered keys.
     pub(crate) fn deactivate_interceptor(&self) {
         self.pending_events.lock().unwrap().clear();
+        self.client_held_keys.lock().unwrap().clear();
         self.keyboard_handle.arc.clear_kbd_interceptor();
     }
 
@@ -165,12 +168,39 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
         let Some(ref surface) = *self.focused_surface.lock().unwrap() else {
             return;
         };
+        let mut held = self.client_held_keys.lock().unwrap();
         for kbd in &*self.keyboard_handle.arc.known_kbds.lock().unwrap() {
             let Ok(kbd) = kbd.upgrade() else {
                 continue;
             };
-            if kbd.id().same_client_as(&surface.id()) {
-                kbd.key(event.serial, event.time, event.key, event.state);
+            if !kbd.id().same_client_as(&surface.id()) {
+                continue;
+            }
+                match event.state {
+                KeyState::Pressed => {
+                    held.insert(event.key);
+                    kbd.key(event.serial, event.time, event.key, KeyState::Pressed);
+                }
+                KeyState::Released => {
+                    // Skip orphan releases when the press was consumed by the IME.
+                    if held.remove(&event.key) {
+                        kbd.key(event.serial, event.time, event.key, KeyState::Released);
+                    }
+                }
+                KeyState::Repeated => {
+                    if held.contains(&event.key) {
+                        // Client already has this key down — Repeated is valid.
+                        kbd.key(event.serial, event.time, event.key, KeyState::Repeated);
+                    } else {
+                        // Press was consumed by the IME; client never saw Pressed.
+                        // Synthesize one press+release so the app still gets the repeat.
+                        kbd.key(event.serial, event.time, event.key, KeyState::Pressed);
+                        kbd.key(event.serial, event.time, event.key, KeyState::Released);
+                    }
+                }
+                _ => {
+                    kbd.key(event.serial, event.time, event.key, event.state);
+                }
             }
         }
     }
