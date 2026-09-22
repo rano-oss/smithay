@@ -767,8 +767,10 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         let mut seat = seat_state.new_wl_seat(&dh, seat_name.clone());
 
         let pointer = seat.add_pointer();
-        seat.add_keyboard(XkbConfig::default(), 200, 25)
+        let keyboard = seat
+            .add_keyboard(XkbConfig::default(), 200, 25)
             .expect("Failed to initialize the keyboard");
+        keyboard.set_compositor_owned_repeat(true);
 
         let keyboard_shortcuts_inhibit_state = KeyboardShortcutsInhibitState::new::<Self>(&dh);
 
