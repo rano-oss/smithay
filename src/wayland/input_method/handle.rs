@@ -83,6 +83,12 @@ impl InputMethodHandle {
         });
     }
 
+    pub(crate) fn set_available_actions(&self, available_actions: Vec<u8>) {
+        self.v3.with_instance(move |input_method| {
+            input_method.object.set_available_actions(available_actions);
+        });
+    }
+
     pub(crate) fn cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,

@@ -62,7 +62,7 @@ pub use text_input_handle::TextInputUserData;
 
 use super::input_method::InputMethodHandle;
 
-const MANAGER_VERSION: u32 = 1;
+const MANAGER_VERSION: u32 = 2;
 
 mod text_input_handle;
 

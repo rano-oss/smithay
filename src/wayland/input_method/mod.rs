@@ -98,6 +98,12 @@ pub trait InputMethodHandler {
     /// Called after the compositor sends a popup configure due to cursor movement.
     fn ime_popup_configure_sent(&mut self, _surface: PopupSurface) {}
 
+    /// Client requested that an on-screen input panel be shown (hint only).
+    fn show_input_panel(&mut self) {}
+
+    /// Client requested that an on-screen input panel be hidden (hint only).
+    fn hide_input_panel(&mut self) {}
+
     /// Sets the parent location so the popup surface can be placed correctly
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, Logical>;
 
