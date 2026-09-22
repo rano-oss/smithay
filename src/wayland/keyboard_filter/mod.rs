@@ -201,9 +201,7 @@ where
                 // If this IME is already active (keyboard focus arrived before the
                 // filter was bound), install the interceptor now.
                 if let Some(focus) = imdata.text_input_handle.focus() {
-                    imdata
-                        .handle
-                        .ensure_keyboard_filter_interceptor::<D>(&focus);
+                    imdata.handle.ensure_keyboard_filter_interceptor::<D>(&focus);
                 }
 
                 {
