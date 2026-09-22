@@ -247,15 +247,6 @@ where
             return;
         }
 
-        if matches!(request, zwp_text_input_v3::Request::ShowInputPanel) {
-            state.show_input_panel();
-            return;
-        }
-        if matches!(request, zwp_text_input_v3::Request::HideInputPanel) {
-            state.hide_input_panel();
-            return;
-        }
-
         let mut guard = self.handle.inner.lock().unwrap();
         let pending_state = match guard.instances.iter_mut().find_map(|instance| {
             if instance.instance == *resource {
@@ -282,10 +273,12 @@ where
                 pending_state.surrounding_text = Some((text, cursor as u32, anchor as u32));
             }
             zwp_text_input_v3::Request::SetTextChangeCause { cause } => {
+                // Guard against clients sending us unknown values from future versions.
                 let cause = cause.into_result().unwrap_or(ChangeCause::Other);
                 pending_state.text_change_cause = Some(cause);
             }
             zwp_text_input_v3::Request::SetContentType { hint, purpose } => {
+                // Guard against clients sending us unknown values from future versions.
                 let hint = ContentHint::from_bits_truncate(u32::from(hint));
                 let purpose = purpose.into_result().unwrap_or(ContentPurpose::Normal);
                 pending_state.content_type = Some((hint, purpose));
@@ -294,7 +287,15 @@ where
                 pending_state.cursor_rectangle = Some(Rectangle::new((x, y).into(), (width, height).into()));
             }
             zwp_text_input_v3::Request::SetAvailableActions { available_actions } => {
-                if !validate_available_actions(&available_actions) {
+                let valid = available_actions.len().is_multiple_of(4)
+                    && {
+                        let mut seen = std::collections::HashSet::new();
+                        available_actions.chunks_exact(4).all(|chunk| {
+                            let action = u32::from_ne_bytes(chunk.try_into().unwrap());
+                            action != Action::None as u32 && seen.insert(action)
+                        })
+                    };
+                if !valid {
                     resource.post_error(
                         zwp_text_input_v3::Error::InvalidAction,
                         "available_actions contains none or duplicates",
@@ -302,6 +303,12 @@ where
                     return;
                 }
                 pending_state.available_actions = Some(available_actions);
+            }
+            zwp_text_input_v3::Request::ShowInputPanel => {
+                state.show_input_panel();
+            }
+            zwp_text_input_v3::Request::HideInputPanel => {
+                state.hide_input_panel();
             }
             zwp_text_input_v3::Request::Commit => {
                 let mut new_state = mem::take(pending_state);
@@ -316,10 +323,12 @@ where
                 match new_state.enable {
                     Some(true) => {
                         *active_text_input_id = Some(resource.id());
+                        // Drop the guard before calling to other subsystem.
                         drop(guard);
                     }
                     Some(false) => {
                         *active_text_input_id = None;
+                        // Drop the guard before calling to other subsystem.
                         drop(guard);
                         self.input_method_handle.deactivate_input_method(state);
                         return;
@@ -329,6 +338,8 @@ where
                             debug!("discarding text_input requests before enabling it");
                             return;
                         }
+
+                        // Drop the guard before calling to other subsystems later on.
                         drop(guard);
                     }
                 }
@@ -355,9 +366,8 @@ where
 
                 self.input_method_handle.done();
             }
-            zwp_text_input_v3::Request::Destroy => {}
-            zwp_text_input_v3::Request::ShowInputPanel | zwp_text_input_v3::Request::HideInputPanel => {
-                unreachable!("handled before pending_state")
+            zwp_text_input_v3::Request::Destroy => {
+                // Nothing to do
             }
             _ => unreachable!(),
         }
@@ -404,19 +414,4 @@ struct TextInputState {
     cursor_rectangle: Option<Rectangle<i32, Logical>>,
     text_change_cause: Option<ChangeCause>,
     available_actions: Option<Vec<u8>>,
-}
-
-/// Protocol: `none` and duplicate actions are invalid.
-fn validate_available_actions(bytes: &[u8]) -> bool {
-    if !bytes.len().is_multiple_of(std::mem::size_of::<u32>()) {
-        return false;
-    }
-    let mut seen = std::collections::HashSet::new();
-    for chunk in bytes.chunks_exact(4) {
-        let action = u32::from_ne_bytes(chunk.try_into().unwrap());
-        if action == Action::None as u32 || !seen.insert(action) {
-            return false;
-        }
-    }
-    true
 }
