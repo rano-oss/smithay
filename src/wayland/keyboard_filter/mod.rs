@@ -5,7 +5,7 @@ mod keyboard_filter_handle;
 pub use keyboard_filter_handle::KeyboardFilterUserData;
 
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     sync::{Arc, Mutex},
 };
 
