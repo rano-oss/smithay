@@ -33,7 +33,7 @@ use super::super::{InputMethodHandler, PopupParent, PopupSurface as ImPopupSurfa
 use super::{
     INPUT_POPUP_SURFACE_ROLE, InputMethodPopupSurfaceUserData,
     input_method_popup_surface::{PopupLocation, PopupSurface},
-    positioner::{PositionerState, PositionerUserData},
+    positioner::PositionerUserData,
 };
 
 /// Result of attempting to select an input method instance by app_id.
@@ -61,8 +61,6 @@ pub(crate) struct InputMethod {
     pub serial: u32,
     pub app_id: String,
     pub popup_handles: Vec<PopupSurface>,
-    /// Relative to surface on which input method is enabled
-    pub text_input_rectangle: Rectangle<i32, Logical>,
 }
 
 impl fmt::Debug for InputMethod {
@@ -72,7 +70,6 @@ impl fmt::Debug for InputMethod {
             .field("serial", &self.serial)
             .field("app_id", &self.app_id)
             .field("popup_handles", &self.popup_handles)
-            .field("text_input_rectangle", &self.text_input_rectangle)
             .finish()
     }
 }
@@ -100,36 +97,30 @@ impl InputMethodV3Handle {
         let mut inner = self.inner.lock().unwrap();
         inner.instances.retain(|i| i.app_id != app_id);
         if let Some(active_id) = inner.active_input_method_id.clone() {
-            let active_still_exists = inner.instances.iter().any(|i| i.object.id() == active_id);
-            if !active_still_exists {
+            if !inner.instances.iter().any(|i| i.object.id() == active_id) {
                 inner.active_input_method_id = None;
             }
         }
-        let cursor = inner.last_cursor_rectangle.unwrap_or_default();
         inner.instances.push(InputMethod {
             object: instance.clone(),
             serial: 0,
             app_id,
             popup_handles: vec![],
-            text_input_rectangle: cursor,
         });
     }
 
-    /// Whether an input method instance is selected to receive protocol traffic.
     pub(crate) fn has_active_instance(&self) -> bool {
         let inner = self.inner.lock().unwrap();
         inner
             .active_input_method_id
             .as_ref()
-            .is_some_and(|active_id| inner.instances.iter().any(|i| i.object.id() == *active_id))
+            .is_some_and(|id| inner.instances.iter().any(|i| i.object.id() == *id))
     }
 
-    /// Whether any input method client has registered with the compositor.
     pub(crate) fn has_registered_instances(&self) -> bool {
         !self.inner.lock().unwrap().instances.is_empty()
     }
 
-    /// Callback function to access the active input method instance.
     pub(crate) fn with_instance<R>(&self, f: impl FnOnce(&mut InputMethod) -> R) -> Option<R> {
         let mut inner = self.inner.lock().unwrap();
         let active_id = inner.active_input_method_id.clone()?;
@@ -140,7 +131,6 @@ impl InputMethodV3Handle {
             .map(f)
     }
 
-    /// App id of the currently selected input method instance, if any.
     pub fn active_app_id(&self) -> Option<String> {
         let inner = self.inner.lock().unwrap();
         let active_id = inner.active_input_method_id.as_ref()?;
@@ -151,8 +141,7 @@ impl InputMethodV3Handle {
             .map(|i| i.app_id.clone())
     }
 
-    /// Set which input method instance should be active by app_id.
-    pub fn set_active_instance<D: SeatHandler + 'static>(
+    pub fn set_active_instance<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,
         app_id: &str,
@@ -170,7 +159,8 @@ impl InputMethodV3Handle {
         let had_active = inner
             .active_input_method_id
             .as_ref()
-            .is_some_and(|active_id| inner.instances.iter().any(|i| i.object.id() == *active_id));
+            .is_some_and(|id| inner.instances.iter().any(|i| i.object.id() == *id));
+        let last_cursor = inner.last_cursor_rectangle;
         drop(inner);
 
         if old_active.as_ref() == Some(&target_id) {
@@ -178,184 +168,116 @@ impl InputMethodV3Handle {
         }
 
         if had_active {
-            // deactivate_input_method locks `inner` internally — must not hold it here.
             self.deactivate_input_method(state);
         }
 
-        let mut inner = self.inner.lock().unwrap();
-        inner.active_input_method_id = Some(target_id);
+        self.inner.lock().unwrap().active_input_method_id = Some(target_id);
+        if let Some(cursor) = last_cursor {
+            self.set_text_input_rectangle(state, cursor);
+        }
         SetActiveInstanceResult::Changed
     }
 
-    /// Re-apply the last known text-input cursor rectangle to the active IME instance.
-    ///
-    /// Needed after layout switches: the newly active IME instance starts with a default
-    /// rectangle unless we replay the last cursor position from the focused text field.
-    pub(crate) fn replay_last_cursor_rectangle<D: SeatHandler + 'static>(&self, state: &mut D) {
-        let cursor = self.inner.lock().unwrap().last_cursor_rectangle;
-        if let Some(cursor) = cursor {
-            self.set_text_input_rectangle(state, cursor);
-        }
-    }
-
-    pub(crate) fn set_text_input_rectangle<D: SeatHandler + 'static>(
+    pub(crate) fn set_text_input_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,
         cursor: Rectangle<i32, Logical>,
     ) {
         let mut inner = self.inner.lock().unwrap();
         inner.last_cursor_rectangle = Some(cursor);
-
         let Some(active_id) = inner.active_input_method_id.clone() else {
             return;
         };
         let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
             return;
         };
-        instance.text_input_rectangle = cursor;
 
-        let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
-        let popup_geometry = data.popup_geometry;
-        // Parent/positioner snapshots only — geometry needs the compositor without this lock.
-        let mut pending: Vec<(usize, WlSurface, PositionerState, bool)> = Vec::new();
+        let mut pending = Vec::new();
         for (index, popup) in instance.popup_handles.iter().enumerate() {
-            if popup.position_mode == PopupPositionMode::StartOfPreedit && popup.awaiting_anchor {
-                if popup.anchored_cursor_rectangle != Some(cursor) {
-                    pending.push((
-                        index,
-                        popup.get_parent().surface.clone(),
-                        popup.positioner(),
-                        true,
-                    ));
-                }
-            } else if popup.position_mode == PopupPositionMode::FollowCursor {
+            let awaiting = popup.position_mode == PopupPositionMode::StartOfPreedit && popup.awaiting_anchor;
+            if popup.position_mode == PopupPositionMode::FollowCursor
+                || (awaiting && popup.anchored_cursor_rectangle != Some(cursor))
+            {
                 pending.push((
                     index,
                     popup.get_parent().surface.clone(),
                     popup.positioner(),
-                    false,
+                    awaiting,
                 ));
             }
         }
         drop(inner);
 
-        let mut applied: Vec<(usize, PopupLocation, bool)> = Vec::new();
+        let mut changed = false;
         for (index, parent, positioner, set_anchor) in pending {
-            let geometry = popup_geometry(state, &parent, &cursor, &positioner);
-            applied.push((
-                index,
-                PopupLocation {
-                    anchor: cursor,
-                    geometry,
-                },
-                set_anchor,
-            ));
-        }
-
-        let mut inner = self.inner.lock().unwrap();
-        let Some(active_id) = inner.active_input_method_id.clone() else {
-            return;
-        };
-        let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
-            return;
-        };
-
-        let mut configure_popups = false;
-        for (index, new_loc, set_anchor) in applied {
-            let Some(popup) = instance.popup_handles.get_mut(index) else {
+            let loc = PopupLocation {
+                anchor: cursor,
+                geometry: state.popup_geometry(&parent, &cursor, &positioner),
+            };
+            let mut inner = self.inner.lock().unwrap();
+            let Some(popup) = inner
+                .instances
+                .iter_mut()
+                .find(|i| i.object.id() == active_id)
+                .and_then(|i| i.popup_handles.get_mut(index))
+            else {
                 continue;
             };
             if set_anchor {
                 popup.anchored_cursor_rectangle = Some(cursor);
             }
-            if popup.current_location() != new_loc {
-                popup.set_position(new_loc);
-                configure_popups = true;
+            if popup.current_location() != loc {
+                popup.set_position(loc);
+                changed = true;
             }
         }
-        drop(inner);
 
-        if configure_popups {
-            self.send_popup_configures(state);
-        }
-    }
-
-    /// Send pending popup configures and notify the compositor handler.
-    fn send_popup_configures<D: SeatHandler + 'static>(&self, state: &mut D) {
-        let mut inner = self.inner.lock().unwrap();
-        let Some(active_id) = inner.active_input_method_id.clone() else {
+        if !changed {
             return;
-        };
-        let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
-            return;
-        };
-        for popup_surface in &mut instance.popup_handles {
-            popup_surface.send_pending_configure();
         }
-        let configure_sent = instance
-            .object
-            .data::<InputMethodUserData<D>>()
-            .unwrap()
-            .ime_popup_configure_sent;
-        let popups: Vec<_> = instance
-            .popup_handles
-            .iter()
-            .cloned()
-            .map(ImPopupSurface::V3)
-            .collect();
-        drop(inner);
-
+        let popups = self
+            .with_instance(|im| {
+                for p in &mut im.popup_handles {
+                    p.send_pending_configure();
+                }
+                im.popup_handles
+                    .iter()
+                    .cloned()
+                    .map(ImPopupSurface::V3)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         for popup in popups {
-            configure_sent(state, popup);
+            state.ime_popup_configure_sent(popup);
         }
     }
 
-    /// Clear the active input method instance.
     pub fn clear_active_instance<D: SeatHandler + 'static>(&self, state: &mut D) {
-        let _app_id = self.active_app_id();
         self.deactivate_input_method(state);
-        let mut inner = self.inner.lock().unwrap();
-        inner.active_input_method_id = None;
+        self.inner.lock().unwrap().active_input_method_id = None;
     }
 
-    /// Send `done` to the active input method instance, incrementing its serial.
     pub(crate) fn done(&self) {
         self.with_instance(|instance| {
-            for popup_surface in &mut instance.popup_handles {
-                popup_surface.send_pending_configure();
+            for popup in &mut instance.popup_handles {
+                popup.send_pending_configure();
             }
             instance.done();
         });
     }
 
-    /// Activate input method on the given surface.
-    ///
-    /// Installs the keyboard filter immediately so key events reach the IME
-    /// instead of leaking to the client as raw key presses. Preedit delivery
-    /// still requires the client to enable text-input.
     pub fn activate_input_method<D: SeatHandler + 'static>(&self, _state: &mut D, surface: &WlSurface) {
         self.with_instance(|im| {
-            let data = im.object.data::<InputMethodUserData<D>>().unwrap();
             im.object.activate();
-            if let Some(keyboard_filter) = data.keyboard_filter.lock().unwrap().as_ref() {
-                keyboard_filter
-                    .data::<KeyboardFilterUserData<D>>()
-                    .unwrap()
-                    .ensure_interceptor(surface);
-            }
         });
+        self.ensure_keyboard_filter_interceptor::<D>(surface);
     }
 
-    /// Ensure the keyboard filter interceptor is installed for `surface`.
-    ///
-    /// Skips reinstall when already active for the same surface (common after
-    /// keyboard-enter activate). Still installs when activate ran before the
-    /// filter was bound.
     pub(crate) fn ensure_keyboard_filter_interceptor<D: SeatHandler + 'static>(&self, surface: &WlSurface) {
         self.with_instance(|im| {
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
-            if let Some(keyboard_filter) = data.keyboard_filter.lock().unwrap().as_ref() {
-                keyboard_filter
+            if let Some(filter) = data.keyboard_filter.lock().unwrap().as_ref() {
+                filter
                     .data::<KeyboardFilterUserData<D>>()
                     .unwrap()
                     .ensure_interceptor(surface);
@@ -363,29 +285,20 @@ impl InputMethodV3Handle {
         });
     }
 
-    /// Deactivate the active input method.
-    ///
-    /// This includes a complete sequence including .done.
-    /// Also clears any active preedit on the text-input client so the app
-    /// doesn't keep showing stale preedit text after the IM is gone.
     pub fn deactivate_input_method<D: SeatHandler + 'static>(&self, state: &mut D) {
         self.with_instance(|im| {
             im.object.deactivate();
             im.done();
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
-            // Clear preedit on the text-input client so the app stops showing it.
-            data.text_input_handle.with_active_text_input(|ti, _surface| {
+            data.text_input_handle.with_active_text_input(|ti, _| {
                 ti.preedit_string(None, -1, -1);
             });
-            // Send done so the client applies the cleared preedit.
             data.text_input_handle.done(false);
-
             for popup in im.popup_handles.drain(..) {
-                (data.dismiss_popup)(state, popup.clone().into());
+                (data.dismiss_popup)(state, popup.into());
             }
-            let filter = data.keyboard_filter.lock().unwrap();
-            if let Some(keyboard_filter) = filter.as_ref() {
-                keyboard_filter
+            if let Some(filter) = data.keyboard_filter.lock().unwrap().as_ref() {
+                filter
                     .data::<KeyboardFilterUserData<D>>()
                     .unwrap()
                     .deactivate_interceptor();
@@ -395,18 +308,13 @@ impl InputMethodV3Handle {
 }
 
 /// User data of ZwpInputMethodV3 object
-#[derive(Clone)]
 pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) handle: InputMethodV3Handle,
     pub(crate) text_input_handle: TextInputHandle,
-    /// Handle to main keyboard for registering sub-keyboards
     pub(crate) keyboard_handle: KeyboardHandle<D>,
-    /// Currently bound keyboard filter, set by the keyboard_filter protocol.
     pub(crate) keyboard_filter: Arc<Mutex<Option<ZwpKeyboardFilterV1>>>,
+    /// Avoids `D: InputMethodHandler` on deactivate (same pattern as v2).
     pub(crate) dismiss_popup: fn(&mut D, ImPopupSurface),
-    pub(crate) popup_geometry:
-        fn(&D, &WlSurface, &Rectangle<i32, Logical>, &PositionerState) -> Rectangle<i32, Logical>,
-    pub(crate) ime_popup_configure_sent: fn(&mut D, ImPopupSurface),
 }
 
 impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
@@ -470,9 +378,8 @@ where
                 let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
                     return;
                 };
-
-                let mut seed_targets: Vec<(usize, WlSurface, PositionerState)> = Vec::new();
-                for (index, popup) in instance.popup_handles.iter_mut().enumerate() {
+                let mut seed = false;
+                for popup in instance.popup_handles.iter_mut() {
                     if popup.position_mode != PopupPositionMode::StartOfPreedit {
                         continue;
                     }
@@ -480,49 +387,20 @@ where
                         popup.awaiting_anchor = true;
                         popup.anchored_cursor_rectangle = None;
                     } else if cursor_begin == 0 && cursor_end == 0 {
-                        // Arm + seed from insertion point so Qt/Kate stay
-                        // stable if they never report a caret-at-0 rect.
+                        // Arm + seed so Qt/Kate stay stable without a caret-at-0 rect.
                         popup.awaiting_anchor = true;
                         if popup.anchored_cursor_rectangle.is_none() && last_cursor.is_some() {
-                            seed_targets.push((
-                                index,
-                                popup.get_parent().surface.clone(),
-                                popup.positioner(),
-                            ));
+                            seed = true;
                         }
                     } else {
                         popup.awaiting_anchor = false;
                     }
                 }
                 drop(inner);
-
-                let mut configure_popups = false;
-                if let Some(seed) = last_cursor {
-                    for (index, parent, positioner) in seed_targets {
-                        let geometry = state.popup_geometry(&parent, &seed, &positioner);
-
-                        let mut inner = self.handle.inner.lock().unwrap();
-                        let Some(active_id) = inner.active_input_method_id.clone() else {
-                            continue;
-                        };
-                        let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id)
-                        else {
-                            continue;
-                        };
-                        let Some(popup) = instance.popup_handles.get_mut(index) else {
-                            continue;
-                        };
-                        popup.anchored_cursor_rectangle = Some(seed);
-                        popup.set_position(PopupLocation {
-                            anchor: seed,
-                            geometry,
-                        });
-                        configure_popups = true;
-                        drop(inner);
+                if seed {
+                    if let Some(cursor) = last_cursor {
+                        self.handle.set_text_input_rectangle(state, cursor);
                     }
-                }
-                if configure_popups {
-                    self.handle.send_popup_configures(state);
                 }
             }
             Request::DeleteSurroundingText {
@@ -556,13 +434,7 @@ where
                 let Some(active_id) = inner.active_input_method_id.clone() else {
                     return;
                 };
-                let last_cursor = inner.last_cursor_rectangle;
-                let fallback_cursor = inner
-                    .instances
-                    .iter()
-                    .find(|i| i.object.id() == active_id)
-                    .map(|i| i.text_input_rectangle)
-                    .unwrap_or_default();
+                let cursor = inner.last_cursor_rectangle.unwrap_or_default();
                 drop(inner);
 
                 if im.id() != active_id {
@@ -597,7 +469,6 @@ where
                     .unwrap();
 
                 let location = state.parent_geometry(&parent_surface);
-                let cursor = last_cursor.unwrap_or(fallback_cursor);
                 let geometry = state.popup_geometry(&parent_surface, &cursor, &positioner_data);
                 let parent = PopupParent {
                     surface: parent_surface,
@@ -608,7 +479,6 @@ where
                 let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
                     return;
                 };
-                instance.text_input_rectangle = cursor;
                 let popup = PopupSurface::new(
                     |data| data_init.init(id, data),
                     im.clone(),
@@ -633,17 +503,11 @@ where
     fn destroyed(&self, _state: &mut D, _client: ClientId, input_method: &ZwpInputMethodV3) {
         let destroyed_id = input_method.id();
         let mut inner = self.handle.inner.lock().unwrap();
-        let _app_id = inner
-            .instances
-            .iter()
-            .find(|inst| inst.object.id() == destroyed_id)
-            .map(|inst| inst.app_id.clone());
         let was_active = inner.active_input_method_id.as_ref() == Some(&destroyed_id);
         if was_active {
             inner.active_input_method_id = None;
         }
         inner.instances.retain(|inst| inst.object.id() != destroyed_id);
-        let _remaining = inner.instances.len();
         drop(inner);
 
         if was_active {

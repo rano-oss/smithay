@@ -10,6 +10,7 @@ use crate::utils::{Logical, Rectangle};
 use crate::wayland::seat::WaylandFocus;
 use crate::wayland::text_input::TextInputSeat;
 
+use super::InputMethodHandler;
 use super::v2::InputMethodV2Handle;
 use super::v3::{InputMethodV3Handle, SetActiveInstanceResult};
 
@@ -82,7 +83,7 @@ impl InputMethodHandle {
         });
     }
 
-    pub(crate) fn cursor_rectangle<D: SeatHandler + 'static>(
+    pub(crate) fn cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,
         rect: Rectangle<i32, Logical>,
@@ -93,11 +94,10 @@ impl InputMethodHandle {
 
     /// Notify the active input method that associated state has been committed.
     ///
-    /// Compositors should call this after repositioning v3 IME popups so pending
-    /// configure events are sent to the client.
+    /// Flushes pending v3 popup configures, then sends protocol `done`.
     pub fn done(&self) {
         self.v2.with_instance(|input_method| input_method.done());
-        self.v3.with_instance(|input_method| input_method.done());
+        self.v3.done();
     }
 
     /// Indicates that an input method has grabbed a keyboard
@@ -130,7 +130,7 @@ impl InputMethodHandle {
     /// (layout switches). When false, only updates the active instance — use from
     /// [`super::InputMethodHandler::input_method_instance_registered`] so smithay can run a
     /// single `sync_activation` afterward.
-    pub fn set_active_instance<D: SeatHandler + 'static>(
+    pub fn set_active_instance<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,
         seat: &Seat<D>,
@@ -143,10 +143,7 @@ impl InputMethodHandle {
         let before = self.active_app_id();
         match self.v3.set_active_instance(state, app_id) {
             SetActiveInstanceResult::NotFound => return false,
-            SetActiveInstanceResult::Unchanged => {}
-            SetActiveInstanceResult::Changed => {
-                self.v3.replay_last_cursor_rectangle(state);
-            }
+            SetActiveInstanceResult::Unchanged | SetActiveInstanceResult::Changed => {}
         }
         if sync && self.active_app_id() != before {
             self.sync_activation(state, seat);

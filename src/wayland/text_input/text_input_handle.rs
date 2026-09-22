@@ -10,7 +10,7 @@ use wayland_server::{Resource, protocol::wl_surface::WlSurface};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::{Dispatch2, input_method::InputMethodHandle};
+use crate::wayland::{Dispatch2, input_method::{InputMethodHandle, InputMethodHandler}};
 
 #[derive(Default, Debug)]
 pub(crate) struct TextInput {
@@ -216,7 +216,7 @@ pub struct TextInputUserData {
 
 impl<D> Dispatch2<ZwpTextInputV3, D> for TextInputUserData
 where
-    D: SeatHandler,
+    D: SeatHandler + InputMethodHandler,
     D: 'static,
 {
     fn request(
