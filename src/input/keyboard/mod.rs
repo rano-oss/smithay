@@ -1300,18 +1300,20 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 let repeats = guard.xkb.lock().unwrap().keymap.key_repeats(keycode);
                 if repeats {
                     let kbd = self.clone();
-                    let rate_duration = Duration::from_millis(rate as _);
+                    // `repeat_rate` is characters per second (wl_keyboard.repeat_info).
+                    let interval_ms = 1000u32 / rate as u32;
+                    let rate_duration = Duration::from_millis(interval_ms as u64);
                     let mut time_ms = time.millis();
                     let mut first_fire = true;
                     let token = loop_handle
                         .insert_source(
-                            calloop::timer::Timer::from_duration(Duration::from_millis(delay as _)),
+                            calloop::timer::Timer::from_duration(Duration::from_millis(delay as u64)),
                             move |_, _, data| {
                                 if first_fire {
                                     time_ms += delay as u32;
                                     first_fire = false;
                                 } else {
-                                    time_ms += rate as u32;
+                                    time_ms += interval_ms;
                                 }
                                 let guard = kbd.arc.internal.lock().unwrap();
                                 if !guard.forwarded_pressed_keys.contains(&keycode) {
