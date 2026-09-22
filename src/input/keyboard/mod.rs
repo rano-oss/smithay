@@ -238,8 +238,7 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     xkb: Arc<Mutex<Xkb>>,
     pub(crate) repeat_rate: i32,
     pub(crate) repeat_delay: i32,
-    /// When true, clients are told `repeat_info(0, 0)` so they disable their own
-    /// timers; the compositor drives repeat via [`KeyboardHandle::manage_key_repeat`].
+    /// Clients get `repeat_info(0, 0)`; compositor drives repeat via `manage_key_repeat`.
     pub(crate) compositor_owned_repeat: bool,
     led_mapping: LedMapping,
     pub(crate) led_state: LedState,
@@ -1270,26 +1269,11 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Start or stop compositor-side key repeat based on key state.
     ///
     /// Only active if the compositor provides a loop handle via [`SeatHandler::loop_handle`].
-    /// Stops any existing repeat timer, then starts a new one for pressed repeatable keys.
-    ///
-    /// When enabled, clients are advertised `repeat_info(0, 0)` so they disable their own
-    /// repeat timers (SCTK / iced); the compositor sends [`KeyboardTarget::repeat`] instead.
     fn manage_key_repeat(&self, data: &mut D, keycode: Keycode, state: KeyState, time: InputTime) {
         let Some(loop_handle) = data.loop_handle() else {
             return;
         };
         let mut guard = self.arc.internal.lock().unwrap();
-        #[cfg(feature = "wayland_frontend")]
-        if !guard.compositor_owned_repeat {
-            guard.compositor_owned_repeat = true;
-            drop(guard);
-            self.send_client_repeat_info(0, 0);
-            guard = self.arc.internal.lock().unwrap();
-        }
-        #[cfg(not(feature = "wayland_frontend"))]
-        {
-            guard.compositor_owned_repeat = true;
-        }
         if let Some(token) = guard.key_repeat_token.take() {
             loop_handle.remove(token);
         }
@@ -1342,20 +1326,6 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         }
     }
 
-    /// Repeat info advertised on `wl_keyboard` objects.
-    ///
-    /// When the compositor owns repeat, this is always `(0, 0)` so clients disable
-    /// their timers; the real rate/delay stay in [`KbdInternal`] for
-    /// [`Self::manage_key_repeat`].
-    #[cfg(feature = "wayland_frontend")]
-    pub(crate) fn advertised_repeat_info(rate: i32, delay: i32, compositor_owned: bool) -> (i32, i32) {
-        if compositor_owned {
-            (0, 0)
-        } else {
-            (rate, delay)
-        }
-    }
-
     #[cfg(feature = "wayland_frontend")]
     fn send_client_repeat_info(&self, rate: i32, delay: i32) {
         let kbd_interceptor = &self.arc.kbd_interceptor;
@@ -1376,11 +1346,8 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         }
     }
 
-    /// Change the repeat info configured for this keyboard.
-    ///
-    /// Updates the compositor-side rate/delay. If compositor-owned repeat is active
-    /// ([`SeatHandler::loop_handle`] / [`Self::set_compositor_owned_repeat`]), clients
-    /// still receive `repeat_info(0, 0)`.
+    /// Change the compositor-side repeat rate/delay. Clients still get `(0, 0)` while
+    /// [`Self::set_compositor_owned_repeat`] is enabled.
     #[instrument(parent = &self.arc.span, skip(self))]
     pub fn change_repeat_info(&self, rate: i32, delay: i32) {
         let mut guard = self.arc.internal.lock().unwrap();
@@ -1388,18 +1355,17 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         guard.repeat_rate = rate;
         #[cfg(feature = "wayland_frontend")]
         {
-            let (client_rate, client_delay) =
-                Self::advertised_repeat_info(rate, delay, guard.compositor_owned_repeat);
+            let (client_rate, client_delay) = if guard.compositor_owned_repeat {
+                (0, 0)
+            } else {
+                (rate, delay)
+            };
             drop(guard);
             self.send_client_repeat_info(client_rate, client_delay);
         }
     }
 
-    /// When enabled, clients receive `repeat_info(0, 0)` and must not run their own
-    /// key-repeat timers; the compositor drives repeat via [`SeatHandler::loop_handle`].
-    ///
-    /// Call this after [`crate::input::Seat::add_keyboard`] when the compositor
-    /// implements [`SeatHandler::loop_handle`].
+    /// Advertise `repeat_info(0, 0)` and drive repeat via [`SeatHandler::loop_handle`].
     #[cfg(feature = "wayland_frontend")]
     pub fn set_compositor_owned_repeat(&self, owned: bool) {
         let mut guard = self.arc.internal.lock().unwrap();
@@ -1407,8 +1373,11 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             return;
         }
         guard.compositor_owned_repeat = owned;
-        let (rate, delay) =
-            Self::advertised_repeat_info(guard.repeat_rate, guard.repeat_delay, owned);
+        let (rate, delay) = if owned {
+            (0, 0)
+        } else {
+            (guard.repeat_rate, guard.repeat_delay)
+        };
         drop(guard);
         self.send_client_repeat_info(rate, delay);
     }
