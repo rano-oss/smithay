@@ -173,6 +173,7 @@ where
                     bound_keyboard: keyboard.clone(),
                     bound_input_method: input_method.clone(),
                     im_surface: surface,
+                    client_held_keys: Mutex::new(HashSet::new()),
                 };
 
                 let keyboard_filter = data_init.init::<ZwpKeyboardFilterV1, _>(extensions, filter_udata);
