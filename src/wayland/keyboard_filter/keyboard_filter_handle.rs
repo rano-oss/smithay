@@ -28,42 +28,28 @@ use super::KeyboardFilterManagerUserDataInner;
 
 #[derive(Debug)]
 pub(crate) struct BufferedEvent {
-    pub(crate) serial: u32,
-    pub(crate) time: u32,
-    pub(crate) key: u32,
-    pub(crate) state: KeyState,
+    serial: u32,
+    time: u32,
+    key: u32,
+    state: KeyState,
 }
 
-/// The interceptor installed in `KeyboardHandle::kbd_interceptor`.
-///
-/// It forwards all events to both:
-/// - The IM client's keyboard (so the IM sees the events)
-/// - A buffer (for key events only, awaiting filter decisions)
-///
-/// Non-key events (enter, leave, modifiers, keymap, repeat_info) are also
-/// forwarded to the real client keyboards immediately.
+/// Seat `kbd_interceptor`: keys go to the IM + buffer; other events fan out to IM and client.
 #[derive(Debug)]
 struct FilterInterceptor {
-    /// IM client's keyboard to forward events to
     im_keyboard: WlKeyboard,
-    /// IM client's surface for enter/leave
     im_surface: WlSurface,
-    /// Real client keyboards to forward filtered events to
     client_keyboards: Arc<Mutex<Vec<Weak<WlKeyboard>>>>,
-    /// Surface the client keyboards are focused on
     focused_surface: WlSurface,
-    /// Key events buffered waiting for filter decision
     pending_events: Arc<Mutex<VecDeque<BufferedEvent>>>,
 }
 
 impl FilterInterceptor {
     fn for_each_client_kbd(&self, mut f: impl FnMut(&WlKeyboard)) {
-        let known_kbds = &self.client_keyboards;
-        for kbd in &*known_kbds.lock().unwrap() {
+        for kbd in &*self.client_keyboards.lock().unwrap() {
             let Ok(kbd) = kbd.upgrade() else {
                 continue;
             };
-
             if kbd.id().same_client_as(&self.focused_surface.id()) {
                 f(&kbd);
             }
@@ -79,23 +65,17 @@ impl WlKeyboardApi for FilterInterceptor {
         size: u32,
     ) {
         self.im_keyboard.keymap(format, fd, size);
-        self.for_each_client_kbd(|kbd| {
-            kbd.keymap(format, fd, size);
-        });
+        self.for_each_client_kbd(|kbd| kbd.keymap(format, fd, size));
     }
 
     fn enter(&self, serial: u32, surface: &WlSurface, keys: Vec<u8>) {
         self.im_keyboard.enter(serial, &self.im_surface, keys.clone());
-        self.for_each_client_kbd(|kbd| {
-            kbd.enter(serial, surface, keys.clone());
-        });
+        self.for_each_client_kbd(|kbd| kbd.enter(serial, surface, keys.clone()));
     }
 
     fn leave(&self, serial: u32, surface: &WlSurface) {
         self.im_keyboard.leave(serial, &self.im_surface);
-        self.for_each_client_kbd(|kbd| {
-            kbd.leave(serial, surface);
-        });
+        self.for_each_client_kbd(|kbd| kbd.leave(serial, surface));
     }
 
     fn key(&self, serial: u32, time: u32, key: u32, state: KeyState) {
@@ -118,26 +98,22 @@ impl WlKeyboardApi for FilterInterceptor {
 
     fn repeat_info(&self, rate: i32, delay: i32) {
         self.im_keyboard.repeat_info(rate, delay);
-        self.for_each_client_kbd(|kbd| {
-            kbd.repeat_info(rate, delay);
-        });
+        self.for_each_client_kbd(|kbd| kbd.repeat_info(rate, delay));
     }
 
     fn protocol_version(&self) -> u32 {
         let mut v = None;
-        self.for_each_client_kbd(|kbd| {
-            v = Some(kbd.version());
-        });
+        self.for_each_client_kbd(|kbd| v = Some(kbd.version()));
         v.unwrap_or(Resource::version(&self.im_keyboard))
     }
 }
 
-/// Data accessible from the ZwpKeyboardFilterV1 object.
+/// User data for a bound `zwp_keyboard_filter_v1`.
 #[derive(Debug)]
 pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     pub(crate) pending_events: Arc<Mutex<VecDeque<BufferedEvent>>>,
-    pub(crate) focused_surface: Arc<Mutex<Option<WlSurface>>>,
+    pub(crate) focused_surface: Mutex<Option<WlSurface>>,
     pub(crate) manager_data: Arc<Mutex<KeyboardFilterManagerUserDataInner>>,
     pub(crate) bound_keyboard: WlKeyboard,
     pub(crate) bound_input_method: ZwpInputMethodV3,
@@ -145,74 +121,57 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
 }
 
 impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
-    /// True when an interceptor is installed for this focused surface.
-    pub(crate) fn interceptor_active_for(&self, focused_surface: &WlSurface) -> bool {
-        let slot = self.keyboard_handle.arc.kbd_interceptor.lock().unwrap();
-        if slot.is_none() {
-            return false;
-        }
-        self.focused_surface
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|s| s.id() == focused_surface.id())
-    }
-
-    /// Activate keyboard interception. Events will be forwarded to the IM keyboard
-    /// and buffered for filter decisions.
-    ///
-    /// `focused_surface` is the surface currently receiving text input (i.e. the app's surface).
-    /// Passthrough events will be forwarded to client keyboards focused on this surface.
+    /// Install interceptor for `focused_surface` (no-op if already active for it).
     pub(crate) fn activate_interceptor(&self, focused_surface: &WlSurface) {
-        *self.focused_surface.lock().unwrap() = Some(focused_surface.clone());
+        {
+            let slot = self.keyboard_handle.arc.kbd_interceptor.lock().unwrap();
+            if slot.is_some()
+                && self
+                    .focused_surface
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|s| s.id() == focused_surface.id())
+            {
+                return;
+            }
+        }
 
-        let interceptor = FilterInterceptor {
+        *self.focused_surface.lock().unwrap() = Some(focused_surface.clone());
+        *self.keyboard_handle.arc.kbd_interceptor.lock().unwrap() = Some(Box::new(FilterInterceptor {
             im_keyboard: self.bound_keyboard.clone(),
             im_surface: self.im_surface.clone(),
             client_keyboards: self.keyboard_handle.arc.known_kbds.clone(),
             focused_surface: focused_surface.clone(),
             pending_events: self.pending_events.clone(),
-        };
-
-        let mut slot = self.keyboard_handle.arc.kbd_interceptor.lock().unwrap();
-        *slot = Some(Box::new(interceptor));
+        }));
     }
 
-    /// Install the interceptor only if missing or focused on a different surface.
-    ///
-    /// Returns `true` when a new interceptor was installed.
-    pub(crate) fn ensure_interceptor(&self, focused_surface: &WlSurface) -> bool {
-        if self.interceptor_active_for(focused_surface) {
-            return false;
-        }
-        self.activate_interceptor(focused_surface);
-        true
-    }
-
-    /// Deactivate keyboard interception and drop buffered events.
+    /// Remove interceptor and drop buffered keys.
     pub(crate) fn deactivate_interceptor(&self) {
         self.pending_events.lock().unwrap().clear();
         self.keyboard_handle.arc.clear_kbd_interceptor();
     }
 
-    /// Forward all buffered key events to the focused client surface.
+    /// Forward buffered keys to the focused client (used on unbind / IM destroy).
     pub(crate) fn flush_pending_passthrough(&self) {
         let mut pending = self.pending_events.lock().unwrap();
-        if let Some(ref surface) = *self.focused_surface.lock().unwrap() {
-            for event in pending.drain(..) {
-                let known_kbds = &self.keyboard_handle.arc.known_kbds;
-                for kbd in &*known_kbds.lock().unwrap() {
-                    let Ok(kbd) = kbd.upgrade() else {
-                        continue;
-                    };
+        for event in pending.drain(..) {
+            self.send_key_to_focused_client(&event);
+        }
+    }
 
-                    if kbd.id().same_client_as(&surface.id()) {
-                        kbd.key(event.serial, event.time, event.key, event.state);
-                    }
-                }
+    fn send_key_to_focused_client(&self, event: &BufferedEvent) {
+        let Some(ref surface) = *self.focused_surface.lock().unwrap() else {
+            return;
+        };
+        for kbd in &*self.keyboard_handle.arc.known_kbds.lock().unwrap() {
+            let Ok(kbd) = kbd.upgrade() else {
+                continue;
+            };
+            if kbd.id().same_client_as(&surface.id()) {
+                kbd.key(event.serial, event.time, event.key, event.state);
             }
-        } else {
-            pending.clear();
         }
     }
 
@@ -252,7 +211,7 @@ where
                 self.detach();
             }
             Request::Filter { serial, action } => {
-                let action = match action {
+                let passthrough = match action {
                     WEnum::Value(FilterAction::Passthrough) => true,
                     WEnum::Value(FilterAction::Consume) => false,
                     WEnum::Value(unk) => {
@@ -266,34 +225,18 @@ where
                 };
 
                 let mut pending = self.pending_events.lock().unwrap();
-                // Find the event matching this serial (events are in reverse order, newest first)
-                if let Some(pos) = pending.iter().position(|e| e.serial == serial) {
-                    let event = pending.remove(pos).unwrap();
-                    if action {
-                        // Passthrough: forward to real client
-                        let focused = self.focused_surface.lock().unwrap();
-                        if let Some(ref surface) = *focused {
-                            let known_kbds = &self.keyboard_handle.arc.known_kbds;
-                            for kbd in &*known_kbds.lock().unwrap() {
-                                let Ok(kbd) = kbd.upgrade() else {
-                                    continue;
-                                };
-
-                                if kbd.id().same_client_as(&surface.id()) {
-                                    kbd.key(event.serial, event.time, event.key, event.state);
-                                }
-                            }
-                        } else {
-                            tracing::warn!("Passthrough failed: no focused_surface!");
-                        }
-                    }
-                    // Consume: just drop the event
-                } else {
+                let Some(pos) = pending.iter().position(|e| e.serial == serial) else {
                     warn!("Filter response for unknown serial {serial}");
                     resource.post_error(
                         zwp_keyboard_filter_v1::Error::InvalidSerial,
                         format!("No pending event with serial {serial}"),
                     );
+                    return;
+                };
+                let event = pending.remove(pos).unwrap();
+                drop(pending);
+                if passthrough {
+                    self.send_key_to_focused_client(&event);
                 }
             }
             _ => {}
