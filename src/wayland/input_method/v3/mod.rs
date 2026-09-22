@@ -119,8 +119,6 @@ where
                         keyboard_handle: seat.get_keyboard().unwrap(),
                         keyboard_filter: Default::default(),
                         dismiss_popup: D::dismiss_popup,
-                        popup_geometry: D::popup_geometry,
-                        ime_popup_configure_sent: D::ime_popup_configure_sent,
                     },
                 );
                 let app_id = match state.input_method_app_id(client, dh) {

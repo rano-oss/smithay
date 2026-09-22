@@ -297,6 +297,7 @@ where
 
                 let mut inner = im.handle.inner.lock().unwrap();
                 let owner_id = self.input_method.id();
+                let last_cursor = inner.last_cursor_rectangle;
                 let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == owner_id) else {
                     return;
                 };
@@ -313,7 +314,7 @@ where
                 // StartOfPreedit must never follow the live caret via Size/Reposition
                 // when unanchored — that is what made Kate track the end caret.
                 let cursor = if popup.position_mode == PopupPositionMode::FollowCursor {
-                    Some(instance.text_input_rectangle)
+                    last_cursor
                 } else {
                     popup.anchored_cursor_rectangle
                 };
@@ -322,10 +323,10 @@ where
                 drop(inner);
 
                 if let (Some(cursor), Some(parent_surface)) = (cursor, parent_surface) {
-                    let popup_geometry = state.popup_geometry(&parent_surface, &cursor, &positioner);
+                    let geometry = state.popup_geometry(&parent_surface, &cursor, &positioner);
                     popup.set_position(PopupLocation {
                         anchor: cursor,
-                        geometry: popup_geometry,
+                        geometry,
                     });
                 }
 
