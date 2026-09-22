@@ -291,7 +291,12 @@ where
                 keyboard.grab = Some(instance.clone());
                 keyboard.text_input_handle = self.text_input_handle.clone();
                 let guard = self.keyboard_handle.arc.internal.lock().unwrap();
-                instance.repeat_info(guard.repeat_rate, guard.repeat_delay);
+                let (rate, delay) = KeyboardHandle::<D>::advertised_repeat_info(
+                    guard.repeat_rate,
+                    guard.repeat_delay,
+                    guard.compositor_owned_repeat,
+                );
+                instance.repeat_info(rate, delay);
                 let keymap_file = self.keyboard_handle.arc.keymap.lock().unwrap();
                 let res = keymap_file.with_fd(false, |fd, size| {
                     instance.keymap(KeymapFormat::XkbV1, fd, size as u32);

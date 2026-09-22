@@ -73,7 +73,12 @@ where
 
         let guard = self.arc.internal.lock().unwrap();
         if kbd.version() >= 4 {
-            kbd.repeat_info(guard.repeat_rate, guard.repeat_delay);
+            let (rate, delay) = Self::advertised_repeat_info(
+                guard.repeat_rate,
+                guard.repeat_delay,
+                guard.compositor_owned_repeat,
+            );
+            kbd.repeat_info(rate, delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {
             if focused.same_client_as(&kbd.id()) {
