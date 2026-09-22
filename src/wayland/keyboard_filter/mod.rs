@@ -1,19 +1,11 @@
-//! Filtering key presses
-//!
-//! This Wayland protocol allows an application to register itself as a filter
-//! for key presses destined for another application.
-//!
-//! The current implementation supports filtering for input method purposes.
-//! When active, keyboard events are intercepted and forwarded to the input method
-//! client. The client then responds with a filter action (passthrough or consume)
-//! for each key event.
+//! Keyboard filter protocol (IME key interception / passthrough).
 
 mod keyboard_filter_handle;
 
 pub use keyboard_filter_handle::KeyboardFilterUserData;
 
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     sync::{Arc, Mutex},
 };
 
@@ -27,7 +19,7 @@ use wayland_protocols::wp::{
 use wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
     backend::GlobalId,
-    protocol::{wl_keyboard::WlKeyboard, wl_surface::WlSurface},
+    protocol::wl_keyboard::WlKeyboard,
 };
 
 use crate::{
@@ -38,8 +30,6 @@ use crate::{
         seat::{KeyboardUserData, WaylandFocus},
     },
 };
-
-use keyboard_filter_handle::BufferedEvent;
 
 const MANAGER_VERSION: u32 = 1;
 
@@ -161,13 +151,11 @@ where
 
                 let imdata = input_method.data::<InputMethodV3UserData<D>>().unwrap();
                 let keyboard_data = keyboard.data::<KeyboardUserData<D>>().unwrap();
-
                 let kb_handle = keyboard_data
                     .handle
                     .as_ref()
                     .expect("Seat doesn't support keyboard");
 
-                // Validate same seat
                 if !Arc::ptr_eq(&kb_handle.arc, &imdata.keyboard_handle.arc) {
                     resource.post_error(
                         zwp_keyboard_filter_manager_v1::Error::WrongSeat,
@@ -176,39 +164,31 @@ where
                     return;
                 }
 
-                let focused_surface: Arc<Mutex<Option<WlSurface>>> = Arc::new(Mutex::new(None));
-                let pending_events: Arc<Mutex<VecDeque<BufferedEvent>>> =
-                    Arc::new(Mutex::new(VecDeque::new()));
+                let pending_events = Arc::new(Mutex::new(VecDeque::new()));
+                let filter_udata = KeyboardFilterUserData {
+                    keyboard_handle: kb_handle.clone(),
+                    pending_events,
+                    focused_surface: Mutex::new(None),
+                    manager_data: self.inner.clone(),
+                    bound_keyboard: keyboard.clone(),
+                    bound_input_method: input_method.clone(),
+                    im_surface: surface,
+                };
 
-                let keyboard_filter = data_init.init::<ZwpKeyboardFilterV1, _>(
-                    extensions,
-                    KeyboardFilterUserData {
-                        keyboard_handle: kb_handle.clone(),
-                        pending_events: pending_events.clone(),
-                        focused_surface: focused_surface.clone(),
-                        manager_data: self.inner.clone(),
-                        bound_keyboard: keyboard.clone(),
-                        bound_input_method: input_method.clone(),
-                        im_surface: surface,
-                    },
-                );
+                let keyboard_filter = data_init.init::<ZwpKeyboardFilterV1, _>(extensions, filter_udata);
 
-                {
-                    let mut im_filter = imdata.keyboard_filter.lock().unwrap();
-                    *im_filter = Some(keyboard_filter);
-                }
-
-                // If this IME is already active (keyboard focus arrived before the
-                // filter was bound), install the interceptor now.
+                // Late bind: focus may already exist before the filter is created.
                 if let Some(focus) = imdata.text_input_handle.focus() {
-                    imdata.handle.ensure_keyboard_filter_interceptor::<D>(&focus);
+                    keyboard_filter
+                        .data::<KeyboardFilterUserData<D>>()
+                        .unwrap()
+                        .activate_interceptor(&focus);
                 }
 
-                {
-                    let mut bind = self.inner.lock().unwrap();
-                    bind.bound_keyboards.insert(keyboard);
-                    bind.bound_ims.insert(input_method);
-                }
+                *imdata.keyboard_filter.lock().unwrap() = Some(keyboard_filter);
+                let mut bind = self.inner.lock().unwrap();
+                bind.bound_keyboards.insert(keyboard);
+                bind.bound_ims.insert(input_method);
             }
             zwp_keyboard_filter_manager_v1::Request::Destroy => {}
             _ => {}

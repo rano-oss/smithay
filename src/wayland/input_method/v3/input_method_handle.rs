@@ -269,18 +269,12 @@ impl InputMethodV3Handle {
     pub fn activate_input_method<D: SeatHandler + 'static>(&self, _state: &mut D, surface: &WlSurface) {
         self.with_instance(|im| {
             im.object.activate();
-        });
-        self.ensure_keyboard_filter_interceptor::<D>(surface);
-    }
-
-    pub(crate) fn ensure_keyboard_filter_interceptor<D: SeatHandler + 'static>(&self, surface: &WlSurface) {
-        self.with_instance(|im| {
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
             if let Some(filter) = data.keyboard_filter.lock().unwrap().as_ref() {
                 filter
                     .data::<KeyboardFilterUserData<D>>()
                     .unwrap()
-                    .ensure_interceptor(surface);
+                    .activate_interceptor(surface);
             }
         });
     }
