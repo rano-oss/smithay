@@ -1377,9 +1377,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Set the current focus of this keyboard
     ///
     /// If the new focus is different from the previous one, any previous focus
-    /// will be sent a [`wl_keyboard::Event::Leave`](wayland_server::protocol::wl_keyboard::Event::Leave)
+    /// will be sent a [`wl_keyboard::Event::Leave`]
     /// event, and if the new focus is not `None`,
-    /// a [`wl_keyboard::Event::Enter`](wayland_server::protocol::wl_keyboard::Event::Enter) event will be sent.
+    /// a [`wl_keyboard::Event::Enter`] event will be sent.
     #[instrument(level = "debug", parent = &self.arc.span, skip(self, data, focus), fields(focus = focus.is_some()))]
     pub fn set_focus(&self, data: &mut D, focus: Option<<D as SeatHandler>::KeyboardFocus>, serial: Serial) {
         let mut guard = self.arc.internal.lock().unwrap();
@@ -1778,9 +1778,9 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
     /// Set the current focus of this keyboard
     ///
     /// If the new focus is different from the previous one, any previous focus
-    /// will be sent a [`wl_keyboard::Event::Leave`](wayland_server::protocol::wl_keyboard::Event::Leave)
+    /// will be sent a [`wl_keyboard::Event::Leave`]
     /// event, and if the new focus is not `None`,
-    /// a [`wl_keyboard::Event::Enter`](wayland_server::protocol::wl_keyboard::Event::Enter) event will be sent.
+    /// a [`wl_keyboard::Event::Enter`] event will be sent.
     pub fn set_focus(
         &mut self,
         data: &mut D,
