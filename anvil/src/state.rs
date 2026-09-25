@@ -59,7 +59,7 @@ use smithay::{
         image_copy_capture::{
             BufferConstraints, Frame, ImageCopyCaptureHandler, ImageCopyCaptureState, Session, SessionRef,
         },
-        input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface},
+        input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface, PositionerState},
         keyboard_shortcuts_inhibit::{
             KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
         },
@@ -325,6 +325,10 @@ impl<BackendData: Backend> SeatHandler for AnvilState<BackendData> {
     fn led_state_changed(&mut self, _seat: &Seat<Self>, led_state: LedState) {
         self.backend_data.update_led_state(led_state)
     }
+
+    fn loop_handle(&self) -> Option<smithay::reexports::calloop::LoopHandle<'static, Self>> {
+        Some(self.handle.clone())
+    }
 }
 
 impl<BackendData: Backend> TabletSeatHandler for AnvilState<BackendData> {
@@ -346,7 +350,7 @@ impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
     fn popup_repositioned(&mut self, _: PopupSurface) {}
 
     fn dismiss_popup(&mut self, surface: PopupSurface) {
-        if let Some(parent) = surface.get_parent().map(|parent| parent.surface.clone()) {
+        if let Some(parent) = surface.get_parent().map(|parent| parent.surface) {
             let _ = PopupManager::dismiss_popup(&parent, &PopupKind::from(surface));
         }
     }
@@ -356,6 +360,29 @@ impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
             .elements()
             .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
             .unwrap_or_default()
+    }
+
+    fn popup_geometry(
+        &self,
+        parent: &WlSurface,
+        cursor: &Rectangle<i32, smithay::utils::Logical>,
+        positioner: &PositionerState,
+    ) -> Rectangle<i32, smithay::utils::Logical> {
+        let parent_geo = self
+            .space
+            .elements()
+            .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
+            .unwrap_or_default();
+        let target = Rectangle::new((0, 0).into(), parent_geo.size);
+        positioner.get_unconstrained_geometry(*cursor, target)
+    }
+
+    fn input_method_app_id(
+        &self,
+        _client: &smithay::reexports::wayland_server::Client,
+        _dh: &DisplayHandle,
+    ) -> Option<String> {
+        None
     }
 }
 
@@ -740,8 +767,10 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         let mut seat = seat_state.new_wl_seat(&dh, seat_name.clone());
 
         let pointer = seat.add_pointer();
-        seat.add_keyboard(XkbConfig::default(), 200, 25)
+        let keyboard = seat
+            .add_keyboard(XkbConfig::default(), 200, 25)
             .expect("Failed to initialize the keyboard");
+        keyboard.set_compositor_owned_repeat(true);
 
         let keyboard_shortcuts_inhibit_state = KeyboardShortcutsInhibitState::new::<Self>(&dh);
 

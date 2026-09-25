@@ -8,12 +8,23 @@
 //! ```
 //! use smithay::input::{Seat, SeatState, SeatHandler, pointer::CursorImageStatus};
 //! # use smithay::wayland::compositor::{CompositorHandler, CompositorState, CompositorClientState};
+//! # use smithay::wayland::input_method::{InputMethodHandler, PopupSurface};
 //! use smithay::wayland::text_input::TextInputManagerState;
 //! use smithay::reexports::wayland_server::{Display, protocol::wl_surface::WlSurface};
 //! # use smithay::wayland::pointer_constraints::PointerConstraintsHandler;
 //! # use smithay::reexports::wayland_server::Client;
+//! # use smithay::utils::{Rectangle, Logical};
 //!
 //! # struct State { seat_state: SeatState<Self> };
+//!
+//! # impl InputMethodHandler for State {
+//! #     fn new_popup(&mut self, surface: PopupSurface) {}
+//! #     fn dismiss_popup(&mut self, surface: PopupSurface) {}
+//! #     fn popup_repositioned(&mut self, surface: PopupSurface) {}
+//! #     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, Logical> {
+//! #         Rectangle::default()
+//! #     }
+//! # }
 //!
 //! smithay::delegate_dispatch2!(State);
 //!
@@ -62,7 +73,7 @@ pub use text_input_handle::TextInputUserData;
 
 use super::input_method::InputMethodHandle;
 
-const MANAGER_VERSION: u32 = 1;
+const MANAGER_VERSION: u32 = 2;
 
 mod text_input_handle;
 

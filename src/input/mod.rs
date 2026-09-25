@@ -128,6 +128,8 @@ use std::{
 use tracing::{info_span, instrument};
 use xkbcommon::xkb::ContextFlags;
 
+use calloop;
+
 use self::touch::TouchTarget;
 use self::{
     keyboard::{Error as KeyboardError, KeyboardHandle, KeyboardTarget, LedState},
@@ -171,6 +173,15 @@ pub trait SeatHandler: Sized + 'static {
 
     /// Callback that will be notified whenever the keyboard led state changes.
     fn led_state_changed(&mut self, _seat: &Seat<Self>, _led_state: LedState) {}
+
+    /// Return the event loop handle for compositor-side key repeat.
+    ///
+    /// Override this to return `Some(loop_handle)` to enable compositor-side key repeat.
+    /// When enabled, the compositor manages repeat timers and sends repeat events
+    /// through [`KeyboardTarget::repeat`].
+    fn loop_handle(&self) -> Option<calloop::LoopHandle<'static, Self>> {
+        None
+    }
 
     /// Provides the implicit pointer grab for clicks
     ///
