@@ -73,11 +73,7 @@ where
 
         let guard = self.arc.internal.lock().unwrap();
         if kbd.version() >= 4 {
-            let (rate, delay) = if guard.compositor_owned_repeat {
-                (0, 0)
-            } else {
-                (guard.repeat_rate, guard.repeat_delay)
-            };
+            let (rate, delay) = guard.advertised_repeat_info();
             kbd.repeat_info(rate, delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {

@@ -36,14 +36,6 @@ use super::{
     positioner::PositionerUserData,
 };
 
-/// Result of attempting to select an input method instance by app_id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SetActiveInstanceResult {
-    NotFound,
-    Unchanged,
-    Changed,
-}
-
 /// Contains all input method instances and tracks which one is active.
 #[derive(Default, Debug)]
 pub(crate) struct InputMethodState {
@@ -56,22 +48,12 @@ pub(crate) struct InputMethodState {
 }
 
 /// Contains input method state
+#[derive(Debug)]
 pub(crate) struct InputMethod {
     pub object: ZwpInputMethodV3,
     pub serial: u32,
     pub app_id: String,
     pub popup_handles: Vec<PopupSurface>,
-}
-
-impl fmt::Debug for InputMethod {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("InputMethod")
-            .field("object", &self.object)
-            .field("serial", &self.serial)
-            .field("app_id", &self.app_id)
-            .field("popup_handles", &self.popup_handles)
-            .finish()
-    }
 }
 
 impl InputMethod {
@@ -96,10 +78,12 @@ impl InputMethodV3Handle {
     pub(super) fn add_instance(&self, instance: &ZwpInputMethodV3, app_id: String) {
         let mut inner = self.inner.lock().unwrap();
         inner.instances.retain(|i| i.app_id != app_id);
-        if let Some(active_id) = inner.active_input_method_id.clone() {
-            if !inner.instances.iter().any(|i| i.object.id() == active_id) {
-                inner.active_input_method_id = None;
-            }
+        if inner
+            .active_input_method_id
+            .as_ref()
+            .is_some_and(|id| !inner.instances.iter().any(|i| i.object.id() == *id))
+        {
+            inner.active_input_method_id = None;
         }
         inner.instances.push(InputMethod {
             object: instance.clone(),
@@ -110,15 +94,7 @@ impl InputMethodV3Handle {
     }
 
     pub(crate) fn has_active_instance(&self) -> bool {
-        let inner = self.inner.lock().unwrap();
-        inner
-            .active_input_method_id
-            .as_ref()
-            .is_some_and(|id| inner.instances.iter().any(|i| i.object.id() == *id))
-    }
-
-    pub(crate) fn has_registered_instances(&self) -> bool {
-        !self.inner.lock().unwrap().instances.is_empty()
+        self.with_instance(|_| ()).is_some()
     }
 
     pub(crate) fn with_instance<R>(&self, f: impl FnOnce(&mut InputMethod) -> R) -> Option<R> {
@@ -132,50 +108,35 @@ impl InputMethodV3Handle {
     }
 
     pub fn active_app_id(&self) -> Option<String> {
-        let inner = self.inner.lock().unwrap();
-        let active_id = inner.active_input_method_id.as_ref()?;
-        inner
-            .instances
-            .iter()
-            .find(|i| i.object.id() == *active_id)
-            .map(|i| i.app_id.clone())
+        self.with_instance(|i| i.app_id.clone())
     }
 
+    /// Select instance by `app_id`. Returns `false` if no matching instance exists.
     pub fn set_active_instance<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,
         app_id: &str,
-    ) -> SetActiveInstanceResult {
+    ) -> bool {
         let inner = self.inner.lock().unwrap();
-        let target_id = inner
-            .instances
-            .iter()
-            .find(|i| i.app_id == app_id)
-            .map(|i| i.object.id());
-        let Some(target_id) = target_id else {
-            return SetActiveInstanceResult::NotFound;
+        let Some(target_id) = inner.instances.iter().find(|i| i.app_id == app_id).map(|i| i.object.id())
+        else {
+            return false;
         };
         let old_active = inner.active_input_method_id.clone();
-        let had_active = inner
-            .active_input_method_id
-            .as_ref()
-            .is_some_and(|id| inner.instances.iter().any(|i| i.object.id() == *id));
         let last_cursor = inner.last_cursor_rectangle;
         drop(inner);
 
         if old_active.as_ref() == Some(&target_id) {
-            return SetActiveInstanceResult::Unchanged;
+            return true;
         }
-
-        if had_active {
+        if old_active.is_some() {
             self.deactivate_input_method(state);
         }
-
         self.inner.lock().unwrap().active_input_method_id = Some(target_id);
         if let Some(cursor) = last_cursor {
             self.set_text_input_rectangle(state, cursor);
         }
-        SetActiveInstanceResult::Changed
+        true
     }
 
     pub(crate) fn set_text_input_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
@@ -194,7 +155,8 @@ impl InputMethodV3Handle {
 
         let mut pending = Vec::new();
         for (index, popup) in instance.popup_handles.iter().enumerate() {
-            let awaiting = popup.position_mode == PopupPositionMode::StartOfPreedit && popup.awaiting_anchor;
+            let awaiting =
+                popup.position_mode == PopupPositionMode::StartOfPreedit && popup.awaiting_anchor;
             if popup.position_mode == PopupPositionMode::FollowCursor
                 || (awaiting && popup.anchored_cursor_rectangle != Some(cursor))
             {
@@ -269,13 +231,10 @@ impl InputMethodV3Handle {
     pub fn activate_input_method<D: SeatHandler + 'static>(&self, _state: &mut D, surface: &WlSurface) {
         self.with_instance(|im| {
             im.object.activate();
-            let data = im.object.data::<InputMethodUserData<D>>().unwrap();
-            if let Some(filter) = data.keyboard_filter.lock().unwrap().as_ref() {
-                filter
-                    .data::<KeyboardFilterUserData<D>>()
-                    .unwrap()
-                    .activate_interceptor(surface);
-            }
+            im.object
+                .data::<InputMethodUserData<D>>()
+                .unwrap()
+                .with_filter(|f| f.activate_interceptor(surface));
         });
     }
 
@@ -291,12 +250,7 @@ impl InputMethodV3Handle {
             for popup in im.popup_handles.drain(..) {
                 (data.dismiss_popup)(state, popup.into());
             }
-            if let Some(filter) = data.keyboard_filter.lock().unwrap().as_ref() {
-                filter
-                    .data::<KeyboardFilterUserData<D>>()
-                    .unwrap()
-                    .deactivate_interceptor();
-            }
+            data.with_filter(|f| f.deactivate_interceptor());
         });
     }
 }
@@ -309,6 +263,16 @@ pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) keyboard_filter: Arc<Mutex<Option<ZwpKeyboardFilterV1>>>,
     /// Avoids `D: InputMethodHandler` on deactivate (same pattern as v2).
     pub(crate) dismiss_popup: fn(&mut D, ImPopupSurface),
+}
+
+impl<D: SeatHandler + 'static> InputMethodUserData<D> {
+    fn with_filter<R>(&self, f: impl FnOnce(&KeyboardFilterUserData<D>) -> R) -> Option<R> {
+        self.keyboard_filter
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|kf| f(kf.data::<KeyboardFilterUserData<D>>().unwrap()))
+    }
 }
 
 impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
@@ -346,10 +310,6 @@ where
                 self.handle.with_instance(|instance| {
                     for popup in &mut instance.popup_handles {
                         if popup.position_mode == PopupPositionMode::StartOfPreedit {
-                            // Clear the lock but do not arm awaiting — the next
-                            // client cursor is often a bare post-commit caret.
-                            // The IME re-arms via StartOfPreedit + preedit caret
-                            // at 0 when the new segment begins.
                             popup.anchored_cursor_rectangle = None;
                             popup.awaiting_anchor = false;
                         }
@@ -372,7 +332,7 @@ where
                 let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
                     return;
                 };
-                let mut seed = false;
+                let mut seed_cursor = None;
                 for popup in instance.popup_handles.iter_mut() {
                     if popup.position_mode != PopupPositionMode::StartOfPreedit {
                         continue;
@@ -381,20 +341,17 @@ where
                         popup.awaiting_anchor = true;
                         popup.anchored_cursor_rectangle = None;
                     } else if cursor_begin == 0 && cursor_end == 0 {
-                        // Arm + seed so Qt/Kate stay stable without a caret-at-0 rect.
                         popup.awaiting_anchor = true;
-                        if popup.anchored_cursor_rectangle.is_none() && last_cursor.is_some() {
-                            seed = true;
+                        if popup.anchored_cursor_rectangle.is_none() {
+                            seed_cursor = last_cursor;
                         }
                     } else {
                         popup.awaiting_anchor = false;
                     }
                 }
                 drop(inner);
-                if seed {
-                    if let Some(cursor) = last_cursor {
-                        self.handle.set_text_input_rectangle(state, cursor);
-                    }
+                if let Some(cursor) = seed_cursor {
+                    self.handle.set_text_input_rectangle(state, cursor);
                 }
             }
             Request::DeleteSurroundingText {
@@ -505,16 +462,12 @@ where
         drop(inner);
 
         if was_active {
-            if let Some(keyboard_filter) = self.keyboard_filter.lock().unwrap().as_ref() {
-                keyboard_filter
-                    .data::<KeyboardFilterUserData<D>>()
-                    .unwrap()
-                    .flush_pending_passthrough();
-            }
-            self.keyboard_handle.arc.clear_kbd_interceptor();
-            // Clear stale preedit but do not send text-input leave: leave() drops
-            // active_text_input_id so a reconnecting IME cannot deliver preedit until
-            // the client re-enables, which chewingwl does not always do promptly.
+            self.with_filter(|f| {
+                f.flush_pending_passthrough();
+                f.deactivate_interceptor();
+            });
+            // Do not text_input.leave(): that clears active_text_input_id and blocks
+            // preedit until the client re-enables (chewingwl may not do that promptly).
             self.text_input_handle.with_active_text_input(|ti, _surface| {
                 ti.preedit_string(None, -1, -1);
             });

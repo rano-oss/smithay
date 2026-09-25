@@ -12,7 +12,7 @@ use crate::wayland::text_input::TextInputSeat;
 
 use super::InputMethodHandler;
 use super::v2::InputMethodV2Handle;
-use super::v3::{InputMethodV3Handle, SetActiveInstanceResult};
+use super::v3::InputMethodV3Handle;
 
 /// Handle to input method state for a seat, covering both protocol versions.
 ///
@@ -30,63 +30,36 @@ impl InputMethodHandle {
         self.v2.has_instance() || self.v3.has_active_instance()
     }
 
-    /// Whether any input method client has registered, even if not currently selected.
-    pub fn has_registered_instance(&self) -> bool {
-        self.v2.has_instance() || self.v3.has_registered_instances()
-    }
-
     /// Deactivate the active input method.
     pub fn deactivate_input_method<D: SeatHandler + 'static>(&self, state: &mut D) {
-        if self.v2.has_instance() {
-            self.v2.deactivate_input_method(state);
-        }
-        if self.v3.has_active_instance() {
-            self.v3.deactivate_input_method(state);
-        }
+        self.v2.deactivate_input_method(state);
+        self.v3.deactivate_input_method(state);
     }
 
     /// Activate input method on the given surface.
     pub fn activate_input_method<D: SeatHandler + 'static>(&self, state: &mut D, surface: &WlSurface) {
-        if self.v2.has_instance() {
-            self.v2.activate_input_method(state, surface);
-        }
-        if self.v3.has_active_instance() {
-            self.v3.activate_input_method(state, surface);
-        }
+        self.v2.activate_input_method(state, surface);
+        self.v3.activate_input_method(state, surface);
     }
 
     pub(crate) fn surrounding_text(&self, text: String, cursor: u32, anchor: u32) {
-        let text_clone = text.clone();
-        self.v2.with_instance(move |input_method| {
-            input_method.object.surrounding_text(text_clone, cursor, anchor);
-        });
-        self.v3.with_instance(move |input_method| {
-            input_method.object.surrounding_text(text, cursor, anchor);
-        });
+        self.v2.with_instance(|im| im.object.surrounding_text(text.clone(), cursor, anchor));
+        self.v3.with_instance(|im| im.object.surrounding_text(text, cursor, anchor));
     }
 
     pub(crate) fn text_change_cause(&self, cause: ChangeCause) {
-        self.v2.with_instance(move |input_method| {
-            input_method.object.text_change_cause(cause);
-        });
-        self.v3.with_instance(move |input_method| {
-            input_method.object.text_change_cause(cause);
-        });
+        self.v2.with_instance(|im| im.object.text_change_cause(cause));
+        self.v3.with_instance(|im| im.object.text_change_cause(cause));
     }
 
     pub(crate) fn content_type(&self, hint: ContentHint, purpose: ContentPurpose) {
-        self.v2.with_instance(move |input_method| {
-            input_method.object.content_type(hint, purpose);
-        });
-        self.v3.with_instance(move |input_method| {
-            input_method.object.content_type(hint, purpose);
-        });
+        self.v2.with_instance(|im| im.object.content_type(hint, purpose));
+        self.v3.with_instance(|im| im.object.content_type(hint, purpose));
     }
 
     pub(crate) fn set_available_actions(&self, available_actions: Vec<u8>) {
-        self.v3.with_instance(move |input_method| {
-            input_method.object.set_available_actions(available_actions);
-        });
+        self.v3
+            .with_instance(|im| im.object.set_available_actions(available_actions));
     }
 
     pub(crate) fn cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
@@ -102,7 +75,7 @@ impl InputMethodHandle {
     ///
     /// Flushes pending v3 popup configures, then sends protocol `done`.
     pub fn done(&self) {
-        self.v2.with_instance(|input_method| input_method.done());
+        self.v2.with_instance(|im| im.done());
         self.v3.done();
     }
 
@@ -120,13 +93,10 @@ impl InputMethodHandle {
     ///
     /// Call after compositor policy changes the selected instance (e.g. layout switch).
     pub fn sync_activation<D: SeatHandler + 'static>(&self, state: &mut D, seat: &Seat<D>) {
-        if !self.has_instance() {
-            self.deactivate_input_method(state);
-            return;
-        }
-
-        if let Some(surface) = seat.text_input().focus() {
-            self.activate_input_method(state, &surface);
+        match (self.has_instance(), seat.text_input().focus()) {
+            (true, Some(surface)) => self.activate_input_method(state, &surface),
+            (false, _) => self.deactivate_input_method(state),
+            (true, None) => {}
         }
     }
 
@@ -147,9 +117,8 @@ impl InputMethodHandle {
         D::KeyboardFocus: WaylandFocus,
     {
         let before = self.active_app_id();
-        match self.v3.set_active_instance(state, app_id) {
-            SetActiveInstanceResult::NotFound => return false,
-            SetActiveInstanceResult::Unchanged | SetActiveInstanceResult::Changed => {}
+        if !self.v3.set_active_instance(state, app_id) {
+            return false;
         }
         if sync && self.active_app_id() != before {
             self.sync_activation(state, seat);

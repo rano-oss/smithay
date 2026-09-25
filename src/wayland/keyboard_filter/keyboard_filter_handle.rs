@@ -123,18 +123,15 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
 impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
     /// Install interceptor for `focused_surface` (no-op if already active for it).
     pub(crate) fn activate_interceptor(&self, focused_surface: &WlSurface) {
-        {
-            let slot = self.keyboard_handle.arc.kbd_interceptor.lock().unwrap();
-            if slot.is_some()
-                && self
-                    .focused_surface
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .is_some_and(|s| s.id() == focused_surface.id())
-            {
-                return;
-            }
+        let already = self.keyboard_handle.arc.kbd_interceptor.lock().unwrap().is_some()
+            && self
+                .focused_surface
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|s| s.id() == focused_surface.id());
+        if already {
+            return;
         }
 
         *self.focused_surface.lock().unwrap() = Some(focused_surface.clone());
@@ -156,8 +153,7 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
 
     /// Forward buffered keys to the focused client (used on unbind / IM destroy).
     pub(crate) fn flush_pending_passthrough(&self) {
-        let mut pending = self.pending_events.lock().unwrap();
-        for event in pending.drain(..) {
+        for event in self.pending_events.lock().unwrap().drain(..) {
             self.send_key_to_focused_client(&event);
         }
     }
@@ -192,14 +188,13 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
                         kbd.key(event.serial, event.time, event.key, KeyState::Released);
                     }
                 }
-                _ => {
-                    kbd.key(event.serial, event.time, event.key, event.state);
-                }
+                _ => kbd.key(event.serial, event.time, event.key, event.state),
             }
         }
     }
 
     fn detach(&self) {
+        self.flush_pending_passthrough();
         self.deactivate_interceptor();
         let mut mgr = self.manager_data.lock().unwrap();
         mgr.bound_keyboards.remove(&self.bound_keyboard);
@@ -231,23 +226,17 @@ where
         use zwp_keyboard_filter_v1::Request;
         match request {
             Request::Unbind => {
-                self.flush_pending_passthrough();
                 self.detach();
             }
             Request::Filter { serial, action } => {
                 let passthrough = match action {
                     WEnum::Value(FilterAction::Passthrough) => true,
                     WEnum::Value(FilterAction::Consume) => false,
-                    WEnum::Value(unk) => {
-                        error!("Unsupported filter action {unk:?}");
-                        return;
-                    }
-                    WEnum::Unknown(unk) => {
-                        error!("Unsupported filter action {unk}");
+                    other => {
+                        error!("Unsupported filter action {other:?}");
                         return;
                     }
                 };
-
                 let mut pending = self.pending_events.lock().unwrap();
                 let Some(pos) = pending.iter().position(|e| e.serial == serial) else {
                     warn!("Filter response for unknown serial {serial}");
@@ -273,7 +262,6 @@ where
         _client: wayland_server::backend::ClientId,
         _resource: &ZwpKeyboardFilterV1,
     ) {
-        self.flush_pending_passthrough();
         self.detach();
     }
 }
