@@ -10,7 +10,10 @@ use wayland_server::{Resource, protocol::wl_surface::WlSurface};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::{Dispatch2, input_method::{InputMethodHandle, InputMethodHandler}};
+use crate::wayland::{
+    Dispatch2,
+    input_method::{InputMethodHandle, InputMethodHandler},
+};
 
 #[derive(Default, Debug)]
 pub(crate) struct TextInput {
@@ -242,7 +245,11 @@ where
             return;
         }
 
-        if self.handle.focus().is_none_or(|focus| !focus.id().same_client_as(&resource.id())) {
+        if self
+            .handle
+            .focus()
+            .is_none_or(|focus| !focus.id().same_client_as(&resource.id()))
+        {
             debug!("discarding text-input request for unfocused client");
             return;
         }
@@ -287,14 +294,13 @@ where
                 pending_state.cursor_rectangle = Some(Rectangle::new((x, y).into(), (width, height).into()));
             }
             zwp_text_input_v3::Request::SetAvailableActions { available_actions } => {
-                let valid = available_actions.len().is_multiple_of(4)
-                    && {
-                        let mut seen = std::collections::HashSet::new();
-                        available_actions.chunks_exact(4).all(|chunk| {
-                            let action = u32::from_ne_bytes(chunk.try_into().unwrap());
-                            action != Action::None as u32 && seen.insert(action)
-                        })
-                    };
+                let valid = available_actions.len().is_multiple_of(4) && {
+                    let mut seen = std::collections::HashSet::new();
+                    available_actions.chunks_exact(4).all(|chunk| {
+                        let action = u32::from_ne_bytes(chunk.try_into().unwrap());
+                        action != Action::None as u32 && seen.insert(action)
+                    })
+                };
                 if !valid {
                     resource.post_error(
                         zwp_text_input_v3::Error::InvalidAction,

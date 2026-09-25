@@ -43,8 +43,10 @@ impl InputMethodHandle {
     }
 
     pub(crate) fn surrounding_text(&self, text: String, cursor: u32, anchor: u32) {
-        self.v2.with_instance(|im| im.object.surrounding_text(text.clone(), cursor, anchor));
-        self.v3.with_instance(|im| im.object.surrounding_text(text, cursor, anchor));
+        self.v2
+            .with_instance(|im| im.object.surrounding_text(text.clone(), cursor, anchor));
+        self.v3
+            .with_instance(|im| im.object.surrounding_text(text, cursor, anchor));
     }
 
     pub(crate) fn text_change_cause(&self, cause: ChangeCause) {
