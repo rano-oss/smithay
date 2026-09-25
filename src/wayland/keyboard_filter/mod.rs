@@ -17,8 +17,7 @@ use wayland_protocols::wp::{
     },
 };
 use wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
-    backend::GlobalId,
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, backend::GlobalId,
     protocol::wl_keyboard::WlKeyboard,
 };
 
@@ -133,8 +132,7 @@ where
             } => {
                 {
                     let bind = self.inner.lock().unwrap();
-                    if bind.bound_keyboards.contains(&keyboard) || bind.bound_ims.contains(&input_method)
-                    {
+                    if bind.bound_keyboards.contains(&keyboard) || bind.bound_ims.contains(&input_method) {
                         resource.post_error(
                             zwp_keyboard_filter_manager_v1::Error::AlreadyBound,
                             "keyboard or input method already bound",

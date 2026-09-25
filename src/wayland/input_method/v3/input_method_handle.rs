@@ -118,7 +118,11 @@ impl InputMethodV3Handle {
         app_id: &str,
     ) -> bool {
         let inner = self.inner.lock().unwrap();
-        let Some(target_id) = inner.instances.iter().find(|i| i.app_id == app_id).map(|i| i.object.id())
+        let Some(target_id) = inner
+            .instances
+            .iter()
+            .find(|i| i.app_id == app_id)
+            .map(|i| i.object.id())
         else {
             return false;
         };
@@ -155,8 +159,7 @@ impl InputMethodV3Handle {
 
         let mut pending = Vec::new();
         for (index, popup) in instance.popup_handles.iter().enumerate() {
-            let awaiting =
-                popup.position_mode == PopupPositionMode::StartOfPreedit && popup.awaiting_anchor;
+            let awaiting = popup.position_mode == PopupPositionMode::StartOfPreedit && popup.awaiting_anchor;
             if popup.position_mode == PopupPositionMode::FollowCursor
                 || (awaiting && popup.anchored_cursor_rectangle != Some(cursor))
             {

@@ -269,6 +269,7 @@ unsafe impl<D: SeatHandler> Send for KbdInternal<D> {}
 
 impl<D: SeatHandler + 'static> KbdInternal<D> {
     /// Rate/delay advertised to clients (`(0, 0)` when compositor owns repeat).
+    #[cfg(feature = "wayland_frontend")]
     pub(crate) fn advertised_repeat_info(&self) -> (i32, i32) {
         if self.compositor_owned_repeat {
             (0, 0)
