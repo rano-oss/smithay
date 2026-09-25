@@ -291,11 +291,7 @@ where
                 keyboard.grab = Some(instance.clone());
                 keyboard.text_input_handle = self.text_input_handle.clone();
                 let guard = self.keyboard_handle.arc.internal.lock().unwrap();
-                let (rate, delay) = if guard.compositor_owned_repeat {
-                    (0, 0)
-                } else {
-                    (guard.repeat_rate, guard.repeat_delay)
-                };
+                let (rate, delay) = guard.advertised_repeat_info();
                 instance.repeat_info(rate, delay);
                 let keymap_file = self.keyboard_handle.arc.keymap.lock().unwrap();
                 let res = keymap_file.with_fd(false, |fd, size| {

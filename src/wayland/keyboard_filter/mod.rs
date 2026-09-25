@@ -133,17 +133,11 @@ where
             } => {
                 {
                     let bind = self.inner.lock().unwrap();
-                    if bind.bound_keyboards.contains(&keyboard) {
+                    if bind.bound_keyboards.contains(&keyboard) || bind.bound_ims.contains(&input_method)
+                    {
                         resource.post_error(
                             zwp_keyboard_filter_manager_v1::Error::AlreadyBound,
-                            format!("WlKeyboard {keyboard:?} already bound"),
-                        );
-                        return;
-                    }
-                    if bind.bound_ims.contains(&input_method) {
-                        resource.post_error(
-                            zwp_keyboard_filter_manager_v1::Error::AlreadyBound,
-                            format!("Input method {input_method:?} already bound"),
+                            "keyboard or input method already bound",
                         );
                         return;
                     }

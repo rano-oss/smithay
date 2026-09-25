@@ -268,6 +268,15 @@ impl<D: SeatHandler> fmt::Debug for KbdInternal<D> {
 unsafe impl<D: SeatHandler> Send for KbdInternal<D> {}
 
 impl<D: SeatHandler + 'static> KbdInternal<D> {
+    /// Rate/delay advertised to clients (`(0, 0)` when compositor owns repeat).
+    pub(crate) fn advertised_repeat_info(&self) -> (i32, i32) {
+        if self.compositor_owned_repeat {
+            (0, 0)
+        } else {
+            (self.repeat_rate, self.repeat_delay)
+        }
+    }
+
     fn new(
         xkb_config: XkbConfig<'_>,
         repeat_rate: i32,
@@ -1277,71 +1286,61 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         if let Some(token) = guard.key_repeat_token.take() {
             loop_handle.remove(token);
         }
-        if state == KeyState::Pressed {
-            let rate = guard.repeat_rate;
-            let delay = guard.repeat_delay;
-            if rate > 0 {
-                let repeats = guard.xkb.lock().unwrap().keymap.key_repeats(keycode);
-                if repeats {
-                    let kbd = self.clone();
-                    // `repeat_rate` is characters per second (wl_keyboard.repeat_info).
-                    let interval_ms = 1000u32 / rate as u32;
-                    let rate_duration = Duration::from_millis(interval_ms as u64);
-                    let mut time_ms = time.millis();
-                    let mut first_fire = true;
-                    let token = loop_handle
-                        .insert_source(
-                            calloop::timer::Timer::from_duration(Duration::from_millis(delay as u64)),
-                            move |_, _, data| {
-                                if first_fire {
-                                    time_ms += delay as u32;
-                                    first_fire = false;
-                                } else {
-                                    time_ms += interval_ms;
-                                }
-                                let guard = kbd.arc.internal.lock().unwrap();
-                                if !guard.forwarded_pressed_keys.contains(&keycode) {
-                                    return calloop::timer::TimeoutAction::Drop;
-                                }
-                                let focus = guard.focus.as_ref().map(|(f, _)| f.clone());
-                                drop(guard);
-                                if let Some(focus) = focus {
-                                    let seat = kbd.get_seat(data);
-                                    let serial = SERIAL_COUNTER.next_serial();
-                                    focus.repeat(
-                                        &seat,
-                                        data,
-                                        keycode,
-                                        serial,
-                                        InputTime::from_millis(time_ms),
-                                    );
-                                }
-                                calloop::timer::TimeoutAction::ToDuration(rate_duration)
-                            },
-                        )
-                        .unwrap();
-                    guard.key_repeat_token = Some(token);
-                }
-            }
+        if state != KeyState::Pressed || guard.repeat_rate <= 0 {
+            return;
         }
+        let rate = guard.repeat_rate;
+        let delay = guard.repeat_delay;
+        if !guard.xkb.lock().unwrap().keymap.key_repeats(keycode) {
+            return;
+        }
+        let kbd = self.clone();
+        let interval_ms = 1000u32 / rate as u32;
+        let mut time_ms = time.millis();
+        let mut first = true;
+        let token = loop_handle
+            .insert_source(
+                calloop::timer::Timer::from_duration(Duration::from_millis(delay as u64)),
+                move |_, _, data| {
+                    time_ms += if first { delay as u32 } else { interval_ms };
+                    first = false;
+                    let guard = kbd.arc.internal.lock().unwrap();
+                    if !guard.forwarded_pressed_keys.contains(&keycode) {
+                        return calloop::timer::TimeoutAction::Drop;
+                    }
+                    let focus = guard.focus.as_ref().map(|(f, _)| f.clone());
+                    drop(guard);
+                    if let Some(focus) = focus {
+                        let seat = kbd.get_seat(data);
+                        focus.repeat(
+                            &seat,
+                            data,
+                            keycode,
+                            SERIAL_COUNTER.next_serial(),
+                            InputTime::from_millis(time_ms),
+                        );
+                    }
+                    calloop::timer::TimeoutAction::ToDuration(Duration::from_millis(interval_ms as u64))
+                },
+            )
+            .unwrap();
+        guard.key_repeat_token = Some(token);
     }
 
     #[cfg(feature = "wayland_frontend")]
     fn send_client_repeat_info(&self, rate: i32, delay: i32) {
-        let kbd_interceptor = &self.arc.kbd_interceptor;
-        if let Some(kbd) = kbd_interceptor.lock().unwrap().as_ref() {
+        if let Some(kbd) = self.arc.kbd_interceptor.lock().unwrap().as_ref() {
             if kbd.protocol_version() >= 4 {
                 kbd.repeat_info(rate, delay);
             }
-        } else {
-            let known_kbds = &self.arc.known_kbds;
-            for kbd in &*known_kbds.lock().unwrap() {
-                let Ok(kbd) = kbd.upgrade() else {
-                    continue;
-                };
-                if kbd.version() >= 4 {
-                    kbd.repeat_info(rate, delay);
-                }
+            return;
+        }
+        for kbd in &*self.arc.known_kbds.lock().unwrap() {
+            let Ok(kbd) = kbd.upgrade() else {
+                continue;
+            };
+            if kbd.version() >= 4 {
+                kbd.repeat_info(rate, delay);
             }
         }
     }
@@ -1355,13 +1354,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         guard.repeat_rate = rate;
         #[cfg(feature = "wayland_frontend")]
         {
-            let (client_rate, client_delay) = if guard.compositor_owned_repeat {
-                (0, 0)
-            } else {
-                (rate, delay)
-            };
+            let (rate, delay) = guard.advertised_repeat_info();
             drop(guard);
-            self.send_client_repeat_info(client_rate, client_delay);
+            self.send_client_repeat_info(rate, delay);
         }
     }
 
@@ -1373,11 +1368,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             return;
         }
         guard.compositor_owned_repeat = owned;
-        let (rate, delay) = if owned {
-            (0, 0)
-        } else {
-            (guard.repeat_rate, guard.repeat_delay)
-        };
+        let (rate, delay) = guard.advertised_repeat_info();
         drop(guard);
         self.send_client_repeat_info(rate, delay);
     }

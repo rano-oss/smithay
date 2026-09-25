@@ -13,7 +13,7 @@ use wayland_protocols::wp::input_method::zv3::server::{
 
 use crate::input::{Seat, SeatHandler};
 
-pub(crate) use input_method_handle::{InputMethodUserData, InputMethodV3Handle, SetActiveInstanceResult};
+pub(crate) use input_method_handle::{InputMethodUserData, InputMethodV3Handle};
 
 use super::{InputMethodHandle, InputMethodHandler, InputMethodManagerGlobalData};
 use crate::wayland::text_input::TextInputHandle;
