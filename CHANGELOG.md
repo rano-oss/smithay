@@ -237,6 +237,11 @@ additionally drops the buffers cached for copying between a render and a target 
 
 ### Bugfixes
 
+The `xdg_toplevel` request handler now posts an `invalid_size` error when a client performs a `set_max_size` or `set_min_size` request with a negative width or height.
+
+`DrmDeviceFd::new` no longer tries to become DRM master on a render node, which the kernel always
+refuses, so it no longer warns about it.
+
 `SimpleCrtcMapper` (in `smithay-drm-extras`) now releases the CRTC reservation of any connector that
 is no longer connected, including connectors that have disappeared from the resource list entirely
 rather than being reported as disconnected. Previously such connectors (for example DP-MST sink
@@ -258,6 +263,13 @@ target device. Buffers that cannot be imported on the render node directly are i
 source device, so those devices accumulate cached imports that previously were never released.
 Cleanup is now also attempted on every device even if it fails on one of them, with every failure
 logged and the first error returned.
+
+`send_frames_surface_tree` (and `Window::send_frame`, `LayerSurface::send_frame`) no longer sends frame
+callbacks to surfaces whose renderer state has no buffer, or to their subsurfaces.
+
+`GlesRenderer::cleanup_texture_cache` and `GlesRenderer::invalidate_caches` now only make their EGL
+context current when resources are queued for destruction. This avoids waking idle GPUs and
+blocking the compositor while they resume.
 
 ## 0.7.0
 

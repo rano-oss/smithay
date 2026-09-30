@@ -15,7 +15,7 @@ use crate::{
     backend::input::{InputTime, KeyState, Keycode},
     input::{
         Seat, SeatHandler, WeakSeat,
-        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState},
+        keyboard::{KeyboardHandle, KeyboardTarget, KeysymHandle, ModifiersState, WlKeyboardApi},
     },
     utils::{HookId, Serial, iter::new_locked_obj_iter_from_vec},
     wayland::{
@@ -73,7 +73,8 @@ where
 
         let guard = self.arc.internal.lock().unwrap();
         if kbd.version() >= 4 {
-            kbd.repeat_info(guard.repeat_rate, guard.repeat_delay);
+            let (rate, delay) = guard.advertised_repeat_info();
+            kbd.repeat_info(rate, delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {
             if focused.same_client_as(&kbd.id()) {
@@ -148,17 +149,22 @@ where
 pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
     seat: &Seat<D>,
     surface: &WlSurface,
-    mut f: impl FnMut(WlKeyboard),
+    mut f: impl FnMut(&dyn WlKeyboardApi),
 ) {
     if let Some(keyboard) = seat.get_keyboard() {
-        let inner = keyboard.arc.known_kbds.lock().unwrap();
-        for kbd in &*inner {
+        let kbd_interceptor = &keyboard.arc.kbd_interceptor;
+        if let Some(kbd) = kbd_interceptor.lock().unwrap().as_ref() {
+            f(kbd.as_ref());
+            return;
+        }
+        let known_kbds = &keyboard.arc.known_kbds;
+        for kbd in &*known_kbds.lock().unwrap() {
             let Ok(kbd) = kbd.upgrade() else {
                 continue;
             };
 
             if kbd.id().same_client_as(&surface.id()) {
-                f(kbd.clone())
+                f(&kbd);
             }
         }
     }
@@ -245,10 +251,6 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     let text_input = seat.text_input();
     let input_method = seat.input_method();
 
-    if input_method.has_instance() {
-        input_method.deactivate_input_method(state);
-    }
-
     // NOTE: Always set focus regardless whether the client actually has the
     // text-input global bound due to clients doing lazy global binding.
     text_input.set_focus(Some(surface.clone()));
@@ -257,6 +259,7 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     // as the input method for this seat.
     if input_method.has_instance() || text_input.compositor_input_method() {
         text_input.enter();
+        input_method.activate_input_method(state, surface);
     }
 }
 
@@ -321,6 +324,18 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
                 modifiers.layout_effective,
             );
         })
+    }
+
+    fn repeat(&self, seat: &Seat<D>, _data: &mut D, keycode: Keycode, serial: Serial, time: InputTime) {
+        let raw_key = keycode.raw() - 8;
+        for_each_focused_kbds(seat, self, |kbd| {
+            if kbd.protocol_version() >= 10 {
+                kbd.key(serial.into(), time.millis(), raw_key, WlKeyState::Repeated);
+            } else {
+                kbd.key(serial.into(), time.millis(), raw_key, WlKeyState::Pressed);
+                kbd.key(serial.into(), time.millis(), raw_key, WlKeyState::Released);
+            }
+        });
     }
 }
 
