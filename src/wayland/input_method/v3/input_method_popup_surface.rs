@@ -1,9 +1,9 @@
 use std::cmp::PartialEq;
 use std::sync::{Arc, Mutex};
 
-use wayland_protocols::wp::input_method::zv3::server::zwp_input_method_v3::ZwpInputMethodV3;
-use wayland_protocols::wp::input_method::zv3::server::zwp_input_popup_surface_v3::{
-    self, PopupPositionMode, ZwpInputPopupSurfaceV3,
+use wayland_protocols_experimental::input_method::v1::server::xx_input_method_v1::XxInputMethodV1;
+use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_surface_v2::{
+    self, PopupPositionMode, XxInputPopupSurfaceV2,
 };
 use wayland_server::{Resource, backend::ClientId, protocol::wl_surface::WlSurface};
 
@@ -32,7 +32,7 @@ pub struct PopupLocation {
 #[derive(Debug, Clone)]
 pub struct PopupSurface {
     /// The surface role for the input method popup
-    pub surface_role: ZwpInputPopupSurfaceV3,
+    pub surface_role: XxInputPopupSurfaceV2,
     /// Surface containing the popup
     surface: WlSurface,
     /// Surface containing the text input. This surface doesn't change within the lifetime of the popup.
@@ -52,8 +52,8 @@ impl PopupSurface {
     /// Creates a new popup surface.
     /// Anchor is the anchor position relative to parent. Geometry is the popup position relative to parent.
     pub(crate) fn new(
-        init: impl FnOnce(InputMethodPopupSurfaceUserData) -> ZwpInputPopupSurfaceV3,
-        input_method: ZwpInputMethodV3,
+        init: impl FnOnce(InputMethodPopupSurfaceUserData) -> XxInputPopupSurfaceV2,
+        input_method: XxInputMethodV1,
         parent: PopupParent,
         surface: WlSurface,
         anchor: Rectangle<i32, Logical>,
@@ -114,7 +114,7 @@ impl PopupSurface {
     }
 
     /// Access the input method using this popup
-    pub fn input_method(&self) -> &ZwpInputMethodV3 {
+    pub fn input_method(&self) -> &XxInputMethodV1 {
         let role_data: &InputMethodPopupSurfaceUserData = self.surface_role.data().unwrap();
         &role_data.input_method
     }
@@ -223,11 +223,11 @@ impl PopupSurfaceState {
     }
 }
 
-/// Data accessible from ZwpInputPopupSurfaceV3 object
+/// Data accessible from XxInputPopupSurfaceV2 object
 #[derive(Debug)]
 pub struct InputMethodPopupSurfaceUserData {
     /// Input method controlling this popup
-    input_method: ZwpInputMethodV3,
+    input_method: XxInputMethodV1,
     pub(super) alive_tracker: AliveTracker,
     pub(super) surface: WlSurface,
     pub(super) configure: Arc<Mutex<PopupConfigureAttributes>>,
@@ -239,7 +239,7 @@ pub struct InputMethodPopupSurfaceUserData {
 
 impl InputMethodPopupSurfaceUserData {
     fn new(
-        input_method: ZwpInputMethodV3,
+        input_method: XxInputMethodV1,
         surface: WlSurface,
         configure: Arc<Mutex<PopupConfigureAttributes>>,
         acked_state: Arc<Mutex<PopupSurfaceState>>,
@@ -256,7 +256,7 @@ impl InputMethodPopupSurfaceUserData {
     }
 }
 
-impl<D> Dispatch2<ZwpInputPopupSurfaceV3, D> for InputMethodPopupSurfaceUserData
+impl<D> Dispatch2<XxInputPopupSurfaceV2, D> for InputMethodPopupSurfaceUserData
 where
     D: InputMethodHandler + SeatHandler,
 {
@@ -264,12 +264,12 @@ where
         &self,
         state: &mut D,
         _client: &wayland_server::Client,
-        popup: &ZwpInputPopupSurfaceV3,
-        request: zwp_input_popup_surface_v3::Request,
+        popup: &XxInputPopupSurfaceV2,
+        request: xx_input_popup_surface_v2::Request,
         _dhandle: &wayland_server::DisplayHandle,
         _data_init: &mut wayland_server::DataInit<'_, D>,
     ) {
-        use zwp_input_popup_surface_v3::Request;
+        use xx_input_popup_surface_v2::Request;
         match request {
             Request::AckConfigure { serial } => {
                 let surface = &self.surface;
@@ -281,7 +281,7 @@ where
                     Some(state) => state,
                     None => {
                         popup.post_error(
-                            zwp_input_popup_surface_v3::Error::InvalidSerial,
+                            xx_input_popup_surface_v2::Error::InvalidSerial,
                             format!("Serial {} is not awaiting ack", <u32>::from(serial)),
                         );
                         return;
@@ -372,7 +372,7 @@ where
         }
     }
 
-    fn destroyed(&self, _state: &mut D, _client: ClientId, _object: &ZwpInputPopupSurfaceV3) {
+    fn destroyed(&self, _state: &mut D, _client: ClientId, _object: &XxInputPopupSurfaceV2) {
         self.alive_tracker.destroy_notify();
     }
 }

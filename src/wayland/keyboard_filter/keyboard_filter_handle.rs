@@ -5,9 +5,9 @@ use std::{
 
 use tracing::{error, warn};
 
-use wayland_protocols::wp::{
-    input_method::zv3::server::zwp_input_method_v3::ZwpInputMethodV3,
-    keyboard_filter::zv1::server::zwp_keyboard_filter_v1::{self, FilterAction, ZwpKeyboardFilterV1},
+use wayland_protocols_experimental::{
+    input_method::v1::server::xx_input_method_v1::XxInputMethodV1,
+    keyboard_filter::v1::server::xx_keyboard_filter_v1::{self, FilterAction, XxKeyboardFilterV1},
 };
 use wayland_server::WEnum;
 use wayland_server::{
@@ -106,7 +106,7 @@ impl WlKeyboardApi for FilterInterceptor {
     }
 }
 
-/// User data for a bound `zwp_keyboard_filter_v1`.
+/// User data for a bound `xx_keyboard_filter_v1`.
 #[derive(Debug)]
 pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) keyboard_handle: KeyboardHandle<D>,
@@ -114,7 +114,7 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) focused_surface: Mutex<Option<WlSurface>>,
     pub(crate) manager_data: Arc<Mutex<KeyboardFilterManagerUserDataInner>>,
     pub(crate) bound_keyboard: WlKeyboard,
-    pub(crate) bound_input_method: ZwpInputMethodV3,
+    pub(crate) bound_input_method: XxInputMethodV1,
     pub(crate) im_surface: WlSurface,
     /// Keys whose press was forwarded to the focused client (so Repeated is valid).
     pub(crate) client_held_keys: Mutex<HashSet<u32>>,
@@ -209,7 +209,7 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
     }
 }
 
-impl<D> Dispatch2<ZwpKeyboardFilterV1, D> for KeyboardFilterUserData<D>
+impl<D> Dispatch2<XxKeyboardFilterV1, D> for KeyboardFilterUserData<D>
 where
     D: SeatHandler,
     D: 'static,
@@ -218,12 +218,12 @@ where
         &self,
         _state: &mut D,
         _client: &Client,
-        resource: &ZwpKeyboardFilterV1,
-        request: <ZwpKeyboardFilterV1 as Resource>::Request,
+        resource: &XxKeyboardFilterV1,
+        request: <XxKeyboardFilterV1 as Resource>::Request,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
-        use zwp_keyboard_filter_v1::Request;
+        use xx_keyboard_filter_v1::Request;
         match request {
             Request::Unbind => {
                 self.detach();
@@ -241,7 +241,7 @@ where
                 let Some(pos) = pending.iter().position(|e| e.serial == serial) else {
                     warn!("Filter response for unknown serial {serial}");
                     resource.post_error(
-                        zwp_keyboard_filter_v1::Error::InvalidSerial,
+                        xx_keyboard_filter_v1::Error::InvalidSerial,
                         format!("No pending event with serial {serial}"),
                     );
                     return;
@@ -260,7 +260,7 @@ where
         &self,
         _state: &mut D,
         _client: wayland_server::backend::ClientId,
-        _resource: &ZwpKeyboardFilterV1,
+        _resource: &XxKeyboardFilterV1,
     ) {
         self.detach();
     }

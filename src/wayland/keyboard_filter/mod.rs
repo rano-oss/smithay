@@ -9,11 +9,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use wayland_protocols::wp::{
-    input_method::zv3::server::zwp_input_method_v3::ZwpInputMethodV3,
-    keyboard_filter::zv1::server::{
-        zwp_keyboard_filter_manager_v1::{self, ZwpKeyboardFilterManagerV1},
-        zwp_keyboard_filter_v1::ZwpKeyboardFilterV1,
+use wayland_protocols_experimental::{
+    input_method::v1::server::xx_input_method_v1::XxInputMethodV1,
+    keyboard_filter::v1::server::{
+        xx_keyboard_filter_manager_v1::{self, XxKeyboardFilterManagerV1},
+        xx_keyboard_filter_v1::XxKeyboardFilterV1,
     },
 };
 use wayland_server::{
@@ -38,7 +38,7 @@ pub struct KeyboardFilterManagerGlobalData {
     filter: Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
 }
 
-/// Data accessible from ZwpKeyboardFilterManagerV1
+/// Data accessible from XxKeyboardFilterManagerV1
 #[derive(Debug)]
 pub struct KeyboardFilterManagerUserData {
     inner: Arc<Mutex<KeyboardFilterManagerUserDataInner>>,
@@ -47,7 +47,7 @@ pub struct KeyboardFilterManagerUserData {
 #[derive(Debug, Default)]
 pub(crate) struct KeyboardFilterManagerUserDataInner {
     pub(crate) bound_keyboards: HashSet<WlKeyboard>,
-    pub(crate) bound_ims: HashSet<ZwpInputMethodV3>,
+    pub(crate) bound_ims: HashSet<XxInputMethodV1>,
 }
 
 /// State of the keyboard filter protocol.
@@ -60,8 +60,8 @@ impl KeyboardFilterManagerState {
     /// Initialize a keyboard filter manager global.
     pub fn new<D, F>(display: &DisplayHandle, filter: F) -> Self
     where
-        D: GlobalDispatch<ZwpKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData>,
-        D: Dispatch<ZwpKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
+        D: GlobalDispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerGlobalData>,
+        D: Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
         D: SeatHandler,
         D: 'static,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
@@ -69,7 +69,7 @@ impl KeyboardFilterManagerState {
         let data = KeyboardFilterManagerGlobalData {
             filter: Box::new(filter),
         };
-        let global = display.create_global::<D, ZwpKeyboardFilterManagerV1, _>(MANAGER_VERSION, data);
+        let global = display.create_global::<D, XxKeyboardFilterManagerV1, _>(MANAGER_VERSION, data);
         Self { global }
     }
 
@@ -79,10 +79,10 @@ impl KeyboardFilterManagerState {
     }
 }
 
-impl<D> GlobalDispatch2<ZwpKeyboardFilterManagerV1, D> for KeyboardFilterManagerGlobalData
+impl<D> GlobalDispatch2<XxKeyboardFilterManagerV1, D> for KeyboardFilterManagerGlobalData
 where
-    D: Dispatch<ZwpKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
-    D: Dispatch<ZwpKeyboardFilterV1, KeyboardFilterUserData<D>>,
+    D: Dispatch<XxKeyboardFilterManagerV1, KeyboardFilterManagerUserData>,
+    D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>>,
     D: SeatHandler,
     D: 'static,
 {
@@ -91,7 +91,7 @@ where
         _: &mut D,
         _: &DisplayHandle,
         _: &Client,
-        resource: New<ZwpKeyboardFilterManagerV1>,
+        resource: New<XxKeyboardFilterManagerV1>,
         data_init: &mut DataInit<'_, D>,
     ) {
         data_init.init(
@@ -107,9 +107,9 @@ where
     }
 }
 
-impl<D> Dispatch2<ZwpKeyboardFilterManagerV1, D> for KeyboardFilterManagerUserData
+impl<D> Dispatch2<XxKeyboardFilterManagerV1, D> for KeyboardFilterManagerUserData
 where
-    D: Dispatch<ZwpKeyboardFilterV1, KeyboardFilterUserData<D>>,
+    D: Dispatch<XxKeyboardFilterV1, KeyboardFilterUserData<D>>,
     D: SeatHandler,
     <D as SeatHandler>::KeyboardFocus: WaylandFocus,
     D: 'static,
@@ -118,13 +118,13 @@ where
         &self,
         _state: &mut D,
         _client: &Client,
-        resource: &ZwpKeyboardFilterManagerV1,
-        request: zwp_keyboard_filter_manager_v1::Request,
+        resource: &XxKeyboardFilterManagerV1,
+        request: xx_keyboard_filter_manager_v1::Request,
         _dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
         match request {
-            zwp_keyboard_filter_manager_v1::Request::BindToInputMethod {
+            xx_keyboard_filter_manager_v1::Request::BindToInputMethod {
                 keyboard,
                 input_method,
                 surface,
@@ -134,7 +134,7 @@ where
                     let bind = self.inner.lock().unwrap();
                     if bind.bound_keyboards.contains(&keyboard) || bind.bound_ims.contains(&input_method) {
                         resource.post_error(
-                            zwp_keyboard_filter_manager_v1::Error::AlreadyBound,
+                            xx_keyboard_filter_manager_v1::Error::AlreadyBound,
                             "keyboard or input method already bound",
                         );
                         return;
@@ -150,7 +150,7 @@ where
 
                 if !Arc::ptr_eq(&kb_handle.arc, &imdata.keyboard_handle.arc) {
                     resource.post_error(
-                        zwp_keyboard_filter_manager_v1::Error::WrongSeat,
+                        xx_keyboard_filter_manager_v1::Error::WrongSeat,
                         "The keyboard is attached to a different seat than the input method",
                     );
                     return;
@@ -168,7 +168,7 @@ where
                     client_held_keys: Mutex::new(HashSet::new()),
                 };
 
-                let keyboard_filter = data_init.init::<ZwpKeyboardFilterV1, _>(extensions, filter_udata);
+                let keyboard_filter = data_init.init::<XxKeyboardFilterV1, _>(extensions, filter_udata);
 
                 // Late bind: focus may already exist before the filter is created.
                 if let Some(focus) = imdata.text_input_handle.focus() {
@@ -183,7 +183,7 @@ where
                 bind.bound_keyboards.insert(keyboard);
                 bind.bound_ims.insert(input_method);
             }
-            zwp_keyboard_filter_manager_v1::Request::Destroy => {}
+            xx_keyboard_filter_manager_v1::Request::Destroy => {}
             _ => {}
         }
     }

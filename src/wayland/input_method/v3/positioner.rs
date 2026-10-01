@@ -3,8 +3,8 @@ use crate::utils::{Logical, Point, Rectangle, Size};
 use crate::wayland::Dispatch2;
 use std::cmp::min;
 use std::sync::Mutex;
-use wayland_protocols::wp::input_method::zv3::server::zwp_input_popup_positioner_v3::{
-    self, Anchor, ConstraintAdjustment, Gravity, ZwpInputPopupPositionerV3,
+use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_positioner_v1::{
+    self, Anchor, ConstraintAdjustment, Gravity, XxInputPopupPositionerV1,
 };
 use wayland_server::{Resource, WEnum};
 
@@ -319,7 +319,7 @@ impl PositionerState {
     }
 }
 
-impl<D> Dispatch2<ZwpInputPopupPositionerV3, D> for PositionerUserData
+impl<D> Dispatch2<XxInputPopupPositionerV1, D> for PositionerUserData
 where
     D: SeatHandler + 'static,
 {
@@ -327,18 +327,18 @@ where
         &self,
         _state: &mut D,
         _client: &wayland_server::Client,
-        positioner: &ZwpInputPopupPositionerV3,
-        request: zwp_input_popup_positioner_v3::Request,
+        positioner: &XxInputPopupPositionerV1,
+        request: xx_input_popup_positioner_v1::Request,
         _dhandle: &wayland_server::DisplayHandle,
         _data_init: &mut wayland_server::DataInit<'_, D>,
     ) {
         let mut state = self.inner.lock().unwrap();
-        use zwp_input_popup_positioner_v3::Request;
+        use xx_input_popup_positioner_v1::Request;
         match request {
             Request::SetSize { width, height } => {
                 if width < 1 || height < 1 {
                     positioner.post_error(
-                        zwp_input_popup_positioner_v3::Error::InvalidInput,
+                        xx_input_popup_positioner_v1::Error::InvalidInput,
                         "Invalid size for positioner.",
                     );
                 } else {

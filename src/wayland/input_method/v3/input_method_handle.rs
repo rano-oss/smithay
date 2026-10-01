@@ -3,16 +3,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use wayland_protocols::wp::{
-    input_method::zv3::server::zwp_input_popup_surface_v3::PopupPositionMode,
-    text_input::zv3::server::zwp_text_input_v3::Action,
-};
-use wayland_protocols::wp::{
-    input_method::zv3::server::{
-        zwp_input_method_v3::{self, ZwpInputMethodV3},
-        zwp_input_popup_surface_v3::ZwpInputPopupSurfaceV3,
+use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::Action;
+use wayland_protocols_experimental::{
+    input_method::v1::server::{
+        xx_input_method_v1::{self, ProtocolCompat, XxInputMethodV1},
+        xx_input_popup_surface_v2::{PopupPositionMode, XxInputPopupSurfaceV2},
     },
-    keyboard_filter::zv1::server::zwp_keyboard_filter_v1::ZwpKeyboardFilterV1,
+    keyboard_filter::v1::server::xx_keyboard_filter_v1::XxKeyboardFilterV1,
+    text_input::v3::server::xx_text_input_v3 as xx_ti,
 };
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 use wayland_server::{
@@ -50,7 +48,7 @@ pub(crate) struct InputMethodState {
 /// Contains input method state
 #[derive(Debug)]
 pub(crate) struct InputMethod {
-    pub object: ZwpInputMethodV3,
+    pub object: XxInputMethodV1,
     pub serial: u32,
     pub app_id: String,
     pub popup_handles: Vec<PopupSurface>,
@@ -75,7 +73,7 @@ impl InputMethodV3Handle {
     ///
     /// Replaces any prior instance registered under the same app_id so reconnects
     /// do not leave duplicate stale entries in the instance list.
-    pub(super) fn add_instance(&self, instance: &ZwpInputMethodV3, app_id: String) {
+    pub(super) fn add_instance(&self, instance: &XxInputMethodV1, app_id: String) {
         let mut inner = self.inner.lock().unwrap();
         inner.instances.retain(|i| i.app_id != app_id);
         if inner
@@ -234,6 +232,7 @@ impl InputMethodV3Handle {
     pub fn activate_input_method<D: SeatHandler + 'static>(&self, _state: &mut D, surface: &WlSurface) {
         self.with_instance(|im| {
             im.object.activate();
+            im.object.announce_protocol_compat(ProtocolCompat::TextInputV3);
             im.object
                 .data::<InputMethodUserData<D>>()
                 .unwrap()
@@ -258,12 +257,12 @@ impl InputMethodV3Handle {
     }
 }
 
-/// User data of ZwpInputMethodV3 object
+/// User data of XxInputMethodV1 object
 pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) handle: InputMethodV3Handle,
     pub(crate) text_input_handle: TextInputHandle,
     pub(crate) keyboard_handle: KeyboardHandle<D>,
-    pub(crate) keyboard_filter: Arc<Mutex<Option<ZwpKeyboardFilterV1>>>,
+    pub(crate) keyboard_filter: Arc<Mutex<Option<XxKeyboardFilterV1>>>,
     /// Avoids `D: InputMethodHandler` on deactivate (same pattern as v2).
     pub(crate) dismiss_popup: fn(&mut D, ImPopupSurface),
 }
@@ -287,9 +286,9 @@ impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
     }
 }
 
-impl<D> Dispatch2<ZwpInputMethodV3, D> for InputMethodUserData<D>
+impl<D> Dispatch2<XxInputMethodV1, D> for InputMethodUserData<D>
 where
-    D: Dispatch<ZwpInputPopupSurfaceV3, InputMethodPopupSurfaceUserData>,
+    D: Dispatch<XxInputPopupSurfaceV2, InputMethodPopupSurfaceUserData>,
     D: SeatHandler,
     D: InputMethodHandler,
     <D as SeatHandler>::KeyboardFocus: WaylandFocus,
@@ -299,12 +298,12 @@ where
         &self,
         state: &mut D,
         _client: &Client,
-        im: &ZwpInputMethodV3,
-        request: zwp_input_method_v3::Request,
+        im: &XxInputMethodV1,
+        request: xx_input_method_v1::Request,
         _dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
-        use zwp_input_method_v3::Request;
+        use xx_input_method_v1::Request;
         match request {
             Request::CommitString { text } => {
                 self.text_input_handle.with_active_text_input(|ti, _surface| {
@@ -372,12 +371,18 @@ where
             }
             Request::PerformAction { action } => {
                 let serial = self.handle.with_instance(|instance| instance.serial).unwrap_or(0);
-                let action = action.into_result().unwrap_or(Action::None);
+                let action = match action.into_result().unwrap_or(xx_ti::Action::Finish) {
+                    xx_ti::Action::Finish => Action::Submit,
+                    _ => Action::None,
+                };
                 self.text_input_handle.with_active_text_input(|ti, _surface| {
                     if ti.version() >= 2 {
                         ti.action(action, serial);
                     }
                 });
+            }
+            Request::MoveCursor { cursor: _, anchor: _ } => {
+                tracing::debug!("move_cursor request received but zwp_text_input_v3 doesn't support it");
             }
             Request::GetInputPopupSurface {
                 id,
@@ -393,7 +398,7 @@ where
 
                 if im.id() != active_id {
                     im.post_error(
-                        zwp_input_method_v3::Error::Inactive,
+                        xx_input_method_v1::Error::Inactive,
                         "Popup may only be created on the active input method.",
                     );
                     return;
@@ -409,7 +414,7 @@ where
                     && compositor::get_role(&surface) != Some(INPUT_POPUP_SURFACE_ROLE)
                 {
                     im.post_error(
-                        zwp_input_method_v3::Error::SurfaceHasRole,
+                        xx_input_method_v1::Error::SurfaceHasRole,
                         "Surface already has a role.",
                     );
                     return;
@@ -454,7 +459,7 @@ where
         }
     }
 
-    fn destroyed(&self, _state: &mut D, _client: ClientId, input_method: &ZwpInputMethodV3) {
+    fn destroyed(&self, _state: &mut D, _client: ClientId, input_method: &XxInputMethodV1) {
         let destroyed_id = input_method.id();
         let mut inner = self.handle.inner.lock().unwrap();
         let was_active = inner.active_input_method_id.as_ref() == Some(&destroyed_id);

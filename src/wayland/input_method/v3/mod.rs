@@ -1,14 +1,14 @@
-//! Input method v3 protocol support.
+//! Experimental xx-input-method protocol support (formerly zwp_input_method_v3).
 
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId};
 
 use crate::wayland::{Dispatch2, GlobalData, GlobalDispatch2};
 
-use wayland_protocols::wp::input_method::zv3::server::{
-    zwp_input_method_manager_v3::{self, ZwpInputMethodManagerV3},
-    zwp_input_method_v3::ZwpInputMethodV3,
-    zwp_input_popup_positioner_v3::ZwpInputPopupPositionerV3,
-    zwp_input_popup_surface_v3::ZwpInputPopupSurfaceV3,
+use wayland_protocols_experimental::input_method::v1::server::{
+    xx_input_method_manager_v2::{self, XxInputMethodManagerV2},
+    xx_input_method_v1::XxInputMethodV1,
+    xx_input_popup_positioner_v1::XxInputPopupPositionerV1,
+    xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
 
 use crate::input::{Seat, SeatHandler};
@@ -18,10 +18,10 @@ pub(crate) use input_method_handle::{InputMethodUserData, InputMethodV3Handle};
 use super::{InputMethodHandle, InputMethodHandler, InputMethodManagerGlobalData};
 use crate::wayland::text_input::TextInputHandle;
 
-const MANAGER_VERSION: u32 = 2;
+const MANAGER_VERSION: u32 = 4;
 
-/// The role of the input method popup (v3).
-pub const INPUT_POPUP_SURFACE_ROLE: &str = "zwp_input_popup_surface_v3";
+/// The role of the input method popup (xx).
+pub const INPUT_POPUP_SURFACE_ROLE: &str = "xx_input_popup_surface_v2";
 
 mod configure_tracker;
 mod input_method_handle;
@@ -31,43 +31,43 @@ mod positioner;
 pub use input_method_popup_surface::{InputMethodPopupSurfaceUserData, PopupSurface, PopupSurfaceState};
 pub use positioner::{PositionerState, PositionerUserData};
 
-/// State of wp input method v3 protocol.
+/// State of xx input method protocol.
 #[derive(Debug)]
 pub struct InputMethodManagerState {
     global: GlobalId,
 }
 
 impl InputMethodManagerState {
-    /// Initialize an input method manager global (v3).
+    /// Initialize an input method manager global (xx).
     pub fn new<D, F>(display: &DisplayHandle, filter: F) -> Self
     where
-        D: GlobalDispatch<ZwpInputMethodManagerV3, InputMethodManagerGlobalData>,
-        D: Dispatch<ZwpInputMethodManagerV3, GlobalData>,
-        D: Dispatch<ZwpInputMethodV3, InputMethodUserData<D>>,
-        D: Dispatch<ZwpInputPopupSurfaceV3, InputMethodPopupSurfaceUserData>,
-        D: Dispatch<ZwpInputPopupPositionerV3, PositionerUserData>,
+        D: GlobalDispatch<XxInputMethodManagerV2, InputMethodManagerGlobalData>,
+        D: Dispatch<XxInputMethodManagerV2, GlobalData>,
+        D: Dispatch<XxInputMethodV1, InputMethodUserData<D>>,
+        D: Dispatch<XxInputPopupSurfaceV2, InputMethodPopupSurfaceUserData>,
+        D: Dispatch<XxInputPopupPositionerV1, PositionerUserData>,
         D: SeatHandler,
         D: 'static,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
         let data = InputMethodManagerGlobalData::new(filter);
-        let global = display.create_global::<D, ZwpInputMethodManagerV3, _>(MANAGER_VERSION, data);
+        let global = display.create_global::<D, XxInputMethodManagerV2, _>(MANAGER_VERSION, data);
 
         Self { global }
     }
 
-    /// Get the id of the v3 manager global.
+    /// Get the id of the manager global.
     pub fn global(&self) -> GlobalId {
         self.global.clone()
     }
 }
 
-impl<D> GlobalDispatch2<ZwpInputMethodManagerV3, D> for InputMethodManagerGlobalData
+impl<D> GlobalDispatch2<XxInputMethodManagerV2, D> for InputMethodManagerGlobalData
 where
-    D: Dispatch<ZwpInputMethodManagerV3, GlobalData>,
-    D: Dispatch<ZwpInputMethodV3, InputMethodUserData<D>>,
-    D: Dispatch<ZwpInputPopupSurfaceV3, InputMethodPopupSurfaceUserData>,
-    D: Dispatch<ZwpInputPopupPositionerV3, PositionerUserData>,
+    D: Dispatch<XxInputMethodManagerV2, GlobalData>,
+    D: Dispatch<XxInputMethodV1, InputMethodUserData<D>>,
+    D: Dispatch<XxInputPopupSurfaceV2, InputMethodPopupSurfaceUserData>,
+    D: Dispatch<XxInputPopupPositionerV1, PositionerUserData>,
     D: SeatHandler,
     D: 'static,
 {
@@ -76,7 +76,7 @@ where
         _: &mut D,
         _: &DisplayHandle,
         _: &Client,
-        resource: New<ZwpInputMethodManagerV3>,
+        resource: New<XxInputMethodManagerV2>,
         data_init: &mut DataInit<'_, D>,
     ) {
         data_init.init(resource, GlobalData);
@@ -87,10 +87,10 @@ where
     }
 }
 
-impl<D> Dispatch2<ZwpInputMethodManagerV3, D> for GlobalData
+impl<D> Dispatch2<XxInputMethodManagerV2, D> for GlobalData
 where
-    D: Dispatch<ZwpInputMethodV3, InputMethodUserData<D>>,
-    D: Dispatch<ZwpInputPopupPositionerV3, PositionerUserData>,
+    D: Dispatch<XxInputMethodV1, InputMethodUserData<D>>,
+    D: Dispatch<XxInputPopupPositionerV1, PositionerUserData>,
     D: SeatHandler + InputMethodHandler,
     D: 'static,
 {
@@ -98,13 +98,13 @@ where
         &self,
         state: &mut D,
         client: &Client,
-        _: &ZwpInputMethodManagerV3,
-        request: zwp_input_method_manager_v3::Request,
+        _: &XxInputMethodManagerV2,
+        request: xx_input_method_manager_v2::Request,
         dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
         match request {
-            zwp_input_method_manager_v3::Request::GetInputMethod { seat, input_method } => {
+            xx_input_method_manager_v2::Request::GetInputMethod { seat, input_method } => {
                 let seat = Seat::<D>::from_resource(&seat).unwrap();
                 let user_data = seat.user_data();
                 user_data.insert_if_missing(TextInputHandle::default);
@@ -139,10 +139,10 @@ where
                 state.input_method_instance_registered(&seat, &app_id);
                 input_method_handle.sync_activation(state, &seat);
             }
-            zwp_input_method_manager_v3::Request::GetPositioner { id } => {
+            xx_input_method_manager_v2::Request::GetPositioner { id } => {
                 data_init.init(id, PositionerUserData::default());
             }
-            zwp_input_method_manager_v3::Request::Destroy => {}
+            xx_input_method_manager_v2::Request::Destroy => {}
             _ => unreachable!(),
         }
     }
