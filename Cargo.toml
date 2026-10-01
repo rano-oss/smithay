@@ -61,7 +61,7 @@ wayland-egl = { version = "0.32.11", optional = true }
 wayland-protocols = { version = "0.32.13", features = ["unstable", "staging", "server"], optional = true }
 wayland-protocols-wlr = { version = "0.3.12", features = ["server"], optional = true }
 wayland-protocols-misc = { version = "0.3.12", features = ["server"], optional = true }
-wayland-protocols-experimental = { version = "20261001.0.1", features = ["server"], optional = true }
+wayland-protocols-experimental = { git = "https://github.com/rano-oss/wayland-rs.git", branch = "experimental/generate-xx-im", features = ["server"], optional = true }
 wayland-server = { version = "0.31.14", optional = true }
 wayland-sys = { version = "0.31.11", optional = true }
 wayland-backend = { version = "0.3.15", optional = true }
@@ -150,6 +150,3 @@ harness = false
 inherits = "release"
 debug = true
 
-[patch.crates-io]
-wayland-protocols = { path = "../wayland-rs/wayland-protocols" }
-wayland-protocols-experimental = { path = "../wayland-rs/wayland-protocols-experimental" }
