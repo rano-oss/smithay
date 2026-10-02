@@ -56,7 +56,7 @@ where
     /// Hold modifiers were changed on a keyboard from a given seat
     fn modifiers(&self, seat: &Seat<D>, data: &mut D, modifiers: ModifiersState, serial: Serial);
     /// Compositor key repeat for a given seat, default to do nothing
-    fn repeat(&self, _seat: &Seat<D>, _data: &mut D, _keycode: Keycode, _serial: Serial, _time: InputTime) {}
+    fn repeat(&self, seat: &Seat<D>, data: &mut D, keycode: Keycode, serial: Serial, time: InputTime);
     /// Keyboard focus of a given seat moved from another handler to this handler
     fn replace(
         &self,
@@ -268,16 +268,6 @@ impl<D: SeatHandler> fmt::Debug for KbdInternal<D> {
 unsafe impl<D: SeatHandler> Send for KbdInternal<D> {}
 
 impl<D: SeatHandler + 'static> KbdInternal<D> {
-    /// Rate/delay advertised to clients (`(0, 0)` when compositor owns repeat).
-    #[cfg(feature = "wayland_frontend")]
-    pub(crate) fn advertised_repeat_info(&self) -> (i32, i32) {
-        if self.compositor_owned_repeat {
-            (0, 0)
-        } else {
-            (self.repeat_rate, self.repeat_delay)
-        }
-    }
-
     fn new(
         xkb_config: XkbConfig<'_>,
         repeat_rate: i32,
@@ -1278,12 +1268,16 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
 
     /// Start or stop compositor-side key repeat based on key state.
     ///
-    /// Only active if the compositor provides a loop handle via [`SeatHandler::loop_handle`].
+    /// Only active when [`Self::set_compositor_owned_repeat`] is enabled and the
+    /// compositor provides a loop handle via [`SeatHandler::loop_handle`].
     fn manage_key_repeat(&self, data: &mut D, keycode: Keycode, state: KeyState, time: InputTime) {
         let Some(loop_handle) = data.loop_handle() else {
             return;
         };
         let mut guard = self.arc.internal.lock().unwrap();
+        if !guard.compositor_owned_repeat {
+            return;
+        }
         if let Some(token) = guard.key_repeat_token.take() {
             loop_handle.remove(token);
         }
@@ -1329,7 +1323,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     }
 
     #[cfg(feature = "wayland_frontend")]
-    fn send_client_repeat_info(&self, rate: i32, delay: i32) {
+    fn broadcast_repeat_info(&self, rate: i32, delay: i32) {
         if let Some(kbd) = self.arc.kbd_interceptor.lock().unwrap().as_ref() {
             if kbd.protocol_version() >= 4 {
                 kbd.repeat_info(rate, delay);
@@ -1346,8 +1340,10 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         }
     }
 
-    /// Change the compositor-side repeat rate/delay. Clients still get `(0, 0)` while
-    /// [`Self::set_compositor_owned_repeat`] is enabled.
+    /// Change the repeat info configured for this keyboard.
+    ///
+    /// While [`Self::set_compositor_owned_repeat`] is enabled, clients keep
+    /// `repeat_info(0, 0)`; only the compositor-side timer uses the new values.
     #[instrument(parent = &self.arc.span, skip(self))]
     pub fn change_repeat_info(&self, rate: i32, delay: i32) {
         let mut guard = self.arc.internal.lock().unwrap();
@@ -1355,9 +1351,24 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         guard.repeat_rate = rate;
         #[cfg(feature = "wayland_frontend")]
         {
-            let (rate, delay) = guard.advertised_repeat_info();
+            if guard.compositor_owned_repeat {
+                return;
+            }
             drop(guard);
-            self.send_client_repeat_info(rate, delay);
+            if let Some(kbd) = self.arc.kbd_interceptor.lock().unwrap().as_ref() {
+                if kbd.protocol_version() >= 4 {
+                    kbd.repeat_info(rate, delay);
+                }
+                return;
+            }
+            for kbd in &*self.arc.known_kbds.lock().unwrap() {
+                let Ok(kbd) = kbd.upgrade() else {
+                    continue;
+                };
+                if kbd.version() >= 4 {
+                    kbd.repeat_info(rate, delay);
+                }
+            }
         }
     }
 
@@ -1369,9 +1380,13 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             return;
         }
         guard.compositor_owned_repeat = owned;
-        let (rate, delay) = guard.advertised_repeat_info();
+        let (rate, delay) = if owned {
+            (0, 0)
+        } else {
+            (guard.repeat_rate, guard.repeat_delay)
+        };
         drop(guard);
-        self.send_client_repeat_info(rate, delay);
+        self.broadcast_repeat_info(rate, delay);
     }
 
     /// Set the current focus of this keyboard
