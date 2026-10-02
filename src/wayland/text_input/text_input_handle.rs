@@ -3,14 +3,17 @@ use std::sync::{Arc, Mutex};
 
 use tracing::debug;
 use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::{
-    self, ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3,
+    self, Action, ChangeCause, ContentHint, ContentPurpose, ZwpTextInputV3,
 };
 use wayland_server::backend::{ClientId, ObjectId};
 use wayland_server::{Resource, protocol::wl_surface::WlSurface};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::{Dispatch2, input_method::InputMethodHandle};
+use crate::wayland::{
+    Dispatch2,
+    input_method::{InputMethodHandle, InputMethodHandler},
+};
 
 #[derive(Default, Debug)]
 pub(crate) struct TextInput {
@@ -216,7 +219,7 @@ pub struct TextInputUserData {
 
 impl<D> Dispatch2<ZwpTextInputV3, D> for TextInputUserData
 where
-    D: SeatHandler,
+    D: SeatHandler + InputMethodHandler,
     D: 'static,
 {
     fn request(
@@ -242,13 +245,14 @@ where
             return;
         }
 
-        let focus = match self.handle.focus() {
-            Some(focus) if focus.id().same_client_as(&resource.id()) => focus,
-            _ => {
-                debug!("discarding text-input request for unfocused client");
-                return;
-            }
-        };
+        if self
+            .handle
+            .focus()
+            .is_none_or(|focus| !focus.id().same_client_as(&resource.id()))
+        {
+            debug!("discarding text-input request for unfocused client");
+            return;
+        }
 
         let mut guard = self.handle.inner.lock().unwrap();
         let pending_state = match guard.instances.iter_mut().find_map(|instance| {
@@ -289,6 +293,29 @@ where
             zwp_text_input_v3::Request::SetCursorRectangle { x, y, width, height } => {
                 pending_state.cursor_rectangle = Some(Rectangle::new((x, y).into(), (width, height).into()));
             }
+            zwp_text_input_v3::Request::SetAvailableActions { available_actions } => {
+                let valid = available_actions.len().is_multiple_of(4) && {
+                    let mut seen = std::collections::HashSet::new();
+                    available_actions.chunks_exact(4).all(|chunk| {
+                        let action = u32::from_ne_bytes(chunk.try_into().unwrap());
+                        action != Action::None as u32 && seen.insert(action)
+                    })
+                };
+                if !valid {
+                    resource.post_error(
+                        zwp_text_input_v3::Error::InvalidAction,
+                        "available_actions contains none or duplicates",
+                    );
+                    return;
+                }
+                pending_state.available_actions = Some(available_actions);
+            }
+            zwp_text_input_v3::Request::ShowInputPanel => {
+                state.show_input_panel();
+            }
+            zwp_text_input_v3::Request::HideInputPanel => {
+                state.hide_input_panel();
+            }
             zwp_text_input_v3::Request::Commit => {
                 let mut new_state = mem::take(pending_state);
                 let _ = pending_state;
@@ -304,7 +331,6 @@ where
                         *active_text_input_id = Some(resource.id());
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
-                        self.input_method_handle.activate_input_method(state, &focus);
                     }
                     Some(false) => {
                         *active_text_input_id = None;
@@ -325,31 +351,26 @@ where
                 }
 
                 if let Some((text, cursor, anchor)) = new_state.surrounding_text.take() {
-                    self.input_method_handle.with_instance(move |input_method| {
-                        input_method.object.surrounding_text(text, cursor, anchor)
-                    });
+                    self.input_method_handle.surrounding_text(text, cursor, anchor);
                 }
 
                 if let Some(cause) = new_state.text_change_cause.take() {
-                    self.input_method_handle.with_instance(move |input_method| {
-                        input_method.object.text_change_cause(cause);
-                    });
+                    self.input_method_handle.text_change_cause(cause);
                 }
 
                 if let Some((hint, purpose)) = new_state.content_type.take() {
-                    self.input_method_handle.with_instance(move |input_method| {
-                        input_method.object.content_type(hint, purpose);
-                    });
+                    self.input_method_handle.content_type(hint, purpose);
                 }
 
                 if let Some(rect) = new_state.cursor_rectangle.take() {
-                    self.input_method_handle
-                        .set_text_input_rectangle::<D>(state, rect);
+                    self.input_method_handle.cursor_rectangle::<D>(state, rect);
                 }
 
-                self.input_method_handle.with_instance(|input_method| {
-                    input_method.done();
-                });
+                if let Some(actions) = new_state.available_actions.take() {
+                    self.input_method_handle.set_available_actions(actions);
+                }
+
+                self.input_method_handle.done();
             }
             zwp_text_input_v3::Request::Destroy => {
                 // Nothing to do
@@ -398,4 +419,5 @@ struct TextInputState {
     content_type: Option<(ContentHint, ContentPurpose)>,
     cursor_rectangle: Option<Rectangle<i32, Logical>>,
     text_change_cause: Option<ChangeCause>,
+    available_actions: Option<Vec<u8>>,
 }
