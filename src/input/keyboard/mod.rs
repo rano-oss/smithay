@@ -55,7 +55,7 @@ where
     );
     /// Hold modifiers were changed on a keyboard from a given seat
     fn modifiers(&self, seat: &Seat<D>, data: &mut D, modifiers: ModifiersState, serial: Serial);
-    /// Compositor key repeat for a given seat, default to do nothing
+    /// Compositor key repeat for a given seat
     fn repeat(&self, seat: &Seat<D>, data: &mut D, keycode: Keycode, serial: Serial, time: InputTime);
     /// Keyboard focus of a given seat moved from another handler to this handler
     fn replace(
