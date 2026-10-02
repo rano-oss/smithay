@@ -8,7 +8,7 @@ use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_pos
 };
 use wayland_server::{Resource, WEnum};
 
-#[allow(missing_docs)]
+/// User data for [`XxInputPopupPositionerV1`].
 #[derive(Default, Debug)]
 pub struct PositionerUserData {
     pub(crate) inner: Mutex<PositionerState>,

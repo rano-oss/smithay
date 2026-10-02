@@ -3,6 +3,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use tracing::{debug, warn};
+
 use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::Action;
 use wayland_protocols_experimental::{
     input_method::v1::server::{
@@ -105,12 +107,12 @@ impl InputMethodV3Handle {
             .map(f)
     }
 
-    pub fn active_app_id(&self) -> Option<String> {
+    pub(crate) fn active_app_id(&self) -> Option<String> {
         self.with_instance(|i| i.app_id.clone())
     }
 
     /// Select instance by `app_id`. Returns `false` if no matching instance exists.
-    pub fn set_active_instance<D: SeatHandler + InputMethodHandler + 'static>(
+    pub(crate) fn set_active_instance<D: SeatHandler + InputMethodHandler + 'static>(
         &self,
         state: &mut D,
         app_id: &str,
@@ -215,7 +217,7 @@ impl InputMethodV3Handle {
         }
     }
 
-    pub fn clear_active_instance<D: SeatHandler + 'static>(&self, state: &mut D) {
+    pub(crate) fn clear_active_instance<D: SeatHandler + 'static>(&self, state: &mut D) {
         self.deactivate_input_method(state);
         self.inner.lock().unwrap().active_input_method_id = None;
     }
@@ -229,7 +231,7 @@ impl InputMethodV3Handle {
         });
     }
 
-    pub fn activate_input_method<D: SeatHandler + 'static>(&self, _state: &mut D, surface: &WlSurface) {
+    pub(crate) fn activate_input_method<D: SeatHandler + 'static>(&self, _state: &mut D, surface: &WlSurface) {
         self.with_instance(|im| {
             im.object.activate();
             im.object.announce_protocol_compat(ProtocolCompat::TextInputV3);
@@ -240,7 +242,7 @@ impl InputMethodV3Handle {
         });
     }
 
-    pub fn deactivate_input_method<D: SeatHandler + 'static>(&self, state: &mut D) {
+    pub(crate) fn deactivate_input_method<D: SeatHandler + 'static>(&self, state: &mut D) {
         self.with_instance(|im| {
             im.object.deactivate();
             im.done();
@@ -263,7 +265,6 @@ pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) text_input_handle: TextInputHandle,
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     pub(crate) keyboard_filter: Arc<Mutex<Option<XxKeyboardFilterV1>>>,
-    /// Avoids `D: InputMethodHandler` on deactivate (same pattern as v2).
     pub(crate) dismiss_popup: fn(&mut D, ImPopupSurface),
 }
 
@@ -382,7 +383,7 @@ where
                 });
             }
             Request::MoveCursor { cursor: _, anchor: _ } => {
-                tracing::debug!("move_cursor request received but zwp_text_input_v3 doesn't support it");
+                debug!("move_cursor ignored: no zwp_text_input_v3 equivalent");
             }
             Request::GetInputPopupSurface {
                 id,
@@ -404,9 +405,8 @@ where
                     return;
                 }
 
-                // Race: focus may have been lost after the client decided to create a popup.
                 let Some(parent_surface) = self.text_input_handle.focus().clone() else {
-                    tracing::warn!("Ignoring popup creation: no surface in text input focus (likely race)");
+                    warn!("ignoring popup creation without text-input focus");
                     return;
                 };
 
@@ -474,8 +474,8 @@ where
                 f.flush_pending_passthrough();
                 f.deactivate_interceptor();
             });
-            // Do not text_input.leave(): that clears active_text_input_id and blocks
-            // preedit until the client re-enables (chewingwl may not do that promptly).
+            // Prefer clearing preedit over text_input.leave(), which drops the
+            // active text-input id and blocks further preedit until re-enabled.
             self.text_input_handle.with_active_text_input(|ti, _surface| {
                 ti.preedit_string(None, -1, -1);
             });

@@ -184,7 +184,7 @@ where
                 bind.bound_ims.insert(input_method);
             }
             xx_keyboard_filter_manager_v1::Request::Destroy => {}
-            _ => {}
+            _ => unreachable!(),
         }
     }
 }

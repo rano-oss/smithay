@@ -252,7 +252,7 @@ where
                     self.send_key_to_focused_client(&event);
                 }
             }
-            _ => {}
+            _ => unreachable!(),
         }
     }
 

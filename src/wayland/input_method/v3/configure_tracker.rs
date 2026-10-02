@@ -4,22 +4,22 @@ use super::input_method_popup_surface::PopupSurfaceState;
 
 /// A configure event sent to the client, waiting to be acknowledged.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PopupConfigure {
-    pub state: PopupSurfaceState,
-    pub serial: Serial,
+pub(crate) struct PopupConfigure {
+    pub(crate) state: PopupSurfaceState,
+    pub(crate) serial: Serial,
 }
 
 /// Tracks popup configure state using the same fields as xdg-shell popups.
 #[derive(Debug, Default)]
-pub struct PopupConfigureAttributes {
-    pub initial_configure_sent: bool,
+pub(crate) struct PopupConfigureAttributes {
+    pub(crate) initial_configure_sent: bool,
     pending_configures: Vec<PopupConfigure>,
-    pub server_pending: Option<PopupSurfaceState>,
-    pub last_acked: Option<PopupConfigure>,
+    pub(crate) server_pending: Option<PopupSurfaceState>,
+    pub(crate) last_acked: Option<PopupConfigure>,
 }
 
 impl PopupConfigureAttributes {
-    pub fn with_server_pending(state: PopupSurfaceState) -> Self {
+    pub(crate) fn with_server_pending(state: PopupSurfaceState) -> Self {
         Self {
             initial_configure_sent: false,
             pending_configures: Vec::new(),
@@ -28,7 +28,7 @@ impl PopupConfigureAttributes {
         }
     }
 
-    pub fn ack_configure(&mut self, serial: Serial) -> Option<PopupSurfaceState> {
+    pub(crate) fn ack_configure(&mut self, serial: Serial) -> Option<PopupSurfaceState> {
         let configure = self
             .pending_configures
             .iter()
@@ -41,7 +41,7 @@ impl PopupConfigureAttributes {
         Some(configure.state)
     }
 
-    pub fn current_server_state(&self) -> PopupSurfaceState {
+    pub(crate) fn current_server_state(&self) -> PopupSurfaceState {
         self.pending_configures
             .last()
             .map(|configure| &configure.state)
@@ -50,14 +50,14 @@ impl PopupConfigureAttributes {
             .unwrap_or_default()
     }
 
-    pub fn has_pending_changes(&self) -> bool {
+    pub(crate) fn has_pending_changes(&self) -> bool {
         self.server_pending
             .as_ref()
             .map(|state| *state != self.current_server_state())
             .unwrap_or(false)
     }
 
-    pub fn with_pending_state<F>(&mut self, f: F)
+    pub(crate) fn with_pending_state<F>(&mut self, f: F)
     where
         F: FnOnce(&mut PopupSurfaceState),
     {
@@ -67,7 +67,7 @@ impl PopupConfigureAttributes {
         f(self.server_pending.as_mut().unwrap());
     }
 
-    pub fn send_pending_configure<F>(&mut self, mut send: F)
+    pub(crate) fn send_pending_configure<F>(&mut self, mut send: F)
     where
         F: FnMut(PopupSurfaceState, PopupSurfaceState, Serial),
     {

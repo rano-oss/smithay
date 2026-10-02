@@ -1,5 +1,6 @@
-//! Experimental xx-input-method protocol support (formerly zwp_input_method_v3).
+//! Experimental xx-input-method protocol support.
 
+use tracing::warn;
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId};
 
 use crate::wayland::{Dispatch2, GlobalData, GlobalDispatch2};
@@ -124,18 +125,14 @@ where
                 let app_id = match state.input_method_app_id(client, dh) {
                     Some(id) => id,
                     None => {
-                        tracing::warn!(
-                            "Input method client has no app_id (no security context?), rejecting registration"
-                        );
+                        warn!("rejecting input method without app_id");
                         instance.unavailable();
                         return;
                     }
                 };
 
                 input_method_handle.v3.add_instance(&instance, app_id.clone());
-                // Enter before compositor policy so sync_activation sees text-input focus.
                 text_input_handle.enter();
-                // Compositor selects the active instance (layout policy); we activate once.
                 state.input_method_instance_registered(&seat, &app_id);
                 input_method_handle.sync_activation(state, &seat);
             }

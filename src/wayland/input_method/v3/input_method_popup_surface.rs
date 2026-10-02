@@ -22,7 +22,7 @@ use super::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct PopupLocation {
+pub(crate) struct PopupLocation {
     /// Area for the positioner, relative to parent
     pub anchor: Rectangle<i32, Logical>,
     /// Geometry of the popup surface relative to parent.
@@ -138,8 +138,7 @@ impl PopupSurface {
         self.acked_state.lock().unwrap().position.anchor
     }
 
-    /// `true` if the surface sent a
-    /// configure sequence since creating the popup object.
+    /// Whether an initial configure sequence has been sent for this popup.
     pub fn is_initial_configure_sent(&self) -> bool {
         self.configure.lock().unwrap().initial_configure_sent
     }
@@ -166,10 +165,9 @@ impl PopupSurface {
             .with_pending_state(|state| state.repositioned = Some(token));
     }
 
-    /// Send a configure event to this popup surface to suggest it a new configuration
+    /// Send a configure for pending geometry and track its serial for ack.
     ///
-    /// The serial of this configure will be tracked waiting for the client to ACK it.
-    /// Call this from input_method.done
+    /// Typically invoked when applying input-method state on `.done`.
     pub fn send_pending_configure(&self) {
         let surface_role = self.surface_role.clone();
         self.configure
@@ -311,8 +309,8 @@ where
                 *self.positioner.lock().unwrap() = positioner;
                 popup.set_repositioned(token);
 
-                // StartOfPreedit must never follow the live caret via Size/Reposition
-                // when unanchored — that is what made Kate track the end caret.
+                // In start_of_preedit mode, keep the frozen preedit-start anchor
+                // rather than tracking the live caret via Size/Reposition.
                 let cursor = if popup.position_mode == PopupPositionMode::FollowCursor {
                     last_cursor
                 } else {
@@ -351,10 +349,8 @@ where
                 let previous = popup.position_mode;
                 popup.position_mode = mode;
                 if mode == PopupPositionMode::StartOfPreedit {
-                    // Only arm a new lock when entering this mode or after the
-                    // anchor was cleared (e.g. CommitString). Re-setting the same
-                    // mode must not reopen awaiting — Kate/Alacritty report the
-                    // caret at preedit end and would steal the lock.
+                    // Arm a new anchor only when entering this mode or after the
+                    // previous anchor was cleared (e.g. CommitString).
                     if previous != PopupPositionMode::StartOfPreedit
                         || popup.anchored_cursor_rectangle.is_none()
                     {
