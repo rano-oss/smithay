@@ -886,18 +886,19 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         *self.arc.active_keymap.write().unwrap() = new_id;
 
         // Update keymap for every wl_keyboard.
-        let kbd_interceptor = &self.arc.kbd_interceptor;
-        if let Some(kbd) = kbd_interceptor.lock().unwrap().as_ref() {
-            let res = keymap_file.with_fd(kbd.protocol_version() >= 7, |fd, size| {
-                kbd.keymap(KeymapFormat::XkbV1, fd.as_fd(), size as u32)
-            });
-            if let Err(e) = res {
-                warn!(
-                    err = ?e,
-                    "Failed to send keymap to client"
-                );
+        'update_keymap: {
+            if let Some(kbd) = self.arc.kbd_interceptor.lock().unwrap().as_ref() {
+                let res = keymap_file.with_fd(kbd.protocol_version() >= 7, |fd, size| {
+                    kbd.keymap(KeymapFormat::XkbV1, fd.as_fd(), size as u32)
+                });
+                if let Err(e) = res {
+                    warn!(
+                        err = ?e,
+                        "Failed to send keymap to client"
+                    );
+                }
+                break 'update_keymap;
             }
-        } else {
             let known_kbds = &self.arc.known_kbds;
             for kbd in &*known_kbds.lock().unwrap() {
                 let Ok(kbd) = kbd.upgrade() else {
@@ -1355,20 +1356,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 return;
             }
             drop(guard);
-            if let Some(kbd) = self.arc.kbd_interceptor.lock().unwrap().as_ref() {
-                if kbd.protocol_version() >= 4 {
-                    kbd.repeat_info(rate, delay);
-                }
-                return;
-            }
-            for kbd in &*self.arc.known_kbds.lock().unwrap() {
-                let Ok(kbd) = kbd.upgrade() else {
-                    continue;
-                };
-                if kbd.version() >= 4 {
-                    kbd.repeat_info(rate, delay);
-                }
-            }
+            self.broadcast_repeat_info(rate, delay);
         }
     }
 
