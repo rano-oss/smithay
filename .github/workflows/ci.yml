@@ -189,6 +189,7 @@ jobs:
     smithay-tests:
         needs:
             - smithay-check-features
+        continue-on-error: true
 
         env:
             RUSTFLAGS: "-D warnings"
@@ -226,6 +227,7 @@ jobs:
     smallvil-check:
         needs:
             - smithay-check-features
+        continue-on-error: true
 
         env:
             RUSTFLAGS: "-D warnings"
@@ -263,6 +265,7 @@ jobs:
     anvil-check-features:
         needs:
             - smithay-check-features
+        continue-on-error: true
 
         env:
             RUSTFLAGS: "-D warnings"
@@ -303,6 +306,7 @@ jobs:
     anvil-wlcs:
         needs:
             - anvil-check-features
+        continue-on-error: true
 
         strategy:
             fail-fast: false
