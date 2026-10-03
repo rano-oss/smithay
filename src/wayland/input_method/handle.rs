@@ -69,8 +69,7 @@ impl InputMethodHandle {
     pub(crate) fn text_change_cause(&self, cause: ChangeCause) {
         self.v2.with_instance(|im| im.object.text_change_cause(cause));
         let xx_cause = to_xx_change_cause(cause);
-        self.v3
-            .with_instance(|im| im.object.text_change_cause(xx_cause));
+        self.v3.with_instance(|im| im.object.text_change_cause(xx_cause));
     }
 
     pub(crate) fn content_type(&self, hint: ContentHint, purpose: ContentPurpose) {

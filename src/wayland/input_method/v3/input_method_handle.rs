@@ -231,7 +231,11 @@ impl InputMethodV3Handle {
         });
     }
 
-    pub(crate) fn activate_input_method<D: SeatHandler + 'static>(&self, _state: &mut D, surface: &WlSurface) {
+    pub(crate) fn activate_input_method<D: SeatHandler + 'static>(
+        &self,
+        _state: &mut D,
+        surface: &WlSurface,
+    ) {
         self.with_instance(|im| {
             im.object.activate();
             im.object
