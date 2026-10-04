@@ -1,5 +1,7 @@
 //! Experimental xx-input-method protocol support.
 
+use std::sync::Arc;
+
 use tracing::warn;
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId};
 
@@ -32,15 +34,17 @@ mod positioner;
 pub use input_method_popup_surface::{InputMethodPopupSurfaceUserData, PopupSurface, PopupSurfaceState};
 pub use positioner::{PositionerState, PositionerUserData};
 
-/// State of xx input method protocol.
+/// xx input-method manager global.
 #[derive(Debug)]
-pub struct InputMethodManagerState {
-    global: GlobalId,
+pub(crate) struct InputMethodManagerState {
+    _global: GlobalId,
 }
 
 impl InputMethodManagerState {
-    /// Initialize an input method manager global (xx).
-    pub fn new<D, F>(display: &DisplayHandle, filter: F) -> Self
+    pub(crate) fn new<D>(
+        display: &DisplayHandle,
+        filter: Arc<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
+    ) -> Self
     where
         D: GlobalDispatch<XxInputMethodManagerV2, InputMethodManagerGlobalData>,
         D: Dispatch<XxInputMethodManagerV2, GlobalData>,
@@ -49,17 +53,12 @@ impl InputMethodManagerState {
         D: Dispatch<XxInputPopupPositionerV1, PositionerUserData>,
         D: SeatHandler,
         D: 'static,
-        F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
-        let data = InputMethodManagerGlobalData::new(filter);
-        let global = display.create_global::<D, XxInputMethodManagerV2, _>(MANAGER_VERSION, data);
-
-        Self { global }
-    }
-
-    /// Get the id of the manager global.
-    pub fn global(&self) -> GlobalId {
-        self.global.clone()
+        let global = display.create_global::<D, XxInputMethodManagerV2, _>(
+            MANAGER_VERSION,
+            InputMethodManagerGlobalData::new(filter),
+        );
+        Self { _global: global }
     }
 }
 
@@ -120,6 +119,12 @@ where
                         keyboard_handle: seat.get_keyboard().unwrap(),
                         keyboard_filter: Default::default(),
                         dismiss_popup: D::dismiss_popup,
+                        popup_geometry: D::popup_geometry,
+                        ime_popup_configure_sent: D::ime_popup_configure_sent,
+                        parent_geometry: D::parent_geometry,
+                        popup_repositioned: D::popup_repositioned,
+                        new_popup: D::new_popup,
+                        popup_ack_configure: D::popup_ack_configure,
                     },
                 );
                 let app_id = match state.input_method_app_id(client, dh) {

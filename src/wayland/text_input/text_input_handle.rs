@@ -10,10 +10,7 @@ use wayland_server::{Resource, protocol::wl_surface::WlSurface};
 
 use crate::input::SeatHandler;
 use crate::utils::{Logical, Rectangle};
-use crate::wayland::{
-    Dispatch2,
-    input_method::{InputMethodHandle, InputMethodHandler},
-};
+use crate::wayland::{Dispatch2, input_method::InputMethodHandle};
 
 #[derive(Default, Debug)]
 pub(crate) struct TextInput {
@@ -219,7 +216,7 @@ pub struct TextInputUserData {
 
 impl<D> Dispatch2<ZwpTextInputV3, D> for TextInputUserData
 where
-    D: SeatHandler + InputMethodHandler,
+    D: SeatHandler,
     D: 'static,
 {
     fn request(
@@ -310,11 +307,10 @@ where
                 }
                 pending_state.available_actions = Some(available_actions);
             }
-            zwp_text_input_v3::Request::ShowInputPanel => {
-                state.show_input_panel();
-            }
-            zwp_text_input_v3::Request::HideInputPanel => {
-                state.hide_input_panel();
+            zwp_text_input_v3::Request::ShowInputPanel | zwp_text_input_v3::Request::HideInputPanel => {
+                // Panel hints are compositor policy. Kept off `InputMethodHandler` so
+                // text-input dispatch only needs `SeatHandler` (upstream shape).
+                debug!("ignoring text-input input panel hint (no text-input handler hook)");
             }
             zwp_text_input_v3::Request::Commit => {
                 let mut new_state = mem::take(pending_state);

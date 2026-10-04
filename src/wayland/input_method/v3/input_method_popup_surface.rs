@@ -16,7 +16,7 @@ use crate::wayland::Dispatch2;
 
 use super::super::PopupParent;
 use super::{
-    InputMethodHandler, InputMethodUserData,
+    InputMethodUserData,
     configure_tracker::PopupConfigureAttributes,
     positioner::{PositionerState, PositionerUserData},
 };
@@ -256,7 +256,7 @@ impl InputMethodPopupSurfaceUserData {
 
 impl<D> Dispatch2<XxInputPopupSurfaceV2, D> for InputMethodPopupSurfaceUserData
 where
-    D: InputMethodHandler + SeatHandler,
+    D: SeatHandler,
 {
     fn request(
         &self,
@@ -286,7 +286,8 @@ where
                     }
                 };
                 *self.acked_state.lock().unwrap() = client_state.clone();
-                state.popup_ack_configure(surface, serial, client_state);
+                let im: &InputMethodUserData<D> = self.input_method.data().unwrap();
+                (im.popup_ack_configure)(state, surface, serial, client_state);
             }
             Request::Reposition { positioner, token } => {
                 let im: &InputMethodUserData<D> = self.input_method.data().unwrap();
@@ -321,14 +322,15 @@ where
                 drop(inner);
 
                 if let (Some(cursor), Some(parent_surface)) = (cursor, parent_surface) {
-                    let geometry = state.popup_geometry(&parent_surface, &cursor, &positioner);
+                    let geometry =
+                        (im.popup_geometry)(state, &parent_surface, &cursor, &positioner);
                     popup.set_position(PopupLocation {
                         anchor: cursor,
                         geometry,
                     });
                 }
 
-                state.popup_repositioned(popup.into());
+                (im.popup_repositioned)(state, popup.into());
                 im.handle.done();
             }
             Request::SetPopupPositionMode { mode } => {

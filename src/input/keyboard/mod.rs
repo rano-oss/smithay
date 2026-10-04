@@ -55,8 +55,18 @@ where
     );
     /// Hold modifiers were changed on a keyboard from a given seat
     fn modifiers(&self, seat: &Seat<D>, data: &mut D, modifiers: ModifiersState, serial: Serial);
-    /// Compositor key repeat for a given seat
-    fn repeat(&self, seat: &Seat<D>, data: &mut D, keycode: Keycode, serial: Serial, time: InputTime);
+    /// Compositor key repeat for a given seat.
+    ///
+    /// Default is a no-op so existing `KeyboardTarget` impls keep compiling.
+    fn repeat(
+        &self,
+        _seat: &Seat<D>,
+        _data: &mut D,
+        _keycode: Keycode,
+        _serial: Serial,
+        _time: InputTime,
+    ) {
+    }
     /// Keyboard focus of a given seat moved from another handler to this handler
     fn replace(
         &self,
@@ -1248,10 +1258,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             }
         };
 
-        // forward to client if no keybinding is triggered.
-        // Modifiers are only sent when the shared seat state actually changed; the client
-        // resolves the following key event against them, so they must precede the key (handled
-        // in `KeyboardInnerHandle::input`).
+        // Forward to the grab/client. Modifiers are only attached when seat mod state
+        // changed; `KeyboardGrab` / `KeyboardInnerHandle` send key then modifiers
+        // (upstream Smithay / GNOME order).
         let seat = self.get_seat(data);
         let mods = guard.mods_state;
         let modifiers = mods_changed.then_some(mods);
@@ -1739,12 +1748,13 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
             keycode,
         };
 
-        // Modifiers must be sent before the key event so the client resolves the key against the
-        // updated modifier state.
+        // Match upstream Smithay / GNOME: key first, then modifiers when they change
+        // (see Smithay#2184). Do not reverse this for IME — interceptors can adjust
+        // wire order if a specific client path needs it.
+        focus.key(self.seat, data, key, key_state, serial, time);
         if let Some(mods) = modifiers {
             focus.modifiers(self.seat, data, mods, serial);
         }
-        focus.key(self.seat, data, key, key_state, serial, time);
     }
 
     /// Iterate over the currently pressed keys.

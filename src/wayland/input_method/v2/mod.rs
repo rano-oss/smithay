@@ -1,5 +1,7 @@
 //! Input method v2 protocol support.
 
+use std::sync::Arc;
+
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId};
 
 use wayland_protocols_misc::zwp_input_method_v2::server::{
@@ -31,32 +33,29 @@ mod input_method_handle;
 mod input_method_keyboard_grab;
 mod input_method_popup_surface;
 
-/// State of wp input method v2 protocol.
+/// zwp input-method manager global.
 #[derive(Debug)]
-pub struct InputMethodManagerState {
-    global: GlobalId,
+pub(crate) struct InputMethodManagerState {
+    _global: GlobalId,
 }
 
 impl InputMethodManagerState {
-    /// Initialize an input method manager global (v2).
-    pub fn new<D, F>(display: &DisplayHandle, filter: F) -> Self
+    pub(crate) fn new<D>(
+        display: &DisplayHandle,
+        filter: Arc<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
+    ) -> Self
     where
         D: GlobalDispatch<ZwpInputMethodManagerV2, InputMethodManagerGlobalData>,
         D: Dispatch<ZwpInputMethodManagerV2, GlobalData>,
         D: Dispatch<ZwpInputMethodV2, InputMethodUserData<D>>,
         D: SeatHandler,
         D: 'static,
-        F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
-        let data = InputMethodManagerGlobalData::new(filter);
-        let global = display.create_global::<D, ZwpInputMethodManagerV2, _>(MANAGER_VERSION, data);
-
-        Self { global }
-    }
-
-    /// Get the id of the v2 manager global.
-    pub fn global(&self) -> GlobalId {
-        self.global.clone()
+        let global = display.create_global::<D, ZwpInputMethodManagerV2, _>(
+            MANAGER_VERSION,
+            InputMethodManagerGlobalData::new(filter),
+        );
+        Self { _global: global }
     }
 }
 

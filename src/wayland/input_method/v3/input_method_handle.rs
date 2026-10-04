@@ -22,18 +22,18 @@ use wayland_server::{
 
 use crate::{
     input::{SeatHandler, keyboard::KeyboardHandle},
-    utils::{Logical, Rectangle},
+    utils::{Logical, Rectangle, Serial},
     wayland::{
         Dispatch2, compositor, keyboard_filter::KeyboardFilterUserData, seat::WaylandFocus,
         text_input::TextInputHandle,
     },
 };
 
-use super::super::{InputMethodHandler, PopupParent, PopupSurface as ImPopupSurface};
+use super::super::{PopupParent, PopupSurface as ImPopupSurface};
 use super::{
-    INPUT_POPUP_SURFACE_ROLE, InputMethodPopupSurfaceUserData,
+    INPUT_POPUP_SURFACE_ROLE, InputMethodPopupSurfaceUserData, PopupSurfaceState,
     input_method_popup_surface::{PopupLocation, PopupSurface},
-    positioner::PositionerUserData,
+    positioner::{PositionerState, PositionerUserData},
 };
 
 /// Contains all input method instances and tracks which one is active.
@@ -112,7 +112,7 @@ impl InputMethodV3Handle {
     }
 
     /// Select instance by `app_id`. Returns `false` if no matching instance exists.
-    pub(crate) fn set_active_instance<D: SeatHandler + InputMethodHandler + 'static>(
+    pub(crate) fn set_active_instance<D: SeatHandler + 'static>(
         &self,
         state: &mut D,
         app_id: &str,
@@ -143,7 +143,7 @@ impl InputMethodV3Handle {
         true
     }
 
-    pub(crate) fn set_text_input_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
+    pub(crate) fn set_text_input_rectangle<D: SeatHandler + 'static>(
         &self,
         state: &mut D,
         cursor: Rectangle<i32, Logical>,
@@ -156,6 +156,9 @@ impl InputMethodV3Handle {
         let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
             return;
         };
+        let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
+        let popup_geometry = data.popup_geometry;
+        let ime_popup_configure_sent = data.ime_popup_configure_sent;
 
         let mut pending = Vec::new();
         for (index, popup) in instance.popup_handles.iter().enumerate() {
@@ -177,7 +180,7 @@ impl InputMethodV3Handle {
         for (index, parent, positioner, set_anchor) in pending {
             let loc = PopupLocation {
                 anchor: cursor,
-                geometry: state.popup_geometry(&parent, &cursor, &positioner),
+                geometry: popup_geometry(state, &parent, &cursor, &positioner),
             };
             let mut inner = self.inner.lock().unwrap();
             let Some(popup) = inner
@@ -216,7 +219,7 @@ impl InputMethodV3Handle {
             })
             .unwrap_or_default();
         for popup in popups {
-            state.ime_popup_configure_sent(popup);
+            ime_popup_configure_sent(state, popup);
         }
     }
 
@@ -272,6 +275,13 @@ pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     pub(crate) keyboard_filter: Arc<Mutex<Option<XxKeyboardFilterV1>>>,
     pub(crate) dismiss_popup: fn(&mut D, ImPopupSurface),
+    pub(crate) popup_geometry:
+        fn(&D, &WlSurface, &Rectangle<i32, Logical>, &PositionerState) -> Rectangle<i32, Logical>,
+    pub(crate) ime_popup_configure_sent: fn(&mut D, ImPopupSurface),
+    pub(crate) parent_geometry: fn(&D, &WlSurface) -> Rectangle<i32, Logical>,
+    pub(crate) popup_repositioned: fn(&mut D, ImPopupSurface),
+    pub(crate) new_popup: fn(&mut D, ImPopupSurface),
+    pub(crate) popup_ack_configure: fn(&mut D, &WlSurface, Serial, PopupSurfaceState),
 }
 
 impl<D: SeatHandler + 'static> InputMethodUserData<D> {
@@ -297,7 +307,6 @@ impl<D> Dispatch2<XxInputMethodV1, D> for InputMethodUserData<D>
 where
     D: Dispatch<XxInputPopupSurfaceV2, InputMethodPopupSurfaceUserData>,
     D: SeatHandler,
-    D: InputMethodHandler,
     <D as SeatHandler>::KeyboardFocus: WaylandFocus,
     D: 'static,
 {
@@ -433,8 +442,9 @@ where
                     .lock()
                     .unwrap();
 
-                let location = state.parent_geometry(&parent_surface);
-                let geometry = state.popup_geometry(&parent_surface, &cursor, &positioner_data);
+                let location = (self.parent_geometry)(state, &parent_surface);
+                let geometry =
+                    (self.popup_geometry)(state, &parent_surface, &cursor, &positioner_data);
                 let parent = PopupParent {
                     surface: parent_surface,
                     location,
@@ -456,7 +466,7 @@ where
                 instance.popup_handles.push(popup.clone());
                 drop(inner);
 
-                state.new_popup(popup.into());
+                (self.new_popup)(state, popup.into());
             }
             Request::Destroy => {
                 // Nothing to do

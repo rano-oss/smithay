@@ -50,7 +50,7 @@
 //! #     fn commit(&mut self, surface: &WlSurface) {}
 //! # }
 //!
-//! // Add the seat state to your state and create manager globals
+//! // Create input-method manager globals
 //! InputMethodManagerState::new::<State, _>(&display_handle, |_client| true);
 //! // Add text input capabilities, needed for the input method to work
 //! TextInputManagerState::new::<State>(&display_handle);
@@ -71,16 +71,15 @@ mod v2;
 mod v3;
 
 pub use handle::InputMethodHandle;
-pub use manager::InputMethodManagerGlobalData;
+pub use manager::{InputMethodManagerGlobalData, InputMethodManagerState};
 pub use popup::{PopupParent, PopupSurface};
 
 pub use v2::{
     INPUT_POPUP_SURFACE_ROLE, InputMethodKeyboardGrab, InputMethodKeyboardUserData,
-    InputMethodManagerState as InputMethodManagerStateV2, InputMethodPopupSurfaceUserData,
-    InputMethodUserData,
+    InputMethodPopupSurfaceUserData, InputMethodUserData,
 };
 
-pub use v3::{InputMethodManagerState, PopupSurfaceState, PositionerState, PositionerUserData};
+pub use v3::{PopupSurfaceState, PositionerState, PositionerUserData};
 
 pub(crate) use v3::InputMethodUserData as InputMethodV3UserData;
 

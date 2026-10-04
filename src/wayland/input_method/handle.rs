@@ -11,7 +11,6 @@ use crate::utils::{Logical, Rectangle};
 use crate::wayland::seat::WaylandFocus;
 use crate::wayland::text_input::TextInputSeat;
 
-use super::InputMethodHandler;
 use super::v2::InputMethodV2Handle;
 use super::v3::InputMethodV3Handle;
 
@@ -85,7 +84,7 @@ impl InputMethodHandle {
             .with_instance(|im| im.object.set_available_actions(available_actions));
     }
 
-    pub(crate) fn cursor_rectangle<D: SeatHandler + InputMethodHandler + 'static>(
+    pub(crate) fn cursor_rectangle<D: SeatHandler + 'static>(
         &self,
         state: &mut D,
         rect: Rectangle<i32, Logical>,
@@ -129,7 +128,7 @@ impl InputMethodHandle {
     /// (layout switches). When false, only updates the active instance — use from
     /// [`super::InputMethodHandler::input_method_instance_registered`] so smithay can run a
     /// single `sync_activation` afterward.
-    pub fn set_active_instance<D: SeatHandler + InputMethodHandler + 'static>(
+    pub fn set_active_instance<D: SeatHandler + 'static>(
         &self,
         state: &mut D,
         seat: &Seat<D>,
