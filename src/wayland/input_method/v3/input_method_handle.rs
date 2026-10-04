@@ -316,23 +316,14 @@ where
                 self.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.commit_string(Some(text.clone()));
                 });
-                // StartOfPreedit: drop the frozen preedit-start lock and re-arm so the
-                // next client cursor_rectangle (post-commit caret) can re-anchor. Leaving
-                // awaiting_anchor=false ignored those updates until a later probe.
-                let mut inner = self.handle.inner.lock().unwrap();
-                inner.last_cursor_rectangle = None;
-                if let Some(instance) = inner
-                    .active_input_method_id
-                    .clone()
-                    .and_then(|id| inner.instances.iter_mut().find(|i| i.object.id() == id))
-                {
+                self.handle.with_instance(|instance| {
                     for popup in &mut instance.popup_handles {
                         if popup.position_mode == PopupPositionMode::StartOfPreedit {
                             popup.anchored_cursor_rectangle = None;
-                            popup.awaiting_anchor = true;
+                            popup.awaiting_anchor = false;
                         }
                     }
-                }
+                });
             }
             Request::SetPreeditString {
                 text,
@@ -359,12 +350,8 @@ where
                         popup.awaiting_anchor = true;
                         popup.anchored_cursor_rectangle = None;
                     } else if cursor_begin == 0 && cursor_end == 0 {
-                        // Probe at preedit start: keep an existing post-commit lock,
-                        // or seed once from last_cursor / next client rect, then freeze.
-                        if popup.anchored_cursor_rectangle.is_some() {
-                            popup.awaiting_anchor = false;
-                        } else {
-                            popup.awaiting_anchor = true;
+                        popup.awaiting_anchor = true;
+                        if popup.anchored_cursor_rectangle.is_none() {
                             seed_cursor = last_cursor;
                         }
                     } else {

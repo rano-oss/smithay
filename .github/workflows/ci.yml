@@ -4,8 +4,6 @@ on:
     push:
         branches:
             - master
-            # Fork-only: remove this line before opening an upstream PR.
-            - experimental/xx-im-preedit-start
     pull_request:
 
 jobs:
