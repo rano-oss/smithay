@@ -204,9 +204,6 @@ where
         slot.0.age.store(1, Ordering::SeqCst);
         for other_slot in &mut self.slots {
             if !Arc::ptr_eq(other_slot, &slot.0) && other_slot.buffer.is_some() {
-                // `fetch_update` was renamed to `try_update` on newer rustc; keep the
-                // old name for MSRV and silence the deprecation until the bump.
-                #[allow(deprecated)]
                 let res = other_slot
                     .age
                     .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |age| {
