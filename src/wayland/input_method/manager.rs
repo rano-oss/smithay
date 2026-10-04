@@ -1,14 +1,11 @@
 use std::sync::Arc;
 
 use wayland_protocols_experimental::input_method::v1::server::{
-    xx_input_method_manager_v2::XxInputMethodManagerV2,
-    xx_input_method_v1::XxInputMethodV1,
-    xx_input_popup_positioner_v1::XxInputPopupPositionerV1,
-    xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
+    xx_input_method_manager_v2::XxInputMethodManagerV2, xx_input_method_v1::XxInputMethodV1,
+    xx_input_popup_positioner_v1::XxInputPopupPositionerV1, xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
 use wayland_protocols_misc::zwp_input_method_v2::server::{
-    zwp_input_method_manager_v2::ZwpInputMethodManagerV2,
-    zwp_input_method_v2::ZwpInputMethodV2,
+    zwp_input_method_manager_v2::ZwpInputMethodManagerV2, zwp_input_method_v2::ZwpInputMethodV2,
 };
 use wayland_server::{Client, Dispatch, DisplayHandle, GlobalDispatch};
 
@@ -16,8 +13,8 @@ use crate::{input::SeatHandler, wayland::GlobalData};
 
 use super::v2::{InputMethodManagerState as V2Manager, InputMethodUserData as V2UserData};
 use super::v3::{
-    InputMethodManagerState as V3Manager, InputMethodPopupSurfaceUserData,
-    InputMethodUserData as V3UserData, PositionerUserData,
+    InputMethodManagerState as V3Manager, InputMethodPopupSurfaceUserData, InputMethodUserData as V3UserData,
+    PositionerUserData,
 };
 
 /// Data associated with an input method manager global.

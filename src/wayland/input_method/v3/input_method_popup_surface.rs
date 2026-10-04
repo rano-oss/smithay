@@ -322,8 +322,7 @@ where
                 drop(inner);
 
                 if let (Some(cursor), Some(parent_surface)) = (cursor, parent_surface) {
-                    let geometry =
-                        (im.popup_geometry)(state, &parent_surface, &cursor, &positioner);
+                    let geometry = (im.popup_geometry)(state, &parent_surface, &cursor, &positioner);
                     popup.set_position(PopupLocation {
                         anchor: cursor,
                         geometry,

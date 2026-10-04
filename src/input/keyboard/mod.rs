@@ -58,15 +58,7 @@ where
     /// Compositor key repeat for a given seat.
     ///
     /// Default is a no-op so existing `KeyboardTarget` impls keep compiling.
-    fn repeat(
-        &self,
-        _seat: &Seat<D>,
-        _data: &mut D,
-        _keycode: Keycode,
-        _serial: Serial,
-        _time: InputTime,
-    ) {
-    }
+    fn repeat(&self, _seat: &Seat<D>, _data: &mut D, _keycode: Keycode, _serial: Serial, _time: InputTime) {}
     /// Keyboard focus of a given seat moved from another handler to this handler
     fn replace(
         &self,

@@ -112,11 +112,7 @@ impl InputMethodV3Handle {
     }
 
     /// Select instance by `app_id`. Returns `false` if no matching instance exists.
-    pub(crate) fn set_active_instance<D: SeatHandler + 'static>(
-        &self,
-        state: &mut D,
-        app_id: &str,
-    ) -> bool {
+    pub(crate) fn set_active_instance<D: SeatHandler + 'static>(&self, state: &mut D, app_id: &str) -> bool {
         let inner = self.inner.lock().unwrap();
         let Some(target_id) = inner
             .instances
@@ -443,8 +439,7 @@ where
                     .unwrap();
 
                 let location = (self.parent_geometry)(state, &parent_surface);
-                let geometry =
-                    (self.popup_geometry)(state, &parent_surface, &cursor, &positioner_data);
+                let geometry = (self.popup_geometry)(state, &parent_surface, &cursor, &positioner_data);
                 let parent = PopupParent {
                     surface: parent_surface,
                     location,
