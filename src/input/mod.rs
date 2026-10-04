@@ -23,7 +23,7 @@
 //! #             GestureSwipeBeginEvent, GestureSwipeUpdateEvent, GestureSwipeEndEvent,
 //! #             GesturePinchBeginEvent, GesturePinchUpdateEvent, GesturePinchEndEvent,
 //! #             GestureHoldBeginEvent, GestureHoldEndEvent},
-//! #   keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
+//! #   keyboard::{KeyboardTarget, Keycode, KeysymHandle, ModifiersState},
 //! #   touch::{DownEvent, UpEvent, MotionEvent as TouchMotionEvent, ShapeEvent, OrientationEvent, TouchTarget, FrameMarker},
 //! # };
 //! # use smithay::utils::{IsAlive, Serial};
@@ -75,6 +75,7 @@
 //! #       time: InputTime,
 //! #   ) {}
 //! #   fn modifiers(&self, seat: &Seat<State>, data: &mut State, modifiers: ModifiersState, serial: Serial) {}
+//! #   fn repeat(&self, seat: &Seat<State>, data: &mut State, keycode: Keycode, serial: Serial, time: InputTime) {}
 //! # }
 //! # impl TouchTarget<State> for Target {
 //! #   fn down(&self, seat: &Seat<State>, data: &mut State, event: &DownEvent) {}
@@ -128,6 +129,8 @@ use std::{
 use tracing::{info_span, instrument};
 use xkbcommon::xkb::ContextFlags;
 
+use calloop;
+
 use self::touch::TouchTarget;
 use self::{
     keyboard::{Error as KeyboardError, KeyboardHandle, KeyboardTarget, LedState},
@@ -171,6 +174,15 @@ pub trait SeatHandler: Sized + 'static {
 
     /// Callback that will be notified whenever the keyboard led state changes.
     fn led_state_changed(&mut self, _seat: &Seat<Self>, _led_state: LedState) {}
+
+    /// Return the event loop handle for compositor-side key repeat.
+    ///
+    /// Override this to return `Some(loop_handle)` to enable compositor-side key repeat.
+    /// When enabled, the compositor manages repeat timers and sends repeat events
+    /// through [`KeyboardTarget::repeat`].
+    fn loop_handle(&self) -> Option<calloop::LoopHandle<'static, Self>> {
+        None
+    }
 
     /// Provides the implicit pointer grab for clicks
     ///
@@ -396,7 +408,7 @@ impl<D: SeatHandler + 'static> Seat<D> {
     /// #             GestureSwipeBeginEvent, GestureSwipeUpdateEvent, GestureSwipeEndEvent,
     /// #             GesturePinchBeginEvent, GesturePinchUpdateEvent, GesturePinchEndEvent,
     /// #             GestureHoldBeginEvent, GestureHoldEndEvent},
-    /// #   keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
+    /// #   keyboard::{KeyboardTarget, Keycode, KeysymHandle, ModifiersState},
     /// #   touch::{DownEvent, UpEvent, MotionEvent as TouchMotionEvent, ShapeEvent, OrientationEvent, TouchTarget, FrameMarker},
     /// # };
     /// # use smithay::utils::{IsAlive, Serial};
@@ -436,6 +448,7 @@ impl<D: SeatHandler + 'static> Seat<D> {
     /// #       time: InputTime,
     /// #   ) {}
     /// #   fn modifiers(&self, seat: &Seat<State>, data: &mut State, modifiers: ModifiersState, serial: Serial) {}
+    /// #   fn repeat(&self, seat: &Seat<State>, data: &mut State, keycode: Keycode, serial: Serial, time: InputTime) {}
     /// # }
     /// # impl TouchTarget<State> for Target {
     /// #   fn down(&self, seat: &Seat<State>, data: &mut State, event: &DownEvent) {}
@@ -518,7 +531,7 @@ impl<D: SeatHandler + 'static> Seat<D> {
     /// #             GestureSwipeBeginEvent, GestureSwipeUpdateEvent, GestureSwipeEndEvent,
     /// #             GesturePinchBeginEvent, GesturePinchUpdateEvent, GesturePinchEndEvent,
     /// #             GestureHoldBeginEvent, GestureHoldEndEvent},
-    /// #   keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
+    /// #   keyboard::{KeyboardTarget, Keycode, KeysymHandle, ModifiersState},
     /// #   touch::{DownEvent, UpEvent, MotionEvent as TouchMotionEvent, ShapeEvent, OrientationEvent, TouchTarget, FrameMarker},
     /// # };
     /// # use smithay::utils::{IsAlive, Serial};
@@ -558,6 +571,7 @@ impl<D: SeatHandler + 'static> Seat<D> {
     /// #       time: InputTime,
     /// #   ) {}
     /// #   fn modifiers(&self, seat: &Seat<State>, data: &mut State, modifiers: ModifiersState, serial: Serial) {}
+    /// #   fn repeat(&self, seat: &Seat<State>, data: &mut State, keycode: Keycode, serial: Serial, time: InputTime) {}
     /// # }
     /// # impl TouchTarget<State> for Target {
     /// #   fn down(&self, seat: &Seat<State>, data: &mut State, event: &DownEvent) {}

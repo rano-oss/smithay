@@ -2246,6 +2246,13 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for X11Surface {
             *pending_serial = serial;
         }
     }
+
+    fn repeat(&self, seat: &Seat<D>, data: &mut D, keycode: Keycode, serial: Serial, time: InputTime) {
+        let xstate = self.state.lock().unwrap();
+        if let Some(surface) = xstate.wl_surface.as_ref() {
+            KeyboardTarget::repeat(surface, seat, data, keycode, serial, time)
+        }
+    }
 }
 
 impl<D: SeatHandler + PointerConstraintsHandler + 'static> PointerTarget<D> for X11Surface {
