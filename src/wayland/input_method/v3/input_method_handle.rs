@@ -189,7 +189,10 @@ impl InputMethodV3Handle {
                 continue;
             };
             if set_anchor {
+                // Lock on the first cursor while awaiting so later client rects
+                // (e.g. GTK end-of-preedit) cannot overwrite the start anchor.
                 popup.anchored_cursor_rectangle = Some(cursor);
+                popup.awaiting_anchor = false;
             }
             if popup.current_location() != loc {
                 popup.set_position(loc);
@@ -313,14 +316,23 @@ where
                 self.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.commit_string(Some(text.clone()));
                 });
-                self.handle.with_instance(|instance| {
+                // StartOfPreedit: drop the frozen preedit-start lock and re-arm so the
+                // next client cursor_rectangle (post-commit caret) can re-anchor. Leaving
+                // awaiting_anchor=false ignored those updates until a later probe.
+                let mut inner = self.handle.inner.lock().unwrap();
+                inner.last_cursor_rectangle = None;
+                if let Some(instance) = inner
+                    .active_input_method_id
+                    .clone()
+                    .and_then(|id| inner.instances.iter_mut().find(|i| i.object.id() == id))
+                {
                     for popup in &mut instance.popup_handles {
                         if popup.position_mode == PopupPositionMode::StartOfPreedit {
                             popup.anchored_cursor_rectangle = None;
-                            popup.awaiting_anchor = false;
+                            popup.awaiting_anchor = true;
                         }
                     }
-                });
+                }
             }
             Request::SetPreeditString {
                 text,
@@ -347,8 +359,12 @@ where
                         popup.awaiting_anchor = true;
                         popup.anchored_cursor_rectangle = None;
                     } else if cursor_begin == 0 && cursor_end == 0 {
-                        popup.awaiting_anchor = true;
-                        if popup.anchored_cursor_rectangle.is_none() {
+                        // Probe at preedit start: keep an existing post-commit lock,
+                        // or seed once from last_cursor / next client rect, then freeze.
+                        if popup.anchored_cursor_rectangle.is_some() {
+                            popup.awaiting_anchor = false;
+                        } else {
+                            popup.awaiting_anchor = true;
                             seed_cursor = last_cursor;
                         }
                     } else {
