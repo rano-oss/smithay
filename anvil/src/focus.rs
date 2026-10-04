@@ -31,6 +31,7 @@ use smithay::{
     utils::{Logical, Point},
     wayland::selection::data_device::WlOfferData,
 };
+use xkbcommon::xkb::Keycode;
 
 use crate::{
     shell::{SSD, WindowElement},
@@ -289,6 +290,17 @@ impl<BackendData: Backend> KeyboardTarget<AnvilState<BackendData>> for KeyboardF
     ) {
         self.inner_keyboard_target()
             .modifiers(seat, data, modifiers, serial)
+    }
+    fn repeat(
+        &self,
+        seat: &Seat<AnvilState<BackendData>>,
+        data: &mut AnvilState<BackendData>,
+        keycode: Keycode,
+        serial: Serial,
+        time: InputTime,
+    ) {
+        self.inner_keyboard_target()
+            .repeat(seat, data, keycode, serial, time)
     }
 }
 
