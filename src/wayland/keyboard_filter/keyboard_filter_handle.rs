@@ -11,20 +11,16 @@ use wayland_protocols_experimental::{
 };
 use wayland_server::WEnum;
 use wayland_server::{
-    Client, DataInit, DisplayHandle, Resource, Weak,
+    Client, DataInit, DisplayHandle, Resource,
     protocol::{
         wl_keyboard::{KeyState, WlKeyboard},
         wl_surface::WlSurface,
     },
 };
 
-use crate::input::{
-    SeatHandler,
-    keyboard::{KeyboardHandle, WlKeyboardApi},
-};
-use crate::wayland::{Dispatch2, input_method::InputMethodV3UserData};
-
-use super::KeyboardFilterManagerUserDataInner;
+use crate::input::{SeatHandler, keyboard::KeyboardHandle};
+use crate::utils::SERIAL_COUNTER;
+use crate::wayland::{Dispatch2, input_method::InputMethodV3UserData, seat::keyboard::repeat_key_states};
 
 #[derive(Debug)]
 pub(crate) struct BufferedEvent {
@@ -34,75 +30,23 @@ pub(crate) struct BufferedEvent {
     state: KeyState,
 }
 
-/// Seat `kbd_interceptor`: keys go to the IM + buffer; other events fan out to IM and client.
+/// Seat-level routing installed while a keyboard filter is active: key events go to the
+/// IM keyboard and are buffered until the IM answers; other events reach both.
 #[derive(Debug)]
-struct FilterInterceptor {
-    im_keyboard: WlKeyboard,
-    im_surface: WlSurface,
-    client_keyboards: Arc<Mutex<Vec<Weak<WlKeyboard>>>>,
-    focused_surface: WlSurface,
-    pending_events: Arc<Mutex<VecDeque<BufferedEvent>>>,
+pub(crate) struct KbdFilter {
+    pub(crate) im_keyboard: WlKeyboard,
+    pending: Arc<Mutex<VecDeque<BufferedEvent>>>,
 }
 
-impl FilterInterceptor {
-    fn for_each_client_kbd(&self, mut f: impl FnMut(&WlKeyboard)) {
-        for kbd in &*self.client_keyboards.lock().unwrap() {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
-            if kbd.id().same_client_as(&self.focused_surface.id()) {
-                f(&kbd);
-            }
-        }
-    }
-}
-
-impl WlKeyboardApi for FilterInterceptor {
-    fn keymap(
-        &self,
-        format: wayland_server::protocol::wl_keyboard::KeymapFormat,
-        fd: std::os::unix::io::BorrowedFd<'_>,
-        size: u32,
-    ) {
-        self.im_keyboard.keymap(format, fd, size);
-        self.for_each_client_kbd(|kbd| kbd.keymap(format, fd, size));
-    }
-
-    fn enter(&self, serial: u32, surface: &WlSurface, keys: Vec<u8>) {
-        self.im_keyboard.enter(serial, &self.im_surface, keys.clone());
-        self.for_each_client_kbd(|kbd| kbd.enter(serial, surface, keys.clone()));
-    }
-
-    fn leave(&self, serial: u32, surface: &WlSurface) {
-        self.im_keyboard.leave(serial, &self.im_surface);
-        self.for_each_client_kbd(|kbd| kbd.leave(serial, surface));
-    }
-
-    fn key(&self, serial: u32, time: u32, key: u32, state: KeyState) {
+impl KbdFilter {
+    pub(crate) fn key(&self, serial: u32, time: u32, key: u32, state: KeyState) {
         self.im_keyboard.key(serial, time, key, state);
-        self.pending_events.lock().unwrap().push_back(BufferedEvent {
+        self.pending.lock().unwrap().push_back(BufferedEvent {
             serial,
             time,
             key,
             state,
         });
-    }
-
-    fn modifiers(&self, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) {
-        self.im_keyboard
-            .modifiers(serial, mods_depressed, mods_latched, mods_locked, group);
-        self.for_each_client_kbd(|kbd| {
-            kbd.modifiers(serial, mods_depressed, mods_latched, mods_locked, group);
-        });
-    }
-
-    fn repeat_info(&self, rate: i32, delay: i32) {
-        self.im_keyboard.repeat_info(rate, delay);
-        self.for_each_client_kbd(|kbd| kbd.repeat_info(rate, delay));
-    }
-
-    fn protocol_version(&self) -> u32 {
-        Resource::version(&self.im_keyboard)
     }
 }
 
@@ -112,7 +56,7 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     pub(crate) pending_events: Arc<Mutex<VecDeque<BufferedEvent>>>,
     pub(crate) focused_surface: Mutex<Option<WlSurface>>,
-    pub(crate) manager_data: Arc<Mutex<KeyboardFilterManagerUserDataInner>>,
+    pub(crate) bound_keyboards: Arc<Mutex<HashSet<WlKeyboard>>>,
     pub(crate) bound_keyboard: WlKeyboard,
     pub(crate) bound_input_method: XxInputMethodV1,
     pub(crate) im_surface: WlSurface,
@@ -121,40 +65,43 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
 }
 
 impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
-    /// Install interceptor for `focused_surface` (no-op if already active for it).
-    pub(crate) fn activate_interceptor(&self, focused_surface: &WlSurface) {
-        let already = self.keyboard_handle.arc.kbd_interceptor.lock().unwrap().is_some()
-            && self
-                .focused_surface
-                .lock()
-                .unwrap()
-                .as_ref()
-                .is_some_and(|s| s.id() == focused_surface.id());
-        if already {
+    /// Route the seat's key events through this filter while `focused_surface` has focus.
+    pub(crate) fn activate(&self, focused_surface: &WlSurface) {
+        *self.focused_surface.lock().unwrap() = Some(focused_surface.clone());
+        let mut filter = self.keyboard_handle.arc.kbd_filter.lock().unwrap();
+        if self.is_installed(&filter) {
             return;
         }
-
-        *self.focused_surface.lock().unwrap() = Some(focused_surface.clone());
-        *self.keyboard_handle.arc.kbd_interceptor.lock().unwrap() = Some(Box::new(FilterInterceptor {
+        // Pressed keys are unknown here: the seat's state may be locked by the focus change
+        // that triggered this activation.
+        let serial = SERIAL_COUNTER.next_serial().into();
+        self.bound_keyboard.enter(serial, &self.im_surface, Vec::new());
+        *filter = Some(KbdFilter {
             im_keyboard: self.bound_keyboard.clone(),
-            im_surface: self.im_surface.clone(),
-            client_keyboards: self.keyboard_handle.arc.known_kbds.clone(),
-            focused_surface: focused_surface.clone(),
-            pending_events: self.pending_events.clone(),
-        }));
+            pending: self.pending_events.clone(),
+        });
     }
 
-    /// Remove interceptor and drop buffered keys.
-    pub(crate) fn deactivate_interceptor(&self) {
-        self.pending_events.lock().unwrap().clear();
+    fn is_installed(&self, filter: &Option<KbdFilter>) -> bool {
+        filter
+            .as_ref()
+            .is_some_and(|f| Arc::ptr_eq(&f.pending, &self.pending_events))
+    }
+
+    /// Stop routing through this filter, forwarding (`flush`) or dropping buffered keys.
+    pub(crate) fn deactivate(&self, flush: bool) {
+        let pending = std::mem::take(&mut *self.pending_events.lock().unwrap());
+        if flush {
+            pending
+                .iter()
+                .for_each(|event| self.send_key_to_focused_client(event));
+        }
         self.client_held_keys.lock().unwrap().clear();
-        self.keyboard_handle.arc.clear_kbd_interceptor();
-    }
-
-    /// Forward buffered keys to the focused client (used on unbind / IM destroy).
-    pub(crate) fn flush_pending_passthrough(&self) {
-        for event in self.pending_events.lock().unwrap().drain(..) {
-            self.send_key_to_focused_client(&event);
+        let mut filter = self.keyboard_handle.arc.kbd_filter.lock().unwrap();
+        if self.is_installed(&filter) {
+            *filter = None;
+            self.bound_keyboard
+                .leave(SERIAL_COUNTER.next_serial().into(), &self.im_surface);
         }
     }
 
@@ -181,11 +128,8 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
                     }
                 }
                 KeyState::Repeated => {
-                    if kbd.version() >= 10 {
-                        kbd.key(event.serial, event.time, event.key, KeyState::Repeated);
-                    } else {
-                        kbd.key(event.serial, event.time, event.key, KeyState::Pressed);
-                        kbd.key(event.serial, event.time, event.key, KeyState::Released);
+                    for &state in repeat_key_states(&kbd) {
+                        kbd.key(event.serial, event.time, event.key, state);
                     }
                 }
                 _ => kbd.key(event.serial, event.time, event.key, event.state),
@@ -193,19 +137,14 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
         }
     }
 
-    fn detach(&self) {
-        self.flush_pending_passthrough();
-        self.deactivate_interceptor();
-        let mut mgr = self.manager_data.lock().unwrap();
-        mgr.bound_keyboards.remove(&self.bound_keyboard);
-        mgr.bound_ims.remove(&self.bound_input_method);
-        *self
+    pub(crate) fn detach(&self) {
+        self.deactivate(true);
+        self.bound_keyboards.lock().unwrap().remove(&self.bound_keyboard);
+        let im_data = self
             .bound_input_method
             .data::<InputMethodV3UserData<D>>()
-            .unwrap()
-            .keyboard_filter
-            .lock()
-            .unwrap() = None;
+            .unwrap();
+        *im_data.keyboard_filter.lock().unwrap() = None;
     }
 }
 

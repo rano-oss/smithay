@@ -144,78 +144,69 @@ impl InputMethodV3Handle {
         state: &mut D,
         cursor: Rectangle<i32, Logical>,
     ) {
-        let Some((popup_geometry, ime_popup_configure_sent, pending)) =
-            self.with_instance(|instance| {
-                let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
-                let popup_geometry = data.popup_geometry;
-                let ime_popup_configure_sent = data.ime_popup_configure_sent;
-
-                let mut pending = Vec::new();
-                for (index, popup) in instance.popup_handles.iter().enumerate() {
+        let Some((popup_geometry, ime_popup_configure_sent, pending)) = self.with_instance(|instance| {
+            let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
+            let pending: Vec<_> = (instance.popup_handles.iter().enumerate())
+                .filter_map(|(index, popup)| {
                     let awaiting =
                         popup.position_mode == PopupPositionMode::StartOfPreedit && popup.awaiting_anchor;
-                    if popup.position_mode == PopupPositionMode::FollowCursor
-                        || (awaiting && popup.anchored_cursor_rectangle != Some(cursor))
-                    {
-                        pending.push((
+                    (popup.position_mode == PopupPositionMode::FollowCursor
+                        || (awaiting && popup.anchored_cursor_rectangle != Some(cursor)))
+                    .then(|| {
+                        (
                             index,
                             popup.get_parent().surface.clone(),
                             popup.positioner(),
                             awaiting,
-                        ));
-                    }
-                }
-                (popup_geometry, ime_popup_configure_sent, pending)
-            })
-        else {
+                        )
+                    })
+                })
+                .collect();
+            (data.popup_geometry, data.ime_popup_configure_sent, pending)
+        }) else {
             return;
         };
         self.inner.lock().unwrap().last_cursor_rectangle = Some(cursor);
 
-        let mut changed = false;
-        for (index, parent, positioner, set_anchor) in pending {
-            let loc = PopupLocation {
-                anchor: cursor,
-                geometry: popup_geometry(state, &parent, &cursor, &positioner),
-            };
-            let updated = self
-                .with_instance(|im| {
-                    let Some(popup) = im.popup_handles.get_mut(index) else {
-                        return false;
-                    };
-                    if set_anchor {
-                        // Lock on the first cursor while awaiting so later client rects
-                        // (e.g. GTK end-of-preedit) cannot overwrite the start anchor.
-                        popup.anchored_cursor_rectangle = Some(cursor);
-                        popup.awaiting_anchor = false;
-                    }
-                    if popup.current_location() != loc {
-                        popup.set_position(loc);
-                        true
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(false);
-            changed |= updated;
-        }
-
-        if !changed {
-            return;
-        }
-        let popups = self
-            .with_instance(|im| {
-                for p in &mut im.popup_handles {
-                    p.send_pending_configure();
-                }
-                im.popup_handles
-                    .iter()
-                    .cloned()
-                    .map(ImPopupSurface::V3)
-                    .collect::<Vec<_>>()
+        let locations: Vec<_> = (pending.into_iter())
+            .map(|(index, parent, positioner, set_anchor)| {
+                let geometry = popup_geometry(state, &parent, &cursor, &positioner);
+                (
+                    index,
+                    set_anchor,
+                    PopupLocation {
+                        anchor: cursor,
+                        geometry,
+                    },
+                )
             })
-            .unwrap_or_default();
-        for popup in popups {
+            .collect();
+        let popups = self.with_instance(|im| {
+            let mut changed = false;
+            for (index, set_anchor, loc) in locations {
+                let Some(popup) = im.popup_handles.get_mut(index) else {
+                    continue;
+                };
+                if set_anchor {
+                    // Lock on the first cursor while awaiting so later client rects
+                    // (e.g. GTK end-of-preedit) cannot overwrite the start anchor.
+                    popup.anchored_cursor_rectangle = Some(cursor);
+                    popup.awaiting_anchor = false;
+                }
+                if popup.current_location() != loc {
+                    popup.set_position(loc);
+                    changed = true;
+                }
+            }
+            let popups = if changed {
+                im.popup_handles.clone()
+            } else {
+                Vec::new()
+            };
+            popups.iter().for_each(PopupSurface::send_pending_configure);
+            popups
+        });
+        for popup in popups.into_iter().flatten().map(ImPopupSurface::V3) {
             ime_popup_configure_sent(state, popup);
         }
     }
@@ -244,7 +235,7 @@ impl InputMethodV3Handle {
             im.object
                 .data::<InputMethodUserData<D>>()
                 .unwrap()
-                .with_filter(|f| f.activate_interceptor(surface));
+                .with_filter(|f| f.activate(surface));
         });
     }
 
@@ -253,15 +244,27 @@ impl InputMethodV3Handle {
             im.object.deactivate();
             im.done();
             let data = im.object.data::<InputMethodUserData<D>>().unwrap();
-            data.text_input_handle.with_active_text_input(|ti, _| {
-                ti.preedit_string(None, -1, -1);
-            });
-            data.text_input_handle.done(false);
+            data.clear_preedit();
             for popup in im.popup_handles.drain(..) {
                 (data.dismiss_popup)(state, popup.into());
             }
-            data.with_filter(|f| f.deactivate_interceptor());
+            data.with_filter(|f| f.deactivate(false));
         });
+    }
+
+    /// Run `f` on the instance owning `object`, whether active or not.
+    pub(crate) fn with_instance_of<R>(
+        &self,
+        object: &XxInputMethodV1,
+        f: impl FnOnce(&mut InputMethod, Option<Rectangle<i32, Logical>>) -> R,
+    ) -> Option<R> {
+        let mut inner = self.inner.lock().unwrap();
+        let cursor = inner.last_cursor_rectangle;
+        inner
+            .instances
+            .iter_mut()
+            .find(|i| i.object == *object)
+            .map(|i| f(i, cursor))
     }
 }
 
@@ -270,7 +273,7 @@ pub struct InputMethodUserData<D: SeatHandler> {
     pub(crate) handle: InputMethodV3Handle,
     pub(crate) text_input_handle: TextInputHandle,
     pub(crate) keyboard_handle: KeyboardHandle<D>,
-    pub(crate) keyboard_filter: Arc<Mutex<Option<XxKeyboardFilterV1>>>,
+    pub(crate) keyboard_filter: Mutex<Option<XxKeyboardFilterV1>>,
     pub(crate) dismiss_popup: fn(&mut D, ImPopupSurface),
     pub(crate) popup_geometry:
         fn(&D, &WlSurface, &Rectangle<i32, Logical>, &PositionerState) -> Rectangle<i32, Logical>,
@@ -288,6 +291,15 @@ impl<D: SeatHandler + 'static> InputMethodUserData<D> {
             .unwrap()
             .as_ref()
             .map(|kf| f(kf.data::<KeyboardFilterUserData<D>>().unwrap()))
+    }
+
+    // Clearing preedit instead of text_input.leave(), which would drop the
+    // active text-input and block further preedit until re-enabled.
+    fn clear_preedit(&self) {
+        self.text_input_handle.with_active_text_input(|ti, _| {
+            ti.preedit_string(None, -1, -1);
+        });
+        self.text_input_handle.done(false);
     }
 }
 
@@ -385,14 +397,10 @@ where
                 surface,
                 positioner,
             } => {
-                let inner = self.handle.inner.lock().unwrap();
-                let Some(active_id) = inner.active_input_method_id.clone() else {
+                let Some(is_active) = self.handle.with_instance(|i| i.object == *im) else {
                     return;
                 };
-                let cursor = inner.last_cursor_rectangle.unwrap_or_default();
-                drop(inner);
-
-                if im.id() != active_id {
+                if !is_active {
                     im.post_error(
                         xx_input_method_v1::Error::Inactive,
                         "Popup may only be created on the active input method.",
@@ -422,6 +430,13 @@ where
                     .lock()
                     .unwrap();
 
+                let cursor = self
+                    .handle
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .last_cursor_rectangle
+                    .unwrap_or_default();
                 let location = (self.parent_geometry)(state, &parent_surface);
                 let geometry = (self.popup_geometry)(state, &parent_surface, &cursor, &positioner_data);
                 let parent = PopupParent {
@@ -429,10 +444,6 @@ where
                     location,
                 };
 
-                let mut inner = self.handle.inner.lock().unwrap();
-                let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
-                    return;
-                };
                 let popup = PopupSurface::new(
                     |data| data_init.init(id, data),
                     im.clone(),
@@ -442,9 +453,8 @@ where
                     geometry,
                     positioner_data,
                 );
-                instance.popup_handles.push(popup.clone());
-                drop(inner);
-
+                self.handle
+                    .with_instance_of(im, |instance, _| instance.popup_handles.push(popup.clone()));
                 (self.new_popup)(state, popup.into());
             }
             Request::Destroy => {
@@ -464,17 +474,12 @@ where
         inner.instances.retain(|inst| inst.object.id() != destroyed_id);
         drop(inner);
 
+        let filter = self.keyboard_filter.lock().unwrap().take();
+        if let Some(filter) = filter {
+            filter.data::<KeyboardFilterUserData<D>>().unwrap().detach();
+        }
         if was_active {
-            self.with_filter(|f| {
-                f.flush_pending_passthrough();
-                f.deactivate_interceptor();
-            });
-            // Prefer clearing preedit over text_input.leave(), which drops the
-            // active text-input id and blocks further preedit until re-enabled.
-            self.text_input_handle.with_active_text_input(|ti, _surface| {
-                ti.preedit_string(None, -1, -1);
-            });
-            self.text_input_handle.done(false);
+            self.clear_preedit();
         }
     }
 }

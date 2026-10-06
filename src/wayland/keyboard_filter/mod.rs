@@ -2,19 +2,17 @@
 
 mod keyboard_filter_handle;
 
+pub(crate) use keyboard_filter_handle::KbdFilter;
 pub use keyboard_filter_handle::KeyboardFilterUserData;
 
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     sync::{Arc, Mutex},
 };
 
-use wayland_protocols_experimental::{
-    input_method::v1::server::xx_input_method_v1::XxInputMethodV1,
-    keyboard_filter::v3::server::{
-        xx_keyboard_filter_manager_v1::{self, XxKeyboardFilterManagerV1},
-        xx_keyboard_filter_v1::XxKeyboardFilterV1,
-    },
+use wayland_protocols_experimental::keyboard_filter::v3::server::{
+    xx_keyboard_filter_manager_v1::{self, XxKeyboardFilterManagerV1},
+    xx_keyboard_filter_v1::XxKeyboardFilterV1,
 };
 use wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, backend::GlobalId,
@@ -41,13 +39,7 @@ pub struct KeyboardFilterManagerGlobalData {
 /// Data accessible from XxKeyboardFilterManagerV1
 #[derive(Debug)]
 pub struct KeyboardFilterManagerUserData {
-    inner: Arc<Mutex<KeyboardFilterManagerUserDataInner>>,
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct KeyboardFilterManagerUserDataInner {
-    pub(crate) bound_keyboards: HashSet<WlKeyboard>,
-    pub(crate) bound_ims: HashSet<XxInputMethodV1>,
+    bound_keyboards: Arc<Mutex<HashSet<WlKeyboard>>>,
 }
 
 /// State of the keyboard filter protocol.
@@ -97,7 +89,7 @@ where
         data_init.init(
             resource,
             KeyboardFilterManagerUserData {
-                inner: Arc::new(Mutex::new(Default::default())),
+                bound_keyboards: Default::default(),
             },
         );
     }
@@ -130,18 +122,17 @@ where
                 surface,
                 extensions,
             } => {
+                let imdata = input_method.data::<InputMethodV3UserData<D>>().unwrap();
+                if self.bound_keyboards.lock().unwrap().contains(&keyboard)
+                    || imdata.keyboard_filter.lock().unwrap().is_some()
                 {
-                    let bind = self.inner.lock().unwrap();
-                    if bind.bound_keyboards.contains(&keyboard) || bind.bound_ims.contains(&input_method) {
-                        resource.post_error(
-                            xx_keyboard_filter_manager_v1::Error::AlreadyBound,
-                            "keyboard or input method already bound",
-                        );
-                        return;
-                    }
+                    resource.post_error(
+                        xx_keyboard_filter_manager_v1::Error::AlreadyBound,
+                        "keyboard or input method already bound",
+                    );
+                    return;
                 }
 
-                let imdata = input_method.data::<InputMethodV3UserData<D>>().unwrap();
                 let keyboard_data = keyboard.data::<KeyboardUserData<D>>().unwrap();
                 let kb_handle = keyboard_data
                     .handle
@@ -156,32 +147,26 @@ where
                     return;
                 }
 
-                let pending_events = Arc::new(Mutex::new(VecDeque::new()));
                 let filter_udata = KeyboardFilterUserData {
                     keyboard_handle: kb_handle.clone(),
-                    pending_events,
+                    pending_events: Default::default(),
                     focused_surface: Mutex::new(None),
-                    manager_data: self.inner.clone(),
+                    bound_keyboards: self.bound_keyboards.clone(),
                     bound_keyboard: keyboard.clone(),
                     bound_input_method: input_method.clone(),
                     im_surface: surface,
                     client_held_keys: Mutex::new(HashSet::new()),
                 };
 
-                let keyboard_filter = data_init.init::<XxKeyboardFilterV1, _>(extensions, filter_udata);
-
                 // Late bind: focus may already exist before the filter is created.
-                if let Some(focus) = imdata.text_input_handle.focus() {
-                    keyboard_filter
-                        .data::<KeyboardFilterUserData<D>>()
-                        .unwrap()
-                        .activate_interceptor(&focus);
+                let is_active = imdata.handle.with_instance(|i| i.object == input_method) == Some(true);
+                if let (true, Some(focus)) = (is_active, imdata.text_input_handle.focus()) {
+                    filter_udata.activate(&focus);
                 }
 
+                let keyboard_filter = data_init.init::<XxKeyboardFilterV1, _>(extensions, filter_udata);
                 *imdata.keyboard_filter.lock().unwrap() = Some(keyboard_filter);
-                let mut bind = self.inner.lock().unwrap();
-                bind.bound_keyboards.insert(keyboard);
-                bind.bound_ims.insert(input_method);
+                self.bound_keyboards.lock().unwrap().insert(keyboard);
             }
             xx_keyboard_filter_manager_v1::Request::Destroy => {}
             _ => unreachable!(),

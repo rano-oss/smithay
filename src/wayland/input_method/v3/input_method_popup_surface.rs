@@ -293,35 +293,32 @@ where
                 let positioner: &PositionerUserData = positioner.data().unwrap();
                 let positioner = *positioner.inner.lock().unwrap();
 
-                let mut inner = im.handle.inner.lock().unwrap();
-                let owner_id = self.input_method.id();
-                let last_cursor = inner.last_cursor_rectangle;
-                let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == owner_id) else {
-                    return;
-                };
-                let Some(popup) = instance
-                    .popup_handles
-                    .iter_mut()
-                    .find(|h| h.surface_role == *popup)
+                let Some((popup, cursor)) = im
+                    .handle
+                    .with_instance_of(&self.input_method, |instance, last_cursor| {
+                        let popup = instance
+                            .popup_handles
+                            .iter_mut()
+                            .find(|h| h.surface_role == *popup)?;
+                        *self.positioner.lock().unwrap() = positioner;
+                        popup.set_repositioned(token);
+                        // In start_of_preedit mode, keep the frozen preedit-start anchor
+                        // rather than tracking the live caret via Size/Reposition.
+                        let cursor = if popup.position_mode == PopupPositionMode::FollowCursor {
+                            last_cursor
+                        } else {
+                            popup.anchored_cursor_rectangle
+                        };
+                        Some((popup.clone(), cursor))
+                    })
+                    .flatten()
                 else {
                     return;
                 };
-                *self.positioner.lock().unwrap() = positioner;
-                popup.set_repositioned(token);
 
-                // In start_of_preedit mode, keep the frozen preedit-start anchor
-                // rather than tracking the live caret via Size/Reposition.
-                let cursor = if popup.position_mode == PopupPositionMode::FollowCursor {
-                    last_cursor
-                } else {
-                    popup.anchored_cursor_rectangle
-                };
-                let parent_surface = cursor.as_ref().map(|_| popup.get_parent().surface.clone());
-                let popup = popup.clone();
-                drop(inner);
-
-                if let (Some(cursor), Some(parent_surface)) = (cursor, parent_surface) {
-                    let geometry = (im.popup_geometry)(state, &parent_surface, &cursor, &positioner);
+                if let Some(cursor) = cursor {
+                    let parent_surface = &popup.get_parent().surface;
+                    let geometry = (im.popup_geometry)(state, parent_surface, &cursor, &positioner);
                     popup.set_position(PopupLocation {
                         anchor: cursor,
                         geometry,
@@ -334,32 +331,29 @@ where
             Request::SetPopupPositionMode { mode } => {
                 let mode = mode.into_result().unwrap_or(PopupPositionMode::FollowCursor);
                 let im: &InputMethodUserData<D> = self.input_method.data().unwrap();
-                let mut inner = im.handle.inner.lock().unwrap();
-                let owner_id = self.input_method.id();
-                let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == owner_id) else {
-                    return;
-                };
-                let Some(popup) = instance
-                    .popup_handles
-                    .iter_mut()
-                    .find(|h| h.surface_role == *popup)
-                else {
-                    return;
-                };
-                let previous = popup.position_mode;
-                popup.position_mode = mode;
-                if mode == PopupPositionMode::StartOfPreedit {
-                    // Arm a new anchor only when entering this mode or after the
-                    // previous anchor was cleared (e.g. CommitString).
-                    if previous != PopupPositionMode::StartOfPreedit
-                        || popup.anchored_cursor_rectangle.is_none()
-                    {
-                        popup.awaiting_anchor = true;
+                im.handle.with_instance_of(&self.input_method, |instance, _| {
+                    let Some(popup) = instance
+                        .popup_handles
+                        .iter_mut()
+                        .find(|h| h.surface_role == *popup)
+                    else {
+                        return;
+                    };
+                    let previous = popup.position_mode;
+                    popup.position_mode = mode;
+                    if mode == PopupPositionMode::StartOfPreedit {
+                        // Arm a new anchor only when entering this mode or after the
+                        // previous anchor was cleared (e.g. CommitString).
+                        if previous != PopupPositionMode::StartOfPreedit
+                            || popup.anchored_cursor_rectangle.is_none()
+                        {
+                            popup.awaiting_anchor = true;
+                        }
+                    } else {
+                        popup.awaiting_anchor = false;
+                        popup.anchored_cursor_rectangle = None;
                     }
-                } else {
-                    popup.awaiting_anchor = false;
-                    popup.anchored_cursor_rectangle = None;
-                }
+                });
             }
             Request::Destroy => {
                 // Nothing to do
