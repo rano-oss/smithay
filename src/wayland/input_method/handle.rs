@@ -154,6 +154,12 @@ impl InputMethodHandle {
         D::KeyboardFocus: WaylandFocus,
     {
         self.v3.clear_active_instance(state);
+        // Late-bound filters of non-active IMs can leave a seat interceptor with
+        // no active instance; deactivate is then a no-op. Always drop it on clear
+        // (e.g. switching to a layout with no IME map like `no`).
+        if let Some(kb) = seat.get_keyboard() {
+            kb.arc.clear_kbd_interceptor();
+        }
         self.sync_activation(state, seat);
     }
 }

@@ -43,8 +43,7 @@ pub struct PopupSurface {
     acked_state: Arc<Mutex<PopupSurfaceState>>,
     pub(crate) position_mode: PopupPositionMode,
     pub(crate) anchored_cursor_rectangle: Option<Rectangle<i32, Logical>>,
-    /// Waiting for text-input cursor_rectangle while the IME preedit caret is at
-    /// 0. Cleared (freeze) when the IME moves the caret away from 0.
+    /// Waiting for the next text-input cursor_rectangle to lock StartOfPreedit.
     pub(crate) awaiting_anchor: bool,
 }
 

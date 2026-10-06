@@ -144,33 +144,33 @@ impl InputMethodV3Handle {
         state: &mut D,
         cursor: Rectangle<i32, Logical>,
     ) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.last_cursor_rectangle = Some(cursor);
-        let Some(active_id) = inner.active_input_method_id.clone() else {
-            return;
-        };
-        let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
-            return;
-        };
-        let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
-        let popup_geometry = data.popup_geometry;
-        let ime_popup_configure_sent = data.ime_popup_configure_sent;
+        let Some((popup_geometry, ime_popup_configure_sent, pending)) =
+            self.with_instance(|instance| {
+                let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
+                let popup_geometry = data.popup_geometry;
+                let ime_popup_configure_sent = data.ime_popup_configure_sent;
 
-        let mut pending = Vec::new();
-        for (index, popup) in instance.popup_handles.iter().enumerate() {
-            let awaiting = popup.position_mode == PopupPositionMode::StartOfPreedit && popup.awaiting_anchor;
-            if popup.position_mode == PopupPositionMode::FollowCursor
-                || (awaiting && popup.anchored_cursor_rectangle != Some(cursor))
-            {
-                pending.push((
-                    index,
-                    popup.get_parent().surface.clone(),
-                    popup.positioner(),
-                    awaiting,
-                ));
-            }
-        }
-        drop(inner);
+                let mut pending = Vec::new();
+                for (index, popup) in instance.popup_handles.iter().enumerate() {
+                    let awaiting =
+                        popup.position_mode == PopupPositionMode::StartOfPreedit && popup.awaiting_anchor;
+                    if popup.position_mode == PopupPositionMode::FollowCursor
+                        || (awaiting && popup.anchored_cursor_rectangle != Some(cursor))
+                    {
+                        pending.push((
+                            index,
+                            popup.get_parent().surface.clone(),
+                            popup.positioner(),
+                            awaiting,
+                        ));
+                    }
+                }
+                (popup_geometry, ime_popup_configure_sent, pending)
+            })
+        else {
+            return;
+        };
+        self.inner.lock().unwrap().last_cursor_rectangle = Some(cursor);
 
         let mut changed = false;
         for (index, parent, positioner, set_anchor) in pending {
@@ -178,25 +178,26 @@ impl InputMethodV3Handle {
                 anchor: cursor,
                 geometry: popup_geometry(state, &parent, &cursor, &positioner),
             };
-            let mut inner = self.inner.lock().unwrap();
-            let Some(popup) = inner
-                .instances
-                .iter_mut()
-                .find(|i| i.object.id() == active_id)
-                .and_then(|i| i.popup_handles.get_mut(index))
-            else {
-                continue;
-            };
-            if set_anchor {
-                // Lock on the first cursor while awaiting so later client rects
-                // (e.g. GTK end-of-preedit) cannot overwrite the start anchor.
-                popup.anchored_cursor_rectangle = Some(cursor);
-                popup.awaiting_anchor = false;
-            }
-            if popup.current_location() != loc {
-                popup.set_position(loc);
-                changed = true;
-            }
+            let updated = self
+                .with_instance(|im| {
+                    let Some(popup) = im.popup_handles.get_mut(index) else {
+                        return false;
+                    };
+                    if set_anchor {
+                        // Lock on the first cursor while awaiting so later client rects
+                        // (e.g. GTK end-of-preedit) cannot overwrite the start anchor.
+                        popup.anchored_cursor_rectangle = Some(cursor);
+                        popup.awaiting_anchor = false;
+                    }
+                    if popup.current_location() != loc {
+                        popup.set_position(loc);
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false);
+            changed |= updated;
         }
 
         if !changed {
@@ -325,7 +326,7 @@ where
                     for popup in &mut instance.popup_handles {
                         if popup.position_mode == PopupPositionMode::StartOfPreedit {
                             popup.anchored_cursor_rectangle = None;
-                            popup.awaiting_anchor = false;
+                            popup.awaiting_anchor = true;
                         }
                     }
                 });
@@ -338,35 +339,18 @@ where
                 self.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.preedit_string(Some(text.clone()), cursor_begin, cursor_end);
                 });
-                let mut inner = self.handle.inner.lock().unwrap();
-                let last_cursor = inner.last_cursor_rectangle;
-                let Some(active_id) = inner.active_input_method_id.clone() else {
-                    return;
-                };
-                let Some(instance) = inner.instances.iter_mut().find(|i| i.object.id() == active_id) else {
-                    return;
-                };
-                let mut seed_cursor = None;
-                for popup in instance.popup_handles.iter_mut() {
-                    if popup.position_mode != PopupPositionMode::StartOfPreedit {
-                        continue;
-                    }
-                    if text.is_empty() {
-                        popup.awaiting_anchor = true;
-                        popup.anchored_cursor_rectangle = None;
-                    } else if cursor_begin == 0 && cursor_end == 0 {
-                        popup.awaiting_anchor = true;
-                        if popup.anchored_cursor_rectangle.is_none() {
-                            seed_cursor = last_cursor;
+                self.handle.with_instance(|instance| {
+                    for popup in instance.popup_handles.iter_mut() {
+                        if popup.position_mode != PopupPositionMode::StartOfPreedit {
+                            continue;
                         }
-                    } else {
-                        popup.awaiting_anchor = false;
+                        if text.is_empty() || (cursor_begin == 0 && cursor_end == 0) {
+                            popup.awaiting_anchor = true;
+                        } else if popup.anchored_cursor_rectangle.is_some() {
+                            popup.awaiting_anchor = false;
+                        }
                     }
-                }
-                drop(inner);
-                if let Some(cursor) = seed_cursor {
-                    self.handle.set_text_input_rectangle(state, cursor);
-                }
+                });
             }
             Request::DeleteSurroundingText {
                 before_length,

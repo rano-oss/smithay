@@ -181,7 +181,7 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
                     }
                 }
                 KeyState::Repeated => {
-                    if held.contains(&event.key) {
+                    if kbd.version() >= 10 {
                         kbd.key(event.serial, event.time, event.key, KeyState::Repeated);
                     } else {
                         kbd.key(event.serial, event.time, event.key, KeyState::Pressed);
