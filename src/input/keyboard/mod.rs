@@ -1237,9 +1237,10 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             }
         };
 
-        // Forward to the grab/client. Modifiers are only attached when seat mod state
-        // changed; `KeyboardGrab` / `KeyboardInnerHandle` send key then modifiers
-        // (upstream Smithay / GNOME order).
+        // forward to client if no keybinding is triggered.
+        // Modifiers are only sent when the shared seat state actually changed; the client
+        // resolves the following key event against them, so they must precede the key (handled
+        // in `KeyboardInnerHandle::input`).
         let seat = self.get_seat(data);
         let mods = guard.mods_state;
         let modifiers = mods_changed.then_some(mods);
