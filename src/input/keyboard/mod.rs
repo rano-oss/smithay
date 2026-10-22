@@ -1729,9 +1729,6 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
             keycode,
         };
 
-        // Match upstream Smithay / GNOME: key first, then modifiers when they change
-        // (see Smithay#2184). Do not reverse this for IME — interceptors can adjust
-        // wire order if a specific client path needs it.
         focus.key(self.seat, data, key, key_state, serial, time);
         if let Some(mods) = modifiers {
             focus.modifiers(self.seat, data, mods, serial);

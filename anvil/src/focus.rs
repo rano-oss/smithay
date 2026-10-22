@@ -9,7 +9,7 @@ pub use smithay::{
     desktop::{LayerSurface, PopupKind},
     input::{
         Seat,
-        keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
+        keyboard::{KeyboardTarget, Keycode, KeysymHandle, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, MotionEvent, PointerTarget, RelativeMotionEvent},
     },
     reexports::wayland_server::{Resource, backend::ObjectId, protocol::wl_surface::WlSurface},
@@ -31,7 +31,6 @@ use smithay::{
     utils::{Logical, Point},
     wayland::selection::data_device::WlOfferData,
 };
-use xkbcommon::xkb::Keycode;
 
 use crate::{
     shell::{SSD, WindowElement},
