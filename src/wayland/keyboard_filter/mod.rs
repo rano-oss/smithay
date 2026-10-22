@@ -7,7 +7,7 @@ pub use keyboard_filter_handle::KeyboardFilterUserData;
 
 use std::{
     collections::HashSet,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicBool},
 };
 
 use wayland_protocols_experimental::keyboard_filter::v3::server::{
@@ -34,6 +34,7 @@ const MANAGER_VERSION: u32 = 1;
 #[allow(missing_debug_implementations)]
 pub struct KeyboardFilterManagerGlobalData {
     filter: Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
+    bound_keyboards: Arc<Mutex<HashSet<WlKeyboard>>>,
 }
 
 /// Data accessible from XxKeyboardFilterManagerV1
@@ -60,6 +61,7 @@ impl KeyboardFilterManagerState {
     {
         let data = KeyboardFilterManagerGlobalData {
             filter: Box::new(filter),
+            bound_keyboards: Default::default(),
         };
         let global = display.create_global::<D, XxKeyboardFilterManagerV1, _>(MANAGER_VERSION, data);
         Self { global }
@@ -89,7 +91,7 @@ where
         data_init.init(
             resource,
             KeyboardFilterManagerUserData {
-                bound_keyboards: Default::default(),
+                bound_keyboards: self.bound_keyboards.clone(),
             },
         );
     }
@@ -150,18 +152,17 @@ where
                 let filter_udata = KeyboardFilterUserData {
                     keyboard_handle: kb_handle.clone(),
                     pending_events: Default::default(),
-                    focused_surface: Mutex::new(None),
                     bound_keyboards: self.bound_keyboards.clone(),
                     bound_keyboard: keyboard.clone(),
                     bound_input_method: input_method.clone(),
                     im_surface: surface,
-                    client_held_keys: Mutex::new(HashSet::new()),
+                    attached: AtomicBool::new(true),
                 };
 
                 // Late bind: focus may already exist before the filter is created.
                 let is_active = imdata.handle.with_instance(|i| i.object == input_method) == Some(true);
-                if let (true, Some(focus)) = (is_active, imdata.text_input_handle.focus()) {
-                    filter_udata.activate(&focus);
+                if is_active && imdata.text_input_handle.focus().is_some() {
+                    filter_udata.activate(None);
                 }
 
                 let keyboard_filter = data_init.init::<XxKeyboardFilterV1, _>(extensions, filter_udata);

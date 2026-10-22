@@ -75,7 +75,25 @@ impl InputMethodV3Handle {
     ///
     /// Replaces any prior instance registered under the same app_id so reconnects
     /// do not leave duplicate stale entries in the instance list.
-    pub(super) fn add_instance(&self, instance: &XxInputMethodV1, app_id: String) {
+    pub(super) fn add_instance<D: SeatHandler + 'static>(
+        &self,
+        state: &mut D,
+        instance: &XxInputMethodV1,
+        app_id: String,
+    ) {
+        let replacing_active = {
+            let inner = self.inner.lock().unwrap();
+            inner.active_input_method_id.as_ref().is_some_and(|active_id| {
+                inner
+                    .instances
+                    .iter()
+                    .any(|i| i.app_id == app_id && i.object.id() == *active_id)
+            })
+        };
+        if replacing_active {
+            self.deactivate_input_method(state);
+        }
+
         let mut inner = self.inner.lock().unwrap();
         inner.instances.retain(|i| i.app_id != app_id);
         if inner
@@ -228,14 +246,15 @@ impl InputMethodV3Handle {
     pub(crate) fn activate_input_method<D: SeatHandler + 'static>(
         &self,
         _state: &mut D,
-        surface: &WlSurface,
+        _surface: &WlSurface,
+        pressed_keys: Option<Vec<u8>>,
     ) {
         self.with_instance(|im| {
             im.object.activate();
             im.object
                 .data::<InputMethodUserData<D>>()
                 .unwrap()
-                .with_filter(|f| f.activate(surface));
+                .with_filter(|f| f.activate(pressed_keys.clone()));
         });
     }
 
@@ -334,6 +353,9 @@ where
                 self.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.commit_string(Some(text.clone()));
                 });
+                // commit_string moves the preedit start; drop the lock and take the
+                // next client cursor after this IM commit (with remaining preedit in
+                // the same done — see zwp_text_input_v3.done ordering).
                 self.handle.with_instance(|instance| {
                     for popup in &mut instance.popup_handles {
                         if popup.position_mode == PopupPositionMode::StartOfPreedit {
@@ -474,9 +496,12 @@ where
         inner.instances.retain(|inst| inst.object.id() != destroyed_id);
         drop(inner);
 
-        let filter = self.keyboard_filter.lock().unwrap().take();
+        let filter = self.keyboard_filter.lock().unwrap().clone();
         if let Some(filter) = filter {
-            filter.data::<KeyboardFilterUserData<D>>().unwrap().detach();
+            filter
+                .data::<KeyboardFilterUserData<D>>()
+                .unwrap()
+                .detach(&filter);
         }
         if was_active {
             self.clear_preedit();

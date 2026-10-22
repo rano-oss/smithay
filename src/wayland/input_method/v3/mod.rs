@@ -136,7 +136,9 @@ where
                     }
                 };
 
-                input_method_handle.v3.add_instance(&instance, app_id.clone());
+                input_method_handle
+                    .v3
+                    .add_instance(state, &instance, app_id.clone());
                 text_input_handle.enter();
                 state.input_method_instance_registered(&seat, &app_id);
                 input_method_handle.sync_activation(state, &seat);

@@ -1,6 +1,9 @@
 use std::{
-    collections::{HashSet, VecDeque},
-    sync::{Arc, Mutex},
+    collections::VecDeque,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use tracing::{error, warn};
@@ -20,7 +23,23 @@ use wayland_server::{
 
 use crate::input::{SeatHandler, keyboard::KeyboardHandle};
 use crate::utils::SERIAL_COUNTER;
-use crate::wayland::{Dispatch2, input_method::InputMethodV3UserData, seat::keyboard::repeat_key_states};
+use crate::wayland::{
+    Dispatch2,
+    input_method::InputMethodV3UserData,
+    seat::keyboard::{repeat_key_states, serialize_pressed_keys},
+};
+
+/// Pressed keys and modifiers (depressed, latched, locked, group), if the seat isn't locked.
+///
+/// During `set_focus` the seat lock is usually held, so this returns `None`.
+fn seat_snapshot<D: SeatHandler + 'static>(kb: &KeyboardHandle<D>) -> Option<(Vec<u8>, [u32; 4])> {
+    let g = kb.arc.internal.try_lock().ok()?;
+    let m = g.mods_state.serialized;
+    Some((
+        serialize_pressed_keys(g.pressed_keys.iter().copied()),
+        [m.depressed, m.latched, m.locked, m.layout_effective],
+    ))
+}
 
 #[derive(Debug)]
 pub(crate) struct BufferedEvent {
@@ -28,6 +47,7 @@ pub(crate) struct BufferedEvent {
     time: u32,
     key: u32,
     state: KeyState,
+    keyboards: Vec<WlKeyboard>,
 }
 
 /// Seat-level routing installed while a keyboard filter is active: key events go to the
@@ -39,13 +59,14 @@ pub(crate) struct KbdFilter {
 }
 
 impl KbdFilter {
-    pub(crate) fn key(&self, serial: u32, time: u32, key: u32, state: KeyState) {
+    pub(crate) fn key(&self, serial: u32, time: u32, key: u32, state: KeyState, keyboards: Vec<WlKeyboard>) {
         self.im_keyboard.key(serial, time, key, state);
         self.pending.lock().unwrap().push_back(BufferedEvent {
             serial,
             time,
             key,
             state,
+            keyboards,
         });
     }
 }
@@ -55,27 +76,31 @@ impl KbdFilter {
 pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     pub(crate) pending_events: Arc<Mutex<VecDeque<BufferedEvent>>>,
-    pub(crate) focused_surface: Mutex<Option<WlSurface>>,
-    pub(crate) bound_keyboards: Arc<Mutex<HashSet<WlKeyboard>>>,
+    pub(crate) bound_keyboards: Arc<Mutex<std::collections::HashSet<WlKeyboard>>>,
     pub(crate) bound_keyboard: WlKeyboard,
     pub(crate) bound_input_method: XxInputMethodV1,
     pub(crate) im_surface: WlSurface,
-    /// Keys whose press was forwarded to the focused client (so Repeated is valid).
-    pub(crate) client_held_keys: Mutex<HashSet<u32>>,
+    pub(crate) attached: AtomicBool,
 }
 
 impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
-    /// Route the seat's key events through this filter while `focused_surface` has focus.
-    pub(crate) fn activate(&self, focused_surface: &WlSurface) {
-        *self.focused_surface.lock().unwrap() = Some(focused_surface.clone());
+    /// Route the seat's key events through this filter.
+    pub(crate) fn activate(&self, pressed_keys: Option<Vec<u8>>) {
         let mut filter = self.keyboard_handle.arc.kbd_filter.lock().unwrap();
         if self.is_installed(&filter) {
             return;
         }
-        // Pressed keys are unknown here: the seat's state may be locked by the focus change
-        // that triggered this activation.
+        let snapshot = seat_snapshot(&self.keyboard_handle);
+        let keys = pressed_keys
+            .or_else(|| snapshot.as_ref().map(|(keys, _)| keys.clone()))
+            .unwrap_or_default();
         let serial = SERIAL_COUNTER.next_serial().into();
-        self.bound_keyboard.enter(serial, &self.im_surface, Vec::new());
+        self.bound_keyboard.enter(serial, &self.im_surface, keys);
+        // Without a snapshot, the seat's following focus modifiers event reaches the IM.
+        if let Some((_, [depressed, latched, locked, group])) = snapshot {
+            self.bound_keyboard
+                .modifiers(serial, depressed, latched, locked, group);
+        }
         *filter = Some(KbdFilter {
             im_keyboard: self.bound_keyboard.clone(),
             pending: self.pending_events.clone(),
@@ -88,15 +113,15 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
             .is_some_and(|f| Arc::ptr_eq(&f.pending, &self.pending_events))
     }
 
-    /// Stop routing through this filter, forwarding (`flush`) or dropping buffered keys.
+    /// Stop routing through this filter, forwarding buffered keys when `flush` is true.
+    ///
+    /// Otherwise the queue is preserved so replies issued after deactivation remain valid.
     pub(crate) fn deactivate(&self, flush: bool) {
-        let pending = std::mem::take(&mut *self.pending_events.lock().unwrap());
         if flush {
-            pending
-                .iter()
-                .for_each(|event| self.send_key_to_focused_client(event));
+            for event in self.pending_events.lock().unwrap().drain(..) {
+                Self::send_key_to_focused_client(&event);
+            }
         }
-        self.client_held_keys.lock().unwrap().clear();
         let mut filter = self.keyboard_handle.arc.kbd_filter.lock().unwrap();
         if self.is_installed(&filter) {
             *filter = None;
@@ -105,30 +130,14 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
         }
     }
 
-    fn send_key_to_focused_client(&self, event: &BufferedEvent) {
-        let Some(ref surface) = *self.focused_surface.lock().unwrap() else {
-            return;
-        };
-        let mut held = self.client_held_keys.lock().unwrap();
-        for kbd in &*self.keyboard_handle.arc.known_kbds.lock().unwrap() {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
-            if !kbd.id().same_client_as(&surface.id()) {
-                continue;
-            }
+    fn send_key_to_focused_client(event: &BufferedEvent) {
+        for kbd in &event.keyboards {
             match event.state {
-                KeyState::Pressed => {
-                    held.insert(event.key);
-                    kbd.key(event.serial, event.time, event.key, KeyState::Pressed);
-                }
-                KeyState::Released => {
-                    if held.remove(&event.key) {
-                        kbd.key(event.serial, event.time, event.key, KeyState::Released);
-                    }
+                KeyState::Pressed | KeyState::Released => {
+                    kbd.key(event.serial, event.time, event.key, event.state);
                 }
                 KeyState::Repeated => {
-                    for &state in repeat_key_states(&kbd) {
+                    for &state in repeat_key_states(kbd) {
                         kbd.key(event.serial, event.time, event.key, state);
                     }
                 }
@@ -137,14 +146,20 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
         }
     }
 
-    pub(crate) fn detach(&self) {
+    pub(crate) fn detach(&self, resource: &XxKeyboardFilterV1) {
+        if !self.attached.swap(false, Ordering::AcqRel) {
+            return;
+        }
         self.deactivate(true);
         self.bound_keyboards.lock().unwrap().remove(&self.bound_keyboard);
         let im_data = self
             .bound_input_method
             .data::<InputMethodV3UserData<D>>()
             .unwrap();
-        *im_data.keyboard_filter.lock().unwrap() = None;
+        let mut filter = im_data.keyboard_filter.lock().unwrap();
+        if filter.as_ref() == Some(resource) {
+            *filter = None;
+        }
     }
 }
 
@@ -165,9 +180,12 @@ where
         use xx_keyboard_filter_v1::Request;
         match request {
             Request::Unbind => {
-                self.detach();
+                self.detach(resource);
             }
             Request::Filter { serial, action } => {
+                if !self.attached.load(Ordering::Acquire) {
+                    return;
+                }
                 let passthrough = match action {
                     WEnum::Value(FilterAction::Passthrough) => true,
                     WEnum::Value(FilterAction::Consume) => false,
@@ -177,7 +195,7 @@ where
                     }
                 };
                 let mut pending = self.pending_events.lock().unwrap();
-                let Some(pos) = pending.iter().position(|e| e.serial == serial) else {
+                let Some(front) = pending.front() else {
                     warn!("Filter response for unknown serial {serial}");
                     resource.post_error(
                         xx_keyboard_filter_v1::Error::InvalidSerial,
@@ -185,10 +203,22 @@ where
                     );
                     return;
                 };
-                let event = pending.remove(pos).unwrap();
+                if front.serial != serial {
+                    if pending.iter().any(|event| event.serial == serial) {
+                        warn!("Ignoring out-of-order filter response for serial {serial}");
+                        return;
+                    }
+                    warn!("Filter response for unknown serial {serial}");
+                    resource.post_error(
+                        xx_keyboard_filter_v1::Error::InvalidSerial,
+                        format!("No pending event with serial {serial}"),
+                    );
+                    return;
+                }
+                let event = pending.pop_front().unwrap();
                 drop(pending);
                 if passthrough {
-                    self.send_key_to_focused_client(&event);
+                    Self::send_key_to_focused_client(&event);
                 }
             }
             _ => unreachable!(),
@@ -199,8 +229,8 @@ where
         &self,
         _state: &mut D,
         _client: wayland_server::backend::ClientId,
-        _resource: &XxKeyboardFilterV1,
+        resource: &XxKeyboardFilterV1,
     ) {
-        self.detach();
+        self.detach(resource);
     }
 }

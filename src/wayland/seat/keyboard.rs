@@ -157,10 +157,16 @@ pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
             };
 
             if kbd.id().same_client_as(&surface.id()) {
-                f(kbd.clone())
+                f(kbd);
             }
         }
     }
+}
+
+fn focused_kbds<D: SeatHandler + 'static>(seat: &Seat<D>, surface: &WlSurface) -> Vec<WlKeyboard> {
+    let mut keyboards = Vec::new();
+    for_each_focused_kbds(seat, surface, |kbd| keyboards.push(kbd));
+    keyboards
 }
 
 /// Runs `f` on the active keyboard filter, if any. Returns whether one was active.
@@ -268,7 +274,7 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     // as the input method for this seat.
     if input_method.has_instance() || text_input.compositor_input_method() {
         text_input.enter();
-        input_method.activate_input_method(state, surface);
+        input_method.activate_input_method(state, surface, Some(serialized_keys));
     }
 }
 
@@ -313,8 +319,10 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
         time: InputTime,
     ) {
         let (serial, time, key) = (serial.into(), time.millis(), key.raw_code().raw() - 8);
-        if !with_kbd_filter(seat, |f| f.key(serial, time, key, state.into())) {
-            for_each_focused_kbds(seat, self, |kbd| kbd.key(serial, time, key, state.into()))
+        if !with_kbd_filter(seat, |f| {
+            f.key(serial, time, key, state.into(), focused_kbds(seat, self))
+        }) {
+            for_each_focused_kbds(seat, self, |kbd| kbd.key(serial, time, key, state.into()));
         }
     }
 
@@ -336,8 +344,9 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
     fn repeat(&self, seat: &Seat<D>, _data: &mut D, keycode: Keycode, serial: Serial, time: InputTime) {
         let (serial, time, key) = (serial.into(), time.millis(), keycode.raw() - 8);
         let filtered = with_kbd_filter(seat, |f| {
+            let keyboards = focused_kbds(seat, self);
             for &state in repeat_key_states(&f.im_keyboard) {
-                f.key(serial, time, key, state);
+                f.key(serial, time, key, state, keyboards.clone());
             }
         });
         if !filtered {

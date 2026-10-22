@@ -53,9 +53,14 @@ impl InputMethodHandle {
     }
 
     /// Activate input method on the given surface.
-    pub fn activate_input_method<D: SeatHandler + 'static>(&self, state: &mut D, surface: &WlSurface) {
+    pub fn activate_input_method<D: SeatHandler + 'static>(
+        &self,
+        state: &mut D,
+        surface: &WlSurface,
+        pressed_keys: Option<Vec<u8>>,
+    ) {
         self.v2.activate_input_method(state, surface);
-        self.v3.activate_input_method(state, surface);
+        self.v3.activate_input_method(state, surface, pressed_keys);
     }
 
     pub(crate) fn surrounding_text(&self, text: String, cursor: u32, anchor: u32) {
@@ -116,7 +121,13 @@ impl InputMethodHandle {
     /// Call after compositor policy changes the selected instance (e.g. layout switch).
     pub fn sync_activation<D: SeatHandler + 'static>(&self, state: &mut D, seat: &Seat<D>) {
         match (self.has_instance(), seat.text_input().focus()) {
-            (true, Some(surface)) => self.activate_input_method(state, &surface),
+            (true, Some(surface)) => {
+                // Focus may have been set while no IM was selected, which skips
+                // text_input.enter() in seat keyboard enter. Send it now so the
+                // client can enable and receive preedit.
+                seat.text_input().enter();
+                self.activate_input_method(state, &surface, None);
+            }
             (false, _) => self.deactivate_input_method(state),
             (true, None) => {}
         }
