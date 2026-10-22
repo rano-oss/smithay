@@ -72,9 +72,14 @@ where
             return;
         };
 
+        let filter_owns_repeat = self.arc.kbd_filter.lock().unwrap().is_some();
         let guard = self.arc.internal.lock().unwrap();
         if kbd.version() >= 4 {
-            let (rate, delay) = guard.advertised_repeat_info();
+            let (rate, delay) = if filter_owns_repeat {
+                (0, 0)
+            } else {
+                (guard.repeat_rate, guard.repeat_delay)
+            };
             kbd.repeat_info(rate, delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {

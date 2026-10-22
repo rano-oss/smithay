@@ -7,6 +7,7 @@ use downcast_rs::{Downcast, impl_downcast};
 use std::collections::{HashMap, HashSet};
 #[cfg(feature = "wayland_frontend")]
 use std::sync::RwLock;
+#[cfg(feature = "wayland_frontend")]
 use std::time::Duration;
 use std::{
     default::Default,
@@ -248,8 +249,6 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     xkb: Arc<Mutex<Xkb>>,
     pub(crate) repeat_rate: i32,
     pub(crate) repeat_delay: i32,
-    /// Clients get `repeat_info(0, 0)`; compositor drives repeat via `manage_key_repeat`.
-    pub(crate) compositor_owned_repeat: bool,
     led_mapping: LedMapping,
     pub(crate) led_state: LedState,
     grab: GrabStatus<dyn KeyboardGrab<D>>,
@@ -268,7 +267,6 @@ impl<D: SeatHandler> fmt::Debug for KbdInternal<D> {
             .field("xkb", &self.xkb)
             .field("repeat_rate", &self.repeat_rate)
             .field("repeat_delay", &self.repeat_delay)
-            .field("compositor_owned_repeat", &self.compositor_owned_repeat)
             .finish()
     }
 }
@@ -309,22 +307,11 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
             })),
             repeat_rate,
             repeat_delay,
-            compositor_owned_repeat: false,
             led_mapping,
             led_state,
             grab: GrabStatus::None,
             key_repeat_token: None,
         })
-    }
-
-    /// Repeat info as advertised to clients.
-    #[cfg(feature = "wayland_frontend")]
-    pub(crate) fn advertised_repeat_info(&self) -> (i32, i32) {
-        if self.compositor_owned_repeat {
-            (0, 0)
-        } else {
-            (self.repeat_rate, self.repeat_delay)
-        }
     }
 
     // Feed a key event from `source` into the shared seat state. Returns
@@ -1273,25 +1260,25 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
             trace!("No client currently focused");
         }
         drop(guard);
+        #[cfg(feature = "wayland_frontend")]
         self.manage_key_repeat(data, keycode, state, time);
     }
 
-    /// Start or stop compositor-side key repeat based on key state.
+    /// Compositor-side key repeat while a keyboard filter is installed.
     ///
-    /// Only active when [`Self::set_compositor_owned_repeat`] is enabled and the
-    /// compositor provides a loop handle via [`SeatHandler::loop_handle`].
+    /// Clients receive `repeat_info(0, 0)` for that period; requires [`SeatHandler::loop_handle`].
+    #[cfg(feature = "wayland_frontend")]
     fn manage_key_repeat(&self, data: &mut D, keycode: Keycode, state: KeyState, time: InputTime) {
         let Some(loop_handle) = data.loop_handle() else {
             return;
         };
+        // Check filter before taking `internal` (filter code may try_lock internal).
+        let filter_active = self.arc.kbd_filter.lock().unwrap().is_some();
         let mut guard = self.arc.internal.lock().unwrap();
-        if !guard.compositor_owned_repeat {
-            return;
-        }
         if let Some(token) = guard.key_repeat_token.take() {
             loop_handle.remove(token);
         }
-        if state != KeyState::Pressed || guard.repeat_rate <= 0 {
+        if !filter_active || state != KeyState::Pressed || guard.repeat_rate <= 0 {
             return;
         }
         let rate = guard.repeat_rate;
@@ -1307,6 +1294,9 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 calloop::timer::Timer::from_duration(Duration::from_millis(delay as u64)),
                 move |_, _, data| {
                     time_ms = time_ms.wrapping_add(interval_ms);
+                    if kbd.arc.kbd_filter.lock().unwrap().is_none() {
+                        return calloop::timer::TimeoutAction::Drop;
+                    }
                     let guard = kbd.arc.internal.lock().unwrap();
                     if !guard.forwarded_pressed_keys.contains(&keycode) {
                         return calloop::timer::TimeoutAction::Drop;
@@ -1330,53 +1320,22 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         guard.key_repeat_token = Some(token);
     }
 
+    /// Re-advertise `repeat_info` after a keyboard filter is installed or removed.
     #[cfg(feature = "wayland_frontend")]
-    fn broadcast_repeat_info(&self, rate: i32, delay: i32) {
-        for kbd in &*self.arc.known_kbds.lock().unwrap() {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
-            if kbd.version() >= 4 {
-                kbd.repeat_info(rate, delay);
-            }
-        }
-    }
-
-    /// Change the repeat info configured for this keyboard.
-    ///
-    /// While [`Self::set_compositor_owned_repeat`] is enabled, clients keep
-    /// `repeat_info(0, 0)`; only the compositor-side timer uses the new values.
-    #[instrument(parent = &self.arc.span, skip(self))]
-    pub fn change_repeat_info(&self, rate: i32, delay: i32) {
-        let mut guard = self.arc.internal.lock().unwrap();
-        guard.repeat_delay = delay;
-        guard.repeat_rate = rate;
-        #[cfg(feature = "wayland_frontend")]
-        if !guard.compositor_owned_repeat {
-            drop(guard);
-            self.broadcast_repeat_info(rate, delay);
-        }
-    }
-
-    /// Advertise `repeat_info(0, 0)` and drive repeat via [`SeatHandler::loop_handle`].
-    #[cfg(feature = "wayland_frontend")]
-    pub fn set_compositor_owned_repeat(&self, owned: bool) {
-        let mut guard = self.arc.internal.lock().unwrap();
-        if guard.compositor_owned_repeat == owned {
-            return;
-        }
-        guard.compositor_owned_repeat = owned;
-        let (rate, delay) = guard.advertised_repeat_info();
-        drop(guard);
-        self.broadcast_repeat_info(rate, delay);
+    pub(crate) fn refresh_client_repeat_info(&self) {
+        let (rate, delay) = {
+            let guard = self.arc.internal.lock().unwrap();
+            (guard.repeat_rate, guard.repeat_delay)
+        };
+        self.change_repeat_info(rate, delay);
     }
 
     /// Set the current focus of this keyboard
     ///
     /// If the new focus is different from the previous one, any previous focus
-    /// will be sent a [`wl_keyboard::Event::Leave`]
+    /// will be sent a [`wl_keyboard::Event::Leave`](wayland_server::protocol::wl_keyboard::Event::Leave)
     /// event, and if the new focus is not `None`,
-    /// a [`wl_keyboard::Event::Enter`] event will be sent.
+    /// a [`wl_keyboard::Event::Enter`](wayland_server::protocol::wl_keyboard::Event::Enter) event will be sent.
     #[instrument(level = "debug", parent = &self.arc.span, skip(self, data, focus), fields(focus = focus.is_some()))]
     pub fn set_focus(&self, data: &mut D, focus: Option<<D as SeatHandler>::KeyboardFocus>, serial: Serial) {
         let mut guard = self.arc.internal.lock().unwrap();
@@ -1502,6 +1461,34 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Check if keyboard has focus
     pub fn is_focused(&self) -> bool {
         self.arc.internal.lock().unwrap().focus.is_some()
+    }
+
+    /// Change the repeat info configured for this keyboard
+    #[instrument(parent = &self.arc.span, skip(self))]
+    pub fn change_repeat_info(&self, rate: i32, delay: i32) {
+        #[cfg(feature = "wayland_frontend")]
+        let filter_owns_repeat = self.arc.kbd_filter.lock().unwrap().is_some();
+        let mut guard = self.arc.internal.lock().unwrap();
+        guard.repeat_delay = delay;
+        guard.repeat_rate = rate;
+        #[cfg(feature = "wayland_frontend")]
+        {
+            // While a keyboard filter is active, clients keep `(0, 0)`; the timer uses `rate`/`delay`.
+            let (rate, delay) = if filter_owns_repeat {
+                (0, 0)
+            } else {
+                (rate, delay)
+            };
+            drop(guard);
+            for kbd in &*self.arc.known_kbds.lock().unwrap() {
+                let Ok(kbd) = kbd.upgrade() else {
+                    continue;
+                };
+                if kbd.version() >= 4 {
+                    kbd.repeat_info(rate, delay);
+                }
+            }
+        }
     }
 
     /// Access the [`Serial`] of the last `keyboard_enter` event, if that focus is still active.
@@ -1785,9 +1772,9 @@ impl<D: SeatHandler + 'static> KeyboardInnerHandle<'_, D> {
     /// Set the current focus of this keyboard
     ///
     /// If the new focus is different from the previous one, any previous focus
-    /// will be sent a [`wl_keyboard::Event::Leave`]
+    /// will be sent a [`wl_keyboard::Event::Leave`](wayland_server::protocol::wl_keyboard::Event::Leave)
     /// event, and if the new focus is not `None`,
-    /// a [`wl_keyboard::Event::Enter`] event will be sent.
+    /// a [`wl_keyboard::Event::Enter`](wayland_server::protocol::wl_keyboard::Event::Enter) event will be sent.
     pub fn set_focus(
         &mut self,
         data: &mut D,

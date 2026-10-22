@@ -175,11 +175,10 @@ pub trait SeatHandler: Sized + 'static {
     /// Callback that will be notified whenever the keyboard led state changes.
     fn led_state_changed(&mut self, _seat: &Seat<Self>, _led_state: LedState) {}
 
-    /// Return the event loop handle for compositor-side key repeat.
+    /// Event loop handle used for compositor-side key repeat while a keyboard filter is active.
     ///
-    /// Override this to return `Some(loop_handle)` to enable compositor-side key repeat.
-    /// When enabled, the compositor manages repeat timers and sends repeat events
-    /// through [`KeyboardTarget::repeat`].
+    /// Without this, filtered key holds will not repeat. Repeat events are delivered via
+    /// [`KeyboardTarget::repeat`].
     fn loop_handle(&self) -> Option<calloop::LoopHandle<'static, Self>> {
         None
     }

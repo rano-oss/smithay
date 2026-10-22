@@ -105,6 +105,8 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
             im_keyboard: self.bound_keyboard.clone(),
             pending: self.pending_events.clone(),
         });
+        drop(filter);
+        self.keyboard_handle.refresh_client_repeat_info();
     }
 
     fn is_installed(&self, filter: &Option<KbdFilter>) -> bool {
@@ -127,6 +129,8 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
             *filter = None;
             self.bound_keyboard
                 .leave(SERIAL_COUNTER.next_serial().into(), &self.im_surface);
+            drop(filter);
+            self.keyboard_handle.refresh_client_repeat_info();
         }
     }
 
