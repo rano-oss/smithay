@@ -24,7 +24,7 @@
 //! #             GestureSwipeBeginEvent, GestureSwipeUpdateEvent, GestureSwipeEndEvent,
 //! #             GesturePinchBeginEvent, GesturePinchUpdateEvent, GesturePinchEndEvent,
 //! #             GestureHoldBeginEvent, GestureHoldEndEvent},
-//! #   keyboard::{KeyboardTarget, Keycode, KeysymHandle, ModifiersState},
+//! #   keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
 //! #   touch::{DownEvent, UpEvent, MotionEvent as TouchMotionEvent, ShapeEvent, OrientationEvent, TouchTarget, FrameMarker},
 //! # };
 //! # use smithay::utils::{IsAlive, Serial};
@@ -64,7 +64,6 @@
 //! #       time: InputTime,
 //! #   ) {}
 //! #   fn modifiers(&self, seat: &Seat<State>, data: &mut State, modifiers: ModifiersState, serial: Serial) {}
-//! #   fn repeat(&self, seat: &Seat<State>, data: &mut State, keycode: Keycode, serial: Serial, time: InputTime) {}
 //! # }
 //! # impl TouchTarget<State> for Target {
 //! #   fn down(&self, seat: &Seat<State>, data: &mut State, event: &DownEvent) {}
