@@ -172,6 +172,14 @@ pub trait SeatHandler: Sized + 'static {
     /// Callback that will be notified whenever the keyboard led state changes.
     fn led_state_changed(&mut self, _seat: &Seat<Self>, _led_state: LedState) {}
 
+    /// Event loop handle used for compositor-side key repeat while a keyboard filter is active.
+    ///
+    /// Without this, filtered key holds will not repeat. Repeat events are delivered via
+    /// [`KeyboardTarget::repeat`].
+    fn loop_handle(&self) -> Option<calloop::LoopHandle<'static, Self>> {
+        None
+    }
+
     /// Provides the implicit pointer grab for clicks
     ///
     /// When the user presses a pointer button, an implicit pointer grab is installed. If your
