@@ -309,9 +309,7 @@ where
                 pending_state.available_actions = Some(available_actions);
             }
             zwp_text_input_v3::Request::ShowInputPanel | zwp_text_input_v3::Request::HideInputPanel => {
-                // Panel hints are compositor policy. Kept off `InputMethodHandler` so
-                // text-input dispatch only needs `SeatHandler` (upstream shape).
-                debug!("ignoring text-input input panel hint (no text-input handler hook)");
+                debug!("ignoring text-input input panel hint");
             }
             zwp_text_input_v3::Request::Commit => {
                 let mut new_state = mem::take(pending_state);
