@@ -124,7 +124,9 @@ where
                 );
                 input_method_handle.v2.add_instance(&instance);
             }
-            zwp_input_method_manager_v2::Request::Destroy => {}
+            zwp_input_method_manager_v2::Request::Destroy => {
+                // Nothing to do
+            }
             _ => unreachable!(),
         }
     }

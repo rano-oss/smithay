@@ -128,8 +128,6 @@ use std::{
 use tracing::{info_span, instrument};
 use xkbcommon::xkb::ContextFlags;
 
-use calloop;
-
 use self::touch::TouchTarget;
 use self::{
     keyboard::{Error as KeyboardError, KeyboardHandle, KeyboardTarget, LedState},

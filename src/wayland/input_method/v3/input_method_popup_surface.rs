@@ -33,11 +33,9 @@ pub(crate) struct PopupLocation {
 pub struct PopupSurface {
     /// The surface role for the input method popup
     pub surface_role: XxInputPopupSurfaceV2,
-    /// Surface containing the popup
     surface: WlSurface,
     /// Surface containing the text input. This surface doesn't change within the lifetime of the popup.
     parent: PopupParent,
-    /// Tracks configures and serials
     configure: Arc<Mutex<PopupConfigureAttributes>>,
     /// The compositor-assigned state acknowledged by client.
     acked_state: Arc<Mutex<PopupSurfaceState>>,
@@ -204,13 +202,11 @@ impl PartialEq for PopupSurface {
 /// Compositor-defined state
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PopupSurfaceState {
-    /// Positioning information
     position: PopupLocation,
     /// Token to send to the client, if any
     ///
     /// The protocol doesn't mandate the lifecycle for this token, so this holds the last state and update events are sent on detected changes.
     repositioned: Option<u32>,
-    /// Already issued a configure sequence
     configured: bool,
 }
 

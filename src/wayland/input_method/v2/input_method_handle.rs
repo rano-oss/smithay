@@ -339,9 +339,10 @@ where
                 let mut keyboard = input_method.keyboard_grab.inner.lock().unwrap();
                 keyboard.grab = Some(instance.clone());
                 keyboard.text_input_handle = self.text_input_handle.clone();
-                let (rate, delay) = self.keyboard_handle.arc.repeat_info();
                 let guard = self.keyboard_handle.arc.internal.lock().unwrap();
-                instance.repeat_info(rate, delay);
+                let input = self.keyboard_handle.arc.client_input.lock().unwrap();
+                instance.repeat_info(input.repeat_rate, input.repeat_delay);
+                drop(input);
                 let keymap_file = self.keyboard_handle.arc.keymap.lock().unwrap();
                 let res = keymap_file.with_fd(false, |fd, size| {
                     instance.keymap(KeymapFormat::XkbV1, fd, size as u32);

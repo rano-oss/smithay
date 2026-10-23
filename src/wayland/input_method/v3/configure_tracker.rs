@@ -1,9 +1,4 @@
-//! Configure serial tracking for `xx_input_popup_surface_v2`.
-//!
-//! Required by the protocol: the compositor sends `configure` with a serial and
-//! the IME client must `ack_configure` before the new geometry is applied. This
-//! mirrors xdg-shell popup configure bookkeeping so we coalesce pending state,
-//! ignore stale acks, and avoid configure storms when the caret moves rapidly.
+//! Configure serial tracking for `xx_input_popup_surface_v2`, mirroring xdg-shell popups.
 
 use crate::utils::{SERIAL_COUNTER, Serial};
 

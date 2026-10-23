@@ -29,16 +29,17 @@ use crate::wayland::{
     seat::keyboard::{repeat_key_states, serialize_pressed_keys},
 };
 
-/// Pressed keys and modifiers (depressed, latched, locked, group), if the seat isn't locked.
+/// Pressed keys and modifiers (depressed, latched, locked, group) of the seat.
 ///
-/// During `set_focus` the seat lock is usually held, so this returns `None`.
-fn seat_snapshot<D: SeatHandler + 'static>(kb: &KeyboardHandle<D>) -> Option<(Vec<u8>, [u32; 4])> {
-    let g = kb.arc.internal.try_lock().ok()?;
+/// Locks the seat, so it must not be called while the seat is already locked (e.g. during
+/// `set_focus`, where the keys are passed in and modifiers follow as a separate event).
+fn seat_snapshot<D: SeatHandler + 'static>(kb: &KeyboardHandle<D>) -> (Vec<u8>, Option<[u32; 4]>) {
+    let g = kb.arc.internal.lock().unwrap();
     let m = g.mods_state.serialized;
-    Some((
+    (
         serialize_pressed_keys(g.pressed_keys.iter().copied()),
-        [m.depressed, m.latched, m.locked, m.layout_effective],
-    ))
+        Some([m.depressed, m.latched, m.locked, m.layout_effective]),
+    )
 }
 
 #[derive(Debug)]
@@ -86,27 +87,26 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
 impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
     /// Route the seat's key events through this filter.
     pub(crate) fn activate(&self, pressed_keys: Option<Vec<u8>>) {
-        let mut filter = self.keyboard_handle.arc.kbd_filter.lock().unwrap();
-        if self.is_installed(&filter) {
-            return;
-        }
-        let snapshot = seat_snapshot(&self.keyboard_handle);
-        let keys = pressed_keys
-            .or_else(|| snapshot.as_ref().map(|(keys, _)| keys.clone()))
-            .unwrap_or_default();
-        let serial = SERIAL_COUNTER.next_serial().into();
-        self.bound_keyboard.enter(serial, &self.im_surface, keys);
-        // Without a snapshot, the seat's following focus modifiers event reaches the IM.
-        if let Some((_, [depressed, latched, locked, group])) = snapshot {
-            self.bound_keyboard
-                .modifiers(serial, depressed, latched, locked, group);
-        }
-        *filter = Some(KbdFilter {
-            im_keyboard: self.bound_keyboard.clone(),
-            pending: self.pending_events.clone(),
+        let (keys, mods) = match pressed_keys {
+            Some(keys) => (keys, None),
+            None => seat_snapshot(&self.keyboard_handle),
+        };
+        self.keyboard_handle.update_client_input(|input| {
+            if self.is_installed(&input.filter) {
+                return false;
+            }
+            let serial = SERIAL_COUNTER.next_serial().into();
+            self.bound_keyboard.enter(serial, &self.im_surface, keys);
+            if let Some([depressed, latched, locked, group]) = mods {
+                self.bound_keyboard
+                    .modifiers(serial, depressed, latched, locked, group);
+            }
+            input.filter = Some(KbdFilter {
+                im_keyboard: self.bound_keyboard.clone(),
+                pending: self.pending_events.clone(),
+            });
+            true
         });
-        drop(filter);
-        self.keyboard_handle.refresh_client_repeat_info();
     }
 
     fn is_installed(&self, filter: &Option<KbdFilter>) -> bool {
@@ -124,14 +124,15 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
                 Self::send_key_to_focused_client(&event);
             }
         }
-        let mut filter = self.keyboard_handle.arc.kbd_filter.lock().unwrap();
-        if self.is_installed(&filter) {
-            *filter = None;
-            self.bound_keyboard
-                .leave(SERIAL_COUNTER.next_serial().into(), &self.im_surface);
-            drop(filter);
-            self.keyboard_handle.refresh_client_repeat_info();
-        }
+        self.keyboard_handle.update_client_input(|input| {
+            let installed = self.is_installed(&input.filter);
+            if installed {
+                input.filter = None;
+                self.bound_keyboard
+                    .leave(SERIAL_COUNTER.next_serial().into(), &self.im_surface);
+            }
+            installed
+        });
     }
 
     fn send_key_to_focused_client(event: &BufferedEvent) {

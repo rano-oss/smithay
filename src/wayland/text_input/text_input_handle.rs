@@ -243,14 +243,13 @@ where
             return;
         }
 
-        if self
-            .handle
-            .focus()
-            .is_none_or(|focus| !focus.id().same_client_as(&resource.id()))
-        {
-            debug!("discarding text-input request for unfocused client");
-            return;
-        }
+        let focus = match self.handle.focus() {
+            Some(focus) if focus.id().same_client_as(&resource.id()) => focus,
+            _ => {
+                debug!("discarding text-input request for unfocused client");
+                return;
+            }
+        };
 
         let mut guard = self.handle.inner.lock().unwrap();
         let pending_state = match guard.instances.iter_mut().find_map(|instance| {
@@ -326,6 +325,8 @@ where
                         *active_text_input_id = Some(resource.id());
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
+                        self.input_method_handle
+                            .activate_input_method(state, &focus, None);
                         state.activated(new_state.content_type);
                     }
                     Some(false) => {

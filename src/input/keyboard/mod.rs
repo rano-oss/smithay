@@ -247,8 +247,6 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     pub(crate) forwarded_pressed_keys: HashSet<Keycode>,
     pub(crate) mods_state: ModifiersState,
     xkb: Arc<Mutex<Xkb>>,
-    pub(crate) repeat_rate: i32,
-    pub(crate) repeat_delay: i32,
     led_mapping: LedMapping,
     pub(crate) led_state: LedState,
     grab: GrabStatus<dyn KeyboardGrab<D>>,
@@ -265,8 +263,6 @@ impl<D: SeatHandler> fmt::Debug for KbdInternal<D> {
             .field("forwarded_pressed_keys", &self.forwarded_pressed_keys)
             .field("mods_state", &self.mods_state)
             .field("xkb", &self.xkb)
-            .field("repeat_rate", &self.repeat_rate)
-            .field("repeat_delay", &self.repeat_delay)
             .finish()
     }
 }
@@ -276,12 +272,7 @@ impl<D: SeatHandler> fmt::Debug for KbdInternal<D> {
 unsafe impl<D: SeatHandler> Send for KbdInternal<D> {}
 
 impl<D: SeatHandler + 'static> KbdInternal<D> {
-    fn new(
-        xkb_config: XkbConfig<'_>,
-        repeat_rate: i32,
-        repeat_delay: i32,
-        context_flags: ContextFlags,
-    ) -> Result<KbdInternal<D>, ()> {
+    fn new(xkb_config: XkbConfig<'_>, context_flags: ContextFlags) -> Result<KbdInternal<D>, ()> {
         // we create a new context for each keyboard because libxkbcommon is actually NOT threadsafe
         // so confining it inside the KbdInternal allows us to use Rusts mutability rules to make
         // sure nothing goes wrong.
@@ -305,8 +296,6 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
                 keymap,
                 state,
             })),
-            repeat_rate,
-            repeat_delay,
             led_mapping,
             led_state,
             grab: GrabStatus::None,
@@ -445,9 +434,7 @@ pub(crate) struct KbdRc<D: SeatHandler> {
     pub(crate) keymap: Mutex<KeymapFile>,
     #[cfg(feature = "wayland_frontend")]
     pub(crate) known_kbds: Mutex<Vec<Weak<wayland_server::protocol::wl_keyboard::WlKeyboard>>>,
-    /// When set, key events go to the input method instead of the focused client.
-    #[cfg(feature = "wayland_frontend")]
-    pub(crate) kbd_filter: Mutex<Option<crate::wayland::keyboard_filter::KbdFilter>>,
+    pub(crate) client_input: Mutex<ClientInput>,
     #[cfg(feature = "wayland_frontend")]
     pub(crate) last_enter: Mutex<Option<Serial>>,
     pub(crate) span: tracing::Span,
@@ -455,14 +442,26 @@ pub(crate) struct KbdRc<D: SeatHandler> {
     pub(crate) active_keymap: RwLock<KeymapFileId>,
 }
 
+/// How input reaches clients: the configured key repeat and the active keyboard filter, if any.
+///
+/// Lock order is `internal` -> `client_input` -> `known_kbds`, so this can be used from anywhere,
+/// including while `internal` is held (e.g. during `set_focus`).
+#[derive(Debug)]
+pub(crate) struct ClientInput {
+    pub(crate) repeat_rate: i32,
+    pub(crate) repeat_delay: i32,
+    /// When set, key events go to the input method instead of the focused client.
+    #[cfg(feature = "wayland_frontend")]
+    pub(crate) filter: Option<crate::wayland::keyboard_filter::KbdFilter>,
+}
+
 #[cfg(feature = "wayland_frontend")]
-impl<D: SeatHandler> KbdRc<D> {
-    pub(crate) fn repeat_info(&self) -> (i32, i32) {
-        if self.kbd_filter.lock().unwrap().is_some() {
-            (0, 0)
-        } else {
-            let guard = self.internal.lock().unwrap();
-            (guard.repeat_rate, guard.repeat_delay)
+impl ClientInput {
+    /// `(rate, delay)` to tell clients. A filter repeats keys itself, so they must not.
+    pub(crate) fn client_repeat(&self) -> (i32, i32) {
+        match self.filter {
+            Some(_) => (0, 0),
+            None => (self.repeat_rate, self.repeat_delay),
         }
     }
 }
@@ -470,7 +469,10 @@ impl<D: SeatHandler> KbdRc<D> {
 #[cfg(not(feature = "wayland_frontend"))]
 impl<D: SeatHandler> fmt::Debug for KbdRc<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("KbdRc").field("internal", &self.internal).finish()
+        f.debug_struct("KbdRc")
+            .field("internal", &self.internal)
+            .field("client_input", &self.client_input)
+            .finish()
     }
 }
 
@@ -480,6 +482,7 @@ impl<D: SeatHandler> fmt::Debug for KbdRc<D> {
         f.debug_struct("KbdRc")
             .field("internal", &self.internal)
             .field("keymap", &self.keymap)
+            .field("client_input", &self.client_input)
             .field("known_kbds", &self.known_kbds)
             .field("last_enter", &self.last_enter)
             .finish()
@@ -805,11 +808,10 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         let _guard = span.enter();
 
         info!("Initializing a xkbcommon handler with keymap query");
-        let internal =
-            KbdInternal::new(xkb_config, repeat_rate, repeat_delay, context_flags).map_err(|_| {
-                debug!("Loading keymap failed");
-                Error::BadKeymap
-            })?;
+        let internal = KbdInternal::new(xkb_config, context_flags).map_err(|_| {
+            debug!("Loading keymap failed");
+            Error::BadKeymap
+        })?;
 
         let xkb = internal.xkb.lock().unwrap();
 
@@ -829,8 +831,12 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 internal: Mutex::new(internal),
                 #[cfg(feature = "wayland_frontend")]
                 known_kbds: Mutex::new(Vec::new()),
-                #[cfg(feature = "wayland_frontend")]
-                kbd_filter: Mutex::new(None),
+                client_input: Mutex::new(ClientInput {
+                    repeat_rate,
+                    repeat_delay,
+                    #[cfg(feature = "wayland_frontend")]
+                    filter: None,
+                }),
                 #[cfg(feature = "wayland_frontend")]
                 last_enter: Mutex::new(None),
                 #[cfg(feature = "wayland_frontend")]
@@ -1285,17 +1291,17 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         let Some(loop_handle) = data.loop_handle() else {
             return;
         };
-        // Check filter before taking `internal` (filter code may try_lock internal).
-        let filter_active = self.arc.kbd_filter.lock().unwrap().is_some();
         let mut guard = self.arc.internal.lock().unwrap();
+        let (rate, delay, filter_active) = {
+            let input = self.arc.client_input.lock().unwrap();
+            (input.repeat_rate, input.repeat_delay, input.filter.is_some())
+        };
         if let Some(token) = guard.key_repeat_token.take() {
             loop_handle.remove(token);
         }
-        if !filter_active || state != KeyState::Pressed || guard.repeat_rate <= 0 {
+        if !filter_active || state != KeyState::Pressed || rate <= 0 {
             return;
         }
-        let rate = guard.repeat_rate;
-        let delay = guard.repeat_delay;
         if !guard.xkb.lock().unwrap().keymap.key_repeats(keycode) {
             return;
         }
@@ -1307,7 +1313,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 calloop::timer::Timer::from_duration(Duration::from_millis(delay as u64)),
                 move |_, _, data| {
                     time_ms = time_ms.wrapping_add(interval_ms);
-                    if kbd.arc.kbd_filter.lock().unwrap().is_none() {
+                    if kbd.arc.client_input.lock().unwrap().filter.is_none() {
                         return calloop::timer::TimeoutAction::Drop;
                     }
                     let guard = kbd.arc.internal.lock().unwrap();
@@ -1333,16 +1339,23 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         guard.key_repeat_token = Some(token);
     }
 
-    /// Re-advertise `repeat_info` after a keyboard filter is installed or removed.
-    #[cfg(feature = "wayland_frontend")]
-    pub(crate) fn refresh_client_repeat_info(&self) {
-        let (rate, delay) = self.arc.repeat_info();
-        for kbd in &*self.arc.known_kbds.lock().unwrap() {
-            let Ok(kbd) = kbd.upgrade() else {
-                continue;
-            };
-            if kbd.version() >= 4 {
-                kbd.repeat_info(rate, delay);
+    /// Update the client input state. If `f` returns `true`, tell every known `wl_keyboard` of
+    /// version 4 or higher the resulting repeat.
+    pub(crate) fn update_client_input(&self, f: impl FnOnce(&mut ClientInput) -> bool) {
+        let mut input = self.arc.client_input.lock().unwrap();
+        if !f(&mut input) {
+            return;
+        }
+        #[cfg(feature = "wayland_frontend")]
+        {
+            let (rate, delay) = input.client_repeat();
+            for kbd in &*self.arc.known_kbds.lock().unwrap() {
+                let Ok(kbd) = kbd.upgrade() else {
+                    continue;
+                };
+                if kbd.version() >= 4 {
+                    kbd.repeat_info(rate, delay);
+                }
             }
         }
     }
@@ -1483,12 +1496,11 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Change the repeat info configured for this keyboard
     #[instrument(parent = &self.arc.span, skip(self))]
     pub fn change_repeat_info(&self, rate: i32, delay: i32) {
-        let mut guard = self.arc.internal.lock().unwrap();
-        guard.repeat_delay = delay;
-        guard.repeat_rate = rate;
-        drop(guard);
-        #[cfg(feature = "wayland_frontend")]
-        self.refresh_client_repeat_info();
+        self.update_client_input(|input| {
+            input.repeat_delay = delay;
+            input.repeat_rate = rate;
+            true
+        });
     }
 
     /// Access the [`Serial`] of the last `keyboard_enter` event, if that focus is still active.
