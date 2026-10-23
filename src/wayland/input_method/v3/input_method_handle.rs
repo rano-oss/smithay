@@ -247,14 +247,13 @@ impl InputMethodV3Handle {
         &self,
         _state: &mut D,
         _surface: &WlSurface,
-        pressed_keys: Option<Vec<u8>>,
     ) {
         self.with_instance(|im| {
             im.object.activate();
             im.object
                 .data::<InputMethodUserData<D>>()
                 .unwrap()
-                .with_filter(|f| f.activate(pressed_keys.clone()));
+                .with_filter(|f| f.activate());
         });
     }
 

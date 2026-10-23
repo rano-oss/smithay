@@ -453,6 +453,11 @@ pub(crate) struct ClientInput {
     /// When set, key events go to the input method instead of the focused client.
     #[cfg(feature = "wayland_frontend")]
     pub(crate) filter: Option<crate::wayland::keyboard_filter::KbdFilter>,
+    /// Keys for the next keyboard-filter `enter`, staged while `internal` is held (focus change).
+    ///
+    /// Taken by filter activation so it need not re-lock `internal`.
+    #[cfg(feature = "wayland_frontend")]
+    pub(crate) pending_filter_keys: Option<Vec<u8>>,
 }
 
 #[cfg(feature = "wayland_frontend")]
@@ -836,6 +841,8 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                     repeat_delay,
                     #[cfg(feature = "wayland_frontend")]
                     filter: None,
+                    #[cfg(feature = "wayland_frontend")]
+                    pending_filter_keys: None,
                 }),
                 #[cfg(feature = "wayland_frontend")]
                 last_enter: Mutex::new(None),

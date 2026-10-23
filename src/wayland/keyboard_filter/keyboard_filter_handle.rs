@@ -73,15 +73,23 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
 
 impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
     /// Route the seat's key events through this filter.
-    pub(crate) fn activate(&self, pressed_keys: Option<Vec<u8>>) {
-        // Lock seat internals only when keys were not passed in (e.g. not during set_focus).
-        let (keys, mods) = match pressed_keys {
+    pub(crate) fn activate(&self) {
+        // Prefer keys staged by focus enter (avoids re-locking `internal`); else snapshot.
+        let staged = self
+            .keyboard_handle
+            .arc
+            .client_input
+            .lock()
+            .unwrap()
+            .pending_filter_keys
+            .take();
+        let (keys, mods) = match staged {
             Some(keys) => (keys, None),
             None => {
                 let g = self.keyboard_handle.arc.internal.lock().unwrap();
                 let m = g.mods_state.serialized;
                 (
-                    serialize_pressed_keys(g.pressed_keys.iter().copied()),
+                    serialize_pressed_keys(g.forwarded_pressed_keys.iter().copied()),
                     Some([m.depressed, m.latched, m.locked, m.layout_effective]),
                 )
             }

@@ -285,7 +285,13 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     // as the input method for this seat.
     if input_method.has_instance() || text_input.compositor_input_method() {
         text_input.enter();
-        input_method.activate_input_method(state, surface, Some(serialized_keys));
+        // Stage enter keys for the keyboard filter: we already hold `internal` via set_focus,
+        // so filter activation must not re-lock it to snapshot pressed keys.
+        if let Some(keyboard) = seat.get_keyboard() {
+            keyboard.arc.client_input.lock().unwrap().pending_filter_keys =
+                Some(serialized_keys);
+        }
+        input_method.activate_input_method(state, surface);
     }
 }
 

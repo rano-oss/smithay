@@ -325,8 +325,7 @@ where
                         *active_text_input_id = Some(resource.id());
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
-                        self.input_method_handle
-                            .activate_input_method(state, &focus, None);
+                        self.input_method_handle.activate_input_method(state, &focus);
                         state.activated(new_state.content_type);
                     }
                     Some(false) => {

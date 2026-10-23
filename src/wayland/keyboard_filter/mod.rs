@@ -160,7 +160,7 @@ where
                 // Late bind: focus may already exist before the filter is created.
                 let is_active = imdata.handle.with_instance(|i| i.object == input_method) == Some(true);
                 if is_active && imdata.text_input_handle.focus().is_some() {
-                    filter_udata.activate(None);
+                    filter_udata.activate();
                 }
 
                 let keyboard_filter = data_init.init::<XxKeyboardFilterV1, _>(extensions, filter_udata);

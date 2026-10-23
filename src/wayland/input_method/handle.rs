@@ -37,14 +37,9 @@ impl InputMethodHandle {
     }
 
     /// Activate input method on the given surface.
-    pub fn activate_input_method<D: SeatHandler + 'static>(
-        &self,
-        state: &mut D,
-        surface: &WlSurface,
-        pressed_keys: Option<Vec<u8>>,
-    ) {
+    pub fn activate_input_method<D: SeatHandler + 'static>(&self, state: &mut D, surface: &WlSurface) {
         self.v2.activate_input_method(state, surface);
-        self.v3.activate_input_method(state, surface, pressed_keys);
+        self.v3.activate_input_method(state, surface);
     }
 
     pub(crate) fn surrounding_text(&self, text: String, cursor: u32, anchor: u32) {
@@ -115,7 +110,7 @@ impl InputMethodHandle {
                 // text_input.enter() in seat keyboard enter. Send it now so the
                 // client can enable and receive preedit.
                 seat.text_input().enter();
-                self.activate_input_method(state, &surface, None);
+                self.activate_input_method(state, &surface);
             }
             (false, _) => self.deactivate_input_method(state),
             (true, None) => {}
