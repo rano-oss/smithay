@@ -44,10 +44,10 @@ impl PopupSurface {
     }
 
     /// Access to the parent surface associated with this popup.
-    pub fn get_parent(&self) -> Option<PopupParent> {
+    pub fn get_parent(&self) -> Option<&PopupParent> {
         match self {
-            PopupSurface::V2(popup) => popup.get_parent().cloned(),
-            PopupSurface::V3(popup) => Some(popup.get_parent().clone()),
+            PopupSurface::V2(popup) => popup.get_parent(),
+            PopupSurface::V3(popup) => Some(popup.get_parent()),
         }
     }
 
