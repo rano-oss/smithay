@@ -2,8 +2,10 @@ use wayland_server::protocol::wl_surface::WlSurface;
 
 use crate::utils::{IsAlive, Logical, Point, Rectangle};
 
-use super::{v2, v3};
-use v3::PositionerState;
+use super::{
+    v2,
+    v3::{self, PositionerState},
+};
 
 /// Parent surface and location for an input method popup.
 #[derive(Debug, Clone)]

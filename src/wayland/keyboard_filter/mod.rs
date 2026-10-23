@@ -21,11 +21,7 @@ use wayland_server::{
 
 use crate::{
     input::{SeatHandler, keyboard::KeyboardHandle},
-    wayland::{
-        Dispatch2, GlobalDispatch2,
-        input_method::InputMethodV3UserData,
-        seat::WaylandFocus,
-    },
+    wayland::{Dispatch2, GlobalDispatch2, input_method::InputMethodV3UserData, seat::WaylandFocus},
 };
 
 const MANAGER_VERSION: u32 = 1;

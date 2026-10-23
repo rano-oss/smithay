@@ -1,12 +1,15 @@
-use crate::input::SeatHandler;
-use crate::utils::{Logical, Point, Rectangle, Size};
-use crate::wayland::Dispatch2;
-use std::cmp::min;
-use std::sync::Mutex;
+use std::{cmp::min, sync::Mutex};
+
 use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_positioner_v1::{
     self, Anchor, ConstraintAdjustment, Gravity, XxInputPopupPositionerV1,
 };
 use wayland_server::{Resource, WEnum};
+
+use crate::{
+    input::SeatHandler,
+    utils::{Logical, Point, Rectangle, Size},
+    wayland::Dispatch2,
+};
 
 /// User data for [`XxInputPopupPositionerV1`].
 #[derive(Default, Debug)]

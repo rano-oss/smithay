@@ -2,31 +2,27 @@
 
 use std::sync::Arc;
 
-use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId};
-
 use wayland_protocols_misc::zwp_input_method_v2::server::{
     zwp_input_method_manager_v2::{self, ZwpInputMethodManagerV2},
     zwp_input_method_v2::ZwpInputMethodV2,
 };
+use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId};
 
 use crate::{
     input::{Seat, SeatHandler},
-    wayland::{Dispatch2, GlobalData, GlobalDispatch2},
+    wayland::{Dispatch2, GlobalData, GlobalDispatch2, text_input::TextInputHandle},
 };
+
+use super::{InputMethodHandle, InputMethodHandler, InputMethodManagerGlobalData};
 
 pub use input_method_handle::InputMethodUserData;
 pub(crate) use input_method_handle::InputMethodV2Handle;
-
 pub use input_method_keyboard_grab::{InputMethodKeyboardGrab, InputMethodKeyboardUserData};
-pub use input_method_popup_surface::InputMethodPopupSurfaceUserData;
-pub use input_method_popup_surface::PopupSurface;
-
-use super::{InputMethodHandle, InputMethodHandler, InputMethodManagerGlobalData};
-use crate::wayland::text_input::TextInputHandle;
+pub use input_method_popup_surface::{InputMethodPopupSurfaceUserData, PopupSurface};
 
 const MANAGER_VERSION: u32 = 1;
 
-/// The role of the input method popup (v2).
+/// The role of the input method popup.
 pub const INPUT_POPUP_SURFACE_ROLE: &str = "zwp_input_popup_surface_v2";
 
 mod input_method_handle;

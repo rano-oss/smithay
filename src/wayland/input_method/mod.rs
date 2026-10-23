@@ -72,18 +72,17 @@ mod popup;
 mod v2;
 mod v3;
 
-pub use handle::InputMethodHandle;
-pub use manager::{InputMethodManagerGlobalData, InputMethodManagerState};
-pub use popup::{PopupParent, PopupSurface};
-
-pub use v2::{
-    INPUT_POPUP_SURFACE_ROLE, InputMethodKeyboardGrab, InputMethodKeyboardUserData,
-    InputMethodPopupSurfaceUserData, InputMethodUserData,
-};
-
-pub use v3::{PopupSurfaceState, PositionerState, PositionerUserData};
-
 pub(crate) use v3::InputMethodUserData as InputMethodV3UserData;
+pub use {
+    handle::InputMethodHandle,
+    manager::{InputMethodManagerGlobalData, InputMethodManagerState},
+    popup::{PopupParent, PopupSurface},
+    v2::{
+        INPUT_POPUP_SURFACE_ROLE, InputMethodKeyboardGrab, InputMethodKeyboardUserData,
+        InputMethodPopupSurfaceUserData, InputMethodUserData,
+    },
+    v3::{PopupSurfaceState, PositionerState, PositionerUserData},
+};
 
 /// Adds input method popup to compositor state
 pub trait InputMethodHandler {

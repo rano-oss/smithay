@@ -48,7 +48,7 @@ impl Instance {
     }
 }
 
-/// Handle to an input method instance (v2 protocol).
+/// Handle to an input method instance
 #[derive(Default, Debug, Clone)]
 pub(crate) struct InputMethodV2Handle {
     pub(crate) inner: Arc<Mutex<InputMethod>>,

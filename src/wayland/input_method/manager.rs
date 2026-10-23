@@ -11,10 +11,12 @@ use wayland_server::{Client, Dispatch, DisplayHandle, GlobalDispatch};
 
 use crate::{input::SeatHandler, wayland::GlobalData};
 
-use super::v2::{InputMethodManagerState as V2Manager, InputMethodUserData as V2UserData};
-use super::v3::{
-    InputMethodManagerState as V3Manager, InputMethodPopupSurfaceUserData, InputMethodUserData as V3UserData,
-    PositionerUserData,
+use super::{
+    v2::{InputMethodManagerState as V2Manager, InputMethodUserData as V2UserData},
+    v3::{
+        InputMethodManagerState as V3Manager, InputMethodPopupSurfaceUserData,
+        InputMethodUserData as V3UserData, PositionerUserData,
+    },
 };
 
 /// Data associated with an input method manager global.

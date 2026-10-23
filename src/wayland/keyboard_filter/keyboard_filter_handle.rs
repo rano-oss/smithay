@@ -29,19 +29,6 @@ use crate::wayland::{
     seat::keyboard::{repeat_key_states, serialize_pressed_keys},
 };
 
-/// Pressed keys and modifiers (depressed, latched, locked, group) of the seat.
-///
-/// Locks the seat, so it must not be called while the seat is already locked (e.g. during
-/// `set_focus`, where the keys are passed in and modifiers follow as a separate event).
-fn seat_snapshot<D: SeatHandler + 'static>(kb: &KeyboardHandle<D>) -> (Vec<u8>, Option<[u32; 4]>) {
-    let g = kb.arc.internal.lock().unwrap();
-    let m = g.mods_state.serialized;
-    (
-        serialize_pressed_keys(g.pressed_keys.iter().copied()),
-        Some([m.depressed, m.latched, m.locked, m.layout_effective]),
-    )
-}
-
 #[derive(Debug)]
 pub(crate) struct BufferedEvent {
     serial: u32,
@@ -87,12 +74,24 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
 impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
     /// Route the seat's key events through this filter.
     pub(crate) fn activate(&self, pressed_keys: Option<Vec<u8>>) {
+        // Lock seat internals only when keys were not passed in (e.g. not during set_focus).
         let (keys, mods) = match pressed_keys {
             Some(keys) => (keys, None),
-            None => seat_snapshot(&self.keyboard_handle),
+            None => {
+                let g = self.keyboard_handle.arc.internal.lock().unwrap();
+                let m = g.mods_state.serialized;
+                (
+                    serialize_pressed_keys(g.pressed_keys.iter().copied()),
+                    Some([m.depressed, m.latched, m.locked, m.layout_effective]),
+                )
+            }
         };
         self.keyboard_handle.update_client_input(|input| {
-            if self.is_installed(&input.filter) {
+            if input
+                .filter
+                .as_ref()
+                .is_some_and(|f| Arc::ptr_eq(&f.pending, &self.pending_events))
+            {
                 return false;
             }
             let serial = SERIAL_COUNTER.next_serial().into();
@@ -109,12 +108,6 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
         });
     }
 
-    fn is_installed(&self, filter: &Option<KbdFilter>) -> bool {
-        filter
-            .as_ref()
-            .is_some_and(|f| Arc::ptr_eq(&f.pending, &self.pending_events))
-    }
-
     /// Stop routing through this filter, forwarding buffered keys when `flush` is true.
     ///
     /// Otherwise the queue is preserved so replies issued after deactivation remain valid.
@@ -125,7 +118,10 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
             }
         }
         self.keyboard_handle.update_client_input(|input| {
-            let installed = self.is_installed(&input.filter);
+            let installed = input
+                .filter
+                .as_ref()
+                .is_some_and(|f| Arc::ptr_eq(&f.pending, &self.pending_events));
             if installed {
                 input.filter = None;
                 self.bound_keyboard

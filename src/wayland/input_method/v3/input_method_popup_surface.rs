@@ -1,21 +1,25 @@
-use std::cmp::PartialEq;
-use std::sync::{Arc, Mutex};
+use std::{
+    cmp::PartialEq,
+    sync::{Arc, Mutex},
+};
 
-use wayland_protocols_experimental::input_method::v1::server::xx_input_method_v1::XxInputMethodV1;
-use wayland_protocols_experimental::input_method::v1::server::xx_input_popup_surface_v2::{
-    self, PopupPositionMode, XxInputPopupSurfaceV2,
+use wayland_protocols_experimental::input_method::v1::server::{
+    xx_input_method_v1::XxInputMethodV1,
+    xx_input_popup_surface_v2::{self, PopupPositionMode, XxInputPopupSurfaceV2},
 };
 use wayland_server::{Resource, backend::ClientId, protocol::wl_surface::WlSurface};
 
-use crate::input::SeatHandler;
-use crate::utils::{
-    Logical, Point, Rectangle, Serial,
-    alive_tracker::{AliveTracker, IsAlive},
+use crate::{
+    input::SeatHandler,
+    utils::{
+        Logical, Point, Rectangle, Serial,
+        alive_tracker::{AliveTracker, IsAlive},
+    },
+    wayland::Dispatch2,
 };
-use crate::wayland::Dispatch2;
 
-use super::super::PopupParent;
 use super::{
+    super::PopupParent,
     InputMethodUserData,
     configure_tracker::PopupConfigureAttributes,
     positioner::{PositionerState, PositionerUserData},
@@ -32,7 +36,7 @@ pub(crate) struct PopupLocation {
 #[derive(Debug, Clone)]
 pub struct PopupSurface {
     /// The surface role for the input method popup
-    pub surface_role: XxInputPopupSurfaceV2,
+    pub(crate) surface_role: XxInputPopupSurfaceV2,
     surface: WlSurface,
     /// Surface containing the text input. This surface doesn't change within the lifetime of the popup.
     parent: PopupParent,
@@ -87,40 +91,34 @@ impl PopupSurface {
     }
 
     /// Returns a copy of the positioner. That can be used to calculate a new position.
-    pub fn positioner(&self) -> PositionerState {
+    pub(crate) fn positioner(&self) -> PositionerState {
         let role_data: &InputMethodPopupSurfaceUserData = self.surface_role.data().unwrap();
         *role_data.positioner.lock().unwrap()
     }
 
     /// Is the input method popup surface referred by this handle still alive?
     #[inline]
-    pub fn alive(&self) -> bool {
+    pub(crate) fn alive(&self) -> bool {
         let role_data: &InputMethodPopupSurfaceUserData = self.surface_role.data().unwrap();
         self.surface.alive() && role_data.alive_tracker.alive()
     }
 
     /// Access to the underlying `wl_surface` of this popup
     #[inline]
-    pub fn wl_surface(&self) -> &WlSurface {
+    pub(crate) fn wl_surface(&self) -> &WlSurface {
         &self.surface
     }
 
     /// Access to the parent surface associated with this popup
-    pub fn get_parent(&self) -> &PopupParent {
+    pub(crate) fn get_parent(&self) -> &PopupParent {
         &self.parent
-    }
-
-    /// Access the input method using this popup
-    pub fn input_method(&self) -> &XxInputMethodV1 {
-        let role_data: &InputMethodPopupSurfaceUserData = self.surface_role.data().unwrap();
-        &role_data.input_method
     }
 
     /// Used to access the location of an input popup surface relative to the parent.
     ///
     /// Returns the latest compositor-side position, including configures that have
     /// been sent but not yet acknowledged by the IME client.
-    pub fn location(&self) -> Point<i32, Logical> {
+    pub(crate) fn location(&self) -> Point<i32, Logical> {
         self.configure
             .lock()
             .unwrap()
@@ -131,13 +129,8 @@ impl PopupSurface {
     }
 
     /// Anchor rectangle relative to the parent surface (acked configure state).
-    pub fn anchor_rectangle(&self) -> Rectangle<i32, Logical> {
+    pub(crate) fn anchor_rectangle(&self) -> Rectangle<i32, Logical> {
         self.acked_state.lock().unwrap().position.anchor
-    }
-
-    /// Whether an initial configure sequence has been sent for this popup.
-    pub fn is_initial_configure_sent(&self) -> bool {
-        self.configure.lock().unwrap().initial_configure_sent
     }
 
     /// Set position information that should take effect when mapping.
@@ -155,7 +148,7 @@ impl PopupSurface {
     }
 
     /// Adds the repositioned token to pending state.
-    pub fn set_repositioned(&mut self, token: u32) {
+    pub(crate) fn set_repositioned(&mut self, token: u32) {
         self.configure
             .lock()
             .unwrap()
@@ -165,7 +158,7 @@ impl PopupSurface {
     /// Send a configure for pending geometry and track its serial for ack.
     ///
     /// Typically invoked when applying input-method state on `.done`.
-    pub fn send_pending_configure(&self) {
+    pub(crate) fn send_pending_configure(&self) {
         let surface_role = self.surface_role.clone();
         self.configure
             .lock()

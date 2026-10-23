@@ -14,8 +14,8 @@ use wayland_protocols_experimental::{
     keyboard_filter::v3::server::xx_keyboard_filter_v1::XxKeyboardFilterV1,
     text_input::v3::server::xx_text_input_v3 as xx_ti,
 };
-use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 use wayland_server::{
+    Client, DataInit, Dispatch, DisplayHandle, Resource,
     backend::{ClientId, ObjectId},
     protocol::wl_surface::WlSurface,
 };

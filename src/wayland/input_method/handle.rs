@@ -6,29 +6,13 @@ use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::{
 use wayland_protocols_experimental::text_input::v3::server::xx_text_input_v3 as xx_ti;
 use wayland_server::protocol::wl_surface::WlSurface;
 
-use crate::input::{Seat, SeatHandler};
-use crate::utils::{Logical, Rectangle};
-use crate::wayland::seat::WaylandFocus;
-use crate::wayland::text_input::TextInputSeat;
+use crate::{
+    input::{Seat, SeatHandler},
+    utils::{Logical, Rectangle},
+    wayland::{seat::WaylandFocus, text_input::TextInputSeat},
+};
 
-use super::v2::InputMethodV2Handle;
-use super::v3::InputMethodV3Handle;
-
-fn to_xx_change_cause(cause: ChangeCause) -> xx_ti::ChangeCause {
-    match cause {
-        ChangeCause::InputMethod => xx_ti::ChangeCause::InputMethod,
-        ChangeCause::Other => xx_ti::ChangeCause::Other,
-        _ => xx_ti::ChangeCause::InputMethod,
-    }
-}
-
-fn to_xx_content_hint(hint: ContentHint) -> xx_ti::ContentHint {
-    xx_ti::ContentHint::from_bits_truncate(hint.bits())
-}
-
-fn to_xx_content_purpose(purpose: ContentPurpose) -> xx_ti::ContentPurpose {
-    xx_ti::ContentPurpose::try_from(purpose as u32).unwrap_or(xx_ti::ContentPurpose::Normal)
-}
+use super::{v2::InputMethodV2Handle, v3::InputMethodV3Handle};
 
 /// Handle to input method state for a seat, covering both protocol versions.
 ///
@@ -72,14 +56,19 @@ impl InputMethodHandle {
 
     pub(crate) fn text_change_cause(&self, cause: ChangeCause) {
         self.v2.with_instance(|im| im.object.text_change_cause(cause));
-        let xx_cause = to_xx_change_cause(cause);
+        let xx_cause = match cause {
+            ChangeCause::InputMethod => xx_ti::ChangeCause::InputMethod,
+            ChangeCause::Other => xx_ti::ChangeCause::Other,
+            _ => xx_ti::ChangeCause::InputMethod,
+        };
         self.v3.with_instance(|im| im.object.text_change_cause(xx_cause));
     }
 
     pub(crate) fn content_type(&self, hint: ContentHint, purpose: ContentPurpose) {
         self.v2.with_instance(|im| im.object.content_type(hint, purpose));
-        let xx_hint = to_xx_content_hint(hint);
-        let xx_purpose = to_xx_content_purpose(purpose);
+        let xx_hint = xx_ti::ContentHint::from_bits_truncate(hint.bits());
+        let xx_purpose =
+            xx_ti::ContentPurpose::try_from(purpose as u32).unwrap_or(xx_ti::ContentPurpose::Normal);
         self.v3
             .with_instance(|im| im.object.content_type(xx_hint, xx_purpose));
     }

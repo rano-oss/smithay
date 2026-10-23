@@ -3,36 +3,34 @@
 use std::sync::Arc;
 
 use tracing::warn;
-use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId};
-
-use crate::wayland::{Dispatch2, GlobalData, GlobalDispatch2};
-
 use wayland_protocols_experimental::input_method::v1::server::{
     xx_input_method_manager_v2::{self, XxInputMethodManagerV2},
     xx_input_method_v1::XxInputMethodV1,
     xx_input_popup_positioner_v1::XxInputPopupPositionerV1,
     xx_input_popup_surface_v2::XxInputPopupSurfaceV2,
 };
+use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::GlobalId};
 
-use crate::input::{Seat, SeatHandler};
-
-pub(crate) use input_method_handle::{InputMethodUserData, InputMethodV3Handle};
+use crate::{
+    input::{Seat, SeatHandler},
+    wayland::{Dispatch2, GlobalData, GlobalDispatch2, text_input::TextInputHandle},
+};
 
 use super::{InputMethodHandle, InputMethodHandler, InputMethodManagerGlobalData};
-use crate::wayland::text_input::TextInputHandle;
+
+pub(crate) use input_method_handle::{InputMethodUserData, InputMethodV3Handle};
+pub use input_method_popup_surface::{InputMethodPopupSurfaceUserData, PopupSurface, PopupSurfaceState};
+pub use positioner::{PositionerState, PositionerUserData};
 
 const MANAGER_VERSION: u32 = 3;
 
 /// The role of the input method popup (xx).
-pub const INPUT_POPUP_SURFACE_ROLE: &str = "xx_input_popup_surface_v2";
+pub(crate) const INPUT_POPUP_SURFACE_ROLE: &str = "xx_input_popup_surface_v2";
 
 mod configure_tracker;
 mod input_method_handle;
 mod input_method_popup_surface;
 mod positioner;
-
-pub use input_method_popup_surface::{InputMethodPopupSurfaceUserData, PopupSurface, PopupSurfaceState};
-pub use positioner::{PositionerState, PositionerUserData};
 
 /// xx input-method manager global.
 #[derive(Debug)]
