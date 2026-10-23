@@ -138,7 +138,6 @@ where
                     );
                     return;
                 };
-
                 if !Arc::ptr_eq(&kb_handle.arc, &imdata.keyboard_handle.arc) {
                     resource.post_error(
                         xx_keyboard_filter_manager_v1::Error::WrongSeat,
@@ -156,10 +155,8 @@ where
                     im_surface: surface,
                     attached: AtomicBool::new(true),
                 };
-
-                // Late bind: focus may already exist before the filter is created.
-                let is_active = imdata.handle.with_instance(|i| i.object == input_method) == Some(true);
-                if is_active && imdata.text_input_handle.focus().is_some() {
+                let active = imdata.handle.with_instance(|i| i.object == input_method) == Some(true);
+                if active && imdata.text_input_handle.focus().is_some() {
                     filter_udata.activate();
                 }
 

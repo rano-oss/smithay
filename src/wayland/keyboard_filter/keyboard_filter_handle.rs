@@ -7,14 +7,12 @@ use std::{
 };
 
 use tracing::{error, warn};
-
 use wayland_protocols_experimental::{
     input_method::v1::server::xx_input_method_v1::XxInputMethodV1,
     keyboard_filter::v3::server::xx_keyboard_filter_v1::{self, FilterAction, XxKeyboardFilterV1},
 };
-use wayland_server::WEnum;
 use wayland_server::{
-    Client, DataInit, DisplayHandle, Resource,
+    Client, DataInit, DisplayHandle, Resource, WEnum,
     protocol::{
         wl_keyboard::{KeyState, WlKeyboard},
         wl_surface::WlSurface,
@@ -38,8 +36,6 @@ pub(crate) struct BufferedEvent {
     keyboards: Vec<WlKeyboard>,
 }
 
-/// Seat-level routing installed while a keyboard filter is active: key events go to the
-/// IM keyboard and are buffered until the IM answers; other events reach both.
 #[derive(Clone, Debug)]
 pub(crate) struct KbdFilter {
     pub(crate) im_keyboard: WlKeyboard,
@@ -59,7 +55,7 @@ impl KbdFilter {
     }
 }
 
-/// User data for a bound `xx_keyboard_filter_v1`.
+/// User data for `xx_keyboard_filter_v1`.
 #[derive(Debug)]
 pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) keyboard_handle: KeyboardHandle<D>,
@@ -72,9 +68,7 @@ pub struct KeyboardFilterUserData<D: SeatHandler> {
 }
 
 impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
-    /// Route the seat's key events through this filter.
     pub(crate) fn activate(&self) {
-        // Prefer keys staged by focus enter (avoids re-locking `internal`); else snapshot.
         let staged = self
             .keyboard_handle
             .arc
@@ -95,18 +89,13 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
             }
         };
         self.keyboard_handle.update_client_input(|input| {
-            if input
-                .filter
-                .as_ref()
-                .is_some_and(|f| Arc::ptr_eq(&f.pending, &self.pending_events))
-            {
+            if input.filter.as_ref().is_some_and(|f| f.im_keyboard == self.bound_keyboard) {
                 return false;
             }
             let serial = SERIAL_COUNTER.next_serial().into();
             self.bound_keyboard.enter(serial, &self.im_surface, keys);
-            if let Some([depressed, latched, locked, group]) = mods {
-                self.bound_keyboard
-                    .modifiers(serial, depressed, latched, locked, group);
+            if let Some([d, l, k, g]) = mods {
+                self.bound_keyboard.modifiers(serial, d, l, k, g);
             }
             input.filter = Some(KbdFilter {
                 im_keyboard: self.bound_keyboard.clone(),
@@ -116,43 +105,21 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
         });
     }
 
-    /// Stop routing through this filter, forwarding buffered keys when `flush` is true.
-    ///
-    /// Otherwise the queue is preserved so replies issued after deactivation remain valid.
     pub(crate) fn deactivate(&self, flush: bool) {
         if flush {
             for event in self.pending_events.lock().unwrap().drain(..) {
-                Self::send_key_to_focused_client(&event);
+                forward_key(&event);
             }
         }
         self.keyboard_handle.update_client_input(|input| {
-            let installed = input
-                .filter
-                .as_ref()
-                .is_some_and(|f| Arc::ptr_eq(&f.pending, &self.pending_events));
-            if installed {
-                input.filter = None;
-                self.bound_keyboard
-                    .leave(SERIAL_COUNTER.next_serial().into(), &self.im_surface);
+            if input.filter.as_ref().is_none_or(|f| f.im_keyboard != self.bound_keyboard) {
+                return false;
             }
-            installed
+            input.filter = None;
+            self.bound_keyboard
+                .leave(SERIAL_COUNTER.next_serial().into(), &self.im_surface);
+            true
         });
-    }
-
-    fn send_key_to_focused_client(event: &BufferedEvent) {
-        for kbd in &event.keyboards {
-            match event.state {
-                KeyState::Pressed | KeyState::Released => {
-                    kbd.key(event.serial, event.time, event.key, event.state);
-                }
-                KeyState::Repeated => {
-                    for &state in repeat_key_states(kbd) {
-                        kbd.key(event.serial, event.time, event.key, state);
-                    }
-                }
-                _ => kbd.key(event.serial, event.time, event.key, event.state),
-            }
-        }
     }
 
     pub(crate) fn detach(&self, resource: &XxKeyboardFilterV1) {
@@ -161,22 +128,31 @@ impl<D: SeatHandler + 'static> KeyboardFilterUserData<D> {
         }
         self.deactivate(true);
         self.bound_keyboards.lock().unwrap().remove(&self.bound_keyboard);
-        let im_data = self
+        let im = self
             .bound_input_method
             .data::<InputMethodV3UserData<D>>()
             .unwrap();
-        let mut filter = im_data.keyboard_filter.lock().unwrap();
-        if filter.as_ref() == Some(resource) {
-            *filter = None;
+        let mut slot = im.keyboard_filter.lock().unwrap();
+        if slot.as_ref() == Some(resource) {
+            *slot = None;
         }
     }
 }
 
-impl<D> Dispatch2<XxKeyboardFilterV1, D> for KeyboardFilterUserData<D>
-where
-    D: SeatHandler,
-    D: 'static,
-{
+fn forward_key(event: &BufferedEvent) {
+    for kbd in &event.keyboards {
+        match event.state {
+            KeyState::Repeated => {
+                for &s in repeat_key_states(kbd) {
+                    kbd.key(event.serial, event.time, event.key, s);
+                }
+            }
+            s => kbd.key(event.serial, event.time, event.key, s),
+        }
+    }
+}
+
+impl<D: SeatHandler + 'static> Dispatch2<XxKeyboardFilterV1, D> for KeyboardFilterUserData<D> {
     fn request(
         &self,
         _state: &mut D,
@@ -188,9 +164,7 @@ where
     ) {
         use xx_keyboard_filter_v1::Request;
         match request {
-            Request::Unbind => {
-                self.detach(resource);
-            }
+            Request::Unbind => self.detach(resource),
             Request::Filter { serial, action } => {
                 if !self.attached.load(Ordering::Acquire) {
                     return;
@@ -204,30 +178,25 @@ where
                     }
                 };
                 let mut pending = self.pending_events.lock().unwrap();
-                let Some(front) = pending.front() else {
-                    warn!("Filter response for unknown serial {serial}");
-                    resource.post_error(
-                        xx_keyboard_filter_v1::Error::InvalidSerial,
-                        format!("No pending event with serial {serial}"),
-                    );
-                    return;
-                };
-                if front.serial != serial {
-                    if pending.iter().any(|event| event.serial == serial) {
+                match pending.front() {
+                    Some(e) if e.serial == serial => {}
+                    Some(_) if pending.iter().any(|e| e.serial == serial) => {
                         warn!("Ignoring out-of-order filter response for serial {serial}");
                         return;
                     }
-                    warn!("Filter response for unknown serial {serial}");
-                    resource.post_error(
-                        xx_keyboard_filter_v1::Error::InvalidSerial,
-                        format!("No pending event with serial {serial}"),
-                    );
-                    return;
+                    _ => {
+                        warn!("Filter response for unknown serial {serial}");
+                        resource.post_error(
+                            xx_keyboard_filter_v1::Error::InvalidSerial,
+                            format!("No pending event with serial {serial}"),
+                        );
+                        return;
+                    }
                 }
                 let event = pending.pop_front().unwrap();
                 drop(pending);
                 if passthrough {
-                    Self::send_key_to_focused_client(&event);
+                    forward_key(&event);
                 }
             }
             _ => unreachable!(),

@@ -443,24 +443,19 @@ pub(crate) struct KbdRc<D: SeatHandler> {
     pub(crate) active_keymap: RwLock<KeymapFileId>,
 }
 
-/// Client-facing keyboard state (repeat + optional IME filter).
-///
 /// Lock order: `internal` -> `client_input` -> `known_kbds`.
 #[derive(Debug)]
 pub(crate) struct ClientInput {
     pub(crate) repeat_rate: i32,
     pub(crate) repeat_delay: i32,
-    /// When set, key events go to the input method instead of the focused client.
     #[cfg(feature = "wayland_frontend")]
     pub(crate) filter: Option<crate::wayland::keyboard_filter::KbdFilter>,
-    /// Staged wl_keyboard enter keys for filter activation while `internal` is held.
     #[cfg(feature = "wayland_frontend")]
     pub(crate) pending_filter_keys: Option<Vec<u8>>,
 }
 
 #[cfg(feature = "wayland_frontend")]
 impl ClientInput {
-    /// `(rate, delay)` to advertise to clients. A filter repeats itself, so clients get `(0, 0)`.
     pub(crate) fn client_repeat(&self) -> (i32, i32) {
         if self.filter.is_some() {
             (0, 0)
@@ -1289,27 +1284,27 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         self.manage_key_repeat(data, keycode, state, time);
     }
 
-    /// Compositor-side key repeat while a keyboard filter is installed.
-    ///
-    /// Clients receive `repeat_info(0, 0)` for that period; requires [`SeatHandler::loop_handle`].
     #[cfg(feature = "wayland_frontend")]
     fn manage_key_repeat(&self, data: &mut D, keycode: Keycode, state: KeyState, time: InputTime) {
-        let Some(loop_handle) = data.loop_handle() else {
-            return;
-        };
-        let mut guard = self.arc.internal.lock().unwrap();
         let (rate, delay, filter_active) = {
             let input = self.arc.client_input.lock().unwrap();
             (input.repeat_rate, input.repeat_delay, input.filter.is_some())
         };
+        if !filter_active {
+            return;
+        }
+        let Some(loop_handle) = data.loop_handle() else {
+            return;
+        };
+        let seat = self.get_seat(data);
+        let mut guard = self.arc.internal.lock().unwrap();
         if let Some(token) = guard.key_repeat_token.take() {
             loop_handle.remove(token);
         }
-        if !filter_active || state != KeyState::Pressed || rate <= 0 {
+        if state != KeyState::Pressed || rate <= 0 {
             return;
         }
-        let repeats = guard.xkb.lock().unwrap().keymap.key_repeats(keycode);
-        if !repeats {
+        if !guard.xkb.lock().unwrap().keymap.key_repeats(keycode) {
             return;
         }
         let kbd = self.clone();
@@ -1320,19 +1315,19 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
                 calloop::timer::Timer::from_duration(Duration::from_millis(delay as u64)),
                 move |_, _, data| {
                     time_ms = time_ms.wrapping_add(interval_ms);
-                    // Lock order: internal -> client_input.
                     let focus = {
-                        let guard = kbd.arc.internal.lock().unwrap();
+                        let mut guard = kbd.arc.internal.lock().unwrap();
                         if !guard.forwarded_pressed_keys.contains(&keycode) {
+                            guard.key_repeat_token = None;
                             return calloop::timer::TimeoutAction::Drop;
                         }
                         guard.focus.as_ref().map(|(f, _)| f.clone())
                     };
                     if kbd.arc.client_input.lock().unwrap().filter.is_none() {
+                        kbd.arc.internal.lock().unwrap().key_repeat_token = None;
                         return calloop::timer::TimeoutAction::Drop;
                     }
                     if let Some(focus) = focus {
-                        let seat = kbd.get_seat(data);
                         focus.repeat(
                             &seat,
                             data,
@@ -1348,8 +1343,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         guard.key_repeat_token = Some(token);
     }
 
-    /// Update the client input state. If `f` returns `true`, tell every known `wl_keyboard` of
-    /// version 4 or higher the resulting repeat.
+    /// If `f` returns true, advertise [`ClientInput::client_repeat`] to known `wl_keyboard`s.
     pub(crate) fn update_client_input(&self, f: impl FnOnce(&mut ClientInput) -> bool) {
         let mut input = self.arc.client_input.lock().unwrap();
         if !f(&mut input) {
@@ -1359,11 +1353,10 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         {
             let (rate, delay) = input.client_repeat();
             for kbd in &*self.arc.known_kbds.lock().unwrap() {
-                let Ok(kbd) = kbd.upgrade() else {
-                    continue;
-                };
-                if kbd.version() >= 4 {
-                    kbd.repeat_info(rate, delay);
+                if let Ok(kbd) = kbd.upgrade() {
+                    if kbd.version() >= 4 {
+                        kbd.repeat_info(rate, delay);
+                    }
                 }
             }
         }
