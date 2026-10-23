@@ -40,7 +40,7 @@ pub(crate) struct BufferedEvent {
 
 /// Seat-level routing installed while a keyboard filter is active: key events go to the
 /// IM keyboard and are buffered until the IM answers; other events reach both.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct KbdFilter {
     pub(crate) im_keyboard: WlKeyboard,
     pending: Arc<Mutex<VecDeque<BufferedEvent>>>,

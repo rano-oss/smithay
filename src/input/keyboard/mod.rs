@@ -2,6 +2,7 @@
 
 use crate::backend::input::{InputTime, KeyState};
 use crate::utils::{IsAlive, SERIAL_COUNTER, Serial};
+#[cfg(feature = "wayland_frontend")]
 use calloop::RegistrationToken;
 use downcast_rs::{Downcast, impl_downcast};
 use std::collections::{HashMap, HashSet};
@@ -57,8 +58,6 @@ where
     /// Hold modifiers were changed on a keyboard from a given seat
     fn modifiers(&self, seat: &Seat<D>, data: &mut D, modifiers: ModifiersState, serial: Serial);
     /// Compositor key repeat for a given seat.
-    ///
-    /// Default is a no-op so existing `KeyboardTarget` impls keep compiling.
     fn repeat(&self, _seat: &Seat<D>, _data: &mut D, _keycode: Keycode, _serial: Serial, _time: InputTime) {}
     /// Keyboard focus of a given seat moved from another handler to this handler
     fn replace(
@@ -250,6 +249,7 @@ pub(crate) struct KbdInternal<D: SeatHandler> {
     led_mapping: LedMapping,
     pub(crate) led_state: LedState,
     grab: GrabStatus<dyn KeyboardGrab<D>>,
+    #[cfg(feature = "wayland_frontend")]
     key_repeat_token: Option<RegistrationToken>,
 }
 
@@ -299,6 +299,7 @@ impl<D: SeatHandler + 'static> KbdInternal<D> {
             led_mapping,
             led_state,
             grab: GrabStatus::None,
+            #[cfg(feature = "wayland_frontend")]
             key_repeat_token: None,
         })
     }
@@ -442,10 +443,9 @@ pub(crate) struct KbdRc<D: SeatHandler> {
     pub(crate) active_keymap: RwLock<KeymapFileId>,
 }
 
-/// How input reaches clients: the configured key repeat and the active keyboard filter, if any.
+/// Client-facing keyboard state (repeat + optional IME filter).
 ///
-/// Lock order is `internal` -> `client_input` -> `known_kbds`, so this can be used from anywhere,
-/// including while `internal` is held (e.g. during `set_focus`).
+/// Lock order: `internal` -> `client_input` -> `known_kbds`.
 #[derive(Debug)]
 pub(crate) struct ClientInput {
     pub(crate) repeat_rate: i32,
@@ -453,20 +453,19 @@ pub(crate) struct ClientInput {
     /// When set, key events go to the input method instead of the focused client.
     #[cfg(feature = "wayland_frontend")]
     pub(crate) filter: Option<crate::wayland::keyboard_filter::KbdFilter>,
-    /// Keys for the next keyboard-filter `enter`, staged while `internal` is held (focus change).
-    ///
-    /// Taken by filter activation so it need not re-lock `internal`.
+    /// Staged wl_keyboard enter keys for filter activation while `internal` is held.
     #[cfg(feature = "wayland_frontend")]
     pub(crate) pending_filter_keys: Option<Vec<u8>>,
 }
 
 #[cfg(feature = "wayland_frontend")]
 impl ClientInput {
-    /// `(rate, delay)` to tell clients. A filter repeats keys itself, so they must not.
+    /// `(rate, delay)` to advertise to clients. A filter repeats itself, so clients get `(0, 0)`.
     pub(crate) fn client_repeat(&self) -> (i32, i32) {
-        match self.filter {
-            Some(_) => (0, 0),
-            None => (self.repeat_rate, self.repeat_delay),
+        if self.filter.is_some() {
+            (0, 0)
+        } else {
+            (self.repeat_rate, self.repeat_delay)
         }
     }
 }
@@ -1309,26 +1308,29 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         if !filter_active || state != KeyState::Pressed || rate <= 0 {
             return;
         }
-        if !guard.xkb.lock().unwrap().keymap.key_repeats(keycode) {
+        let repeats = guard.xkb.lock().unwrap().keymap.key_repeats(keycode);
+        if !repeats {
             return;
         }
         let kbd = self.clone();
-        let interval_ms = 1000u32 / rate as u32;
+        let interval_ms = (1000u32 / rate as u32).max(1);
         let mut time_ms = time.millis().wrapping_add(delay as u32).wrapping_sub(interval_ms);
         let token = loop_handle
             .insert_source(
                 calloop::timer::Timer::from_duration(Duration::from_millis(delay as u64)),
                 move |_, _, data| {
                     time_ms = time_ms.wrapping_add(interval_ms);
+                    // Lock order: internal -> client_input.
+                    let focus = {
+                        let guard = kbd.arc.internal.lock().unwrap();
+                        if !guard.forwarded_pressed_keys.contains(&keycode) {
+                            return calloop::timer::TimeoutAction::Drop;
+                        }
+                        guard.focus.as_ref().map(|(f, _)| f.clone())
+                    };
                     if kbd.arc.client_input.lock().unwrap().filter.is_none() {
                         return calloop::timer::TimeoutAction::Drop;
                     }
-                    let guard = kbd.arc.internal.lock().unwrap();
-                    if !guard.forwarded_pressed_keys.contains(&keycode) {
-                        return calloop::timer::TimeoutAction::Drop;
-                    }
-                    let focus = guard.focus.as_ref().map(|(f, _)| f.clone());
-                    drop(guard);
                     if let Some(focus) = focus {
                         let seat = kbd.get_seat(data);
                         focus.repeat(
