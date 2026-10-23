@@ -20,11 +20,11 @@ use wayland_server::{
 };
 
 use crate::{
-    input::SeatHandler,
+    input::{SeatHandler, keyboard::KeyboardHandle},
     wayland::{
         Dispatch2, GlobalDispatch2,
         input_method::InputMethodV3UserData,
-        seat::{KeyboardUserData, WaylandFocus},
+        seat::WaylandFocus,
     },
 };
 
@@ -135,11 +135,13 @@ where
                     return;
                 }
 
-                let keyboard_data = keyboard.data::<KeyboardUserData<D>>().unwrap();
-                let kb_handle = keyboard_data
-                    .handle
-                    .as_ref()
-                    .expect("Seat doesn't support keyboard");
+                let Some(kb_handle) = KeyboardHandle::<D>::from_resource(&keyboard) else {
+                    resource.post_error(
+                        xx_keyboard_filter_manager_v1::Error::WrongSeat,
+                        "The keyboard is not attached to a seat",
+                    );
+                    return;
+                };
 
                 if !Arc::ptr_eq(&kb_handle.arc, &imdata.keyboard_handle.arc) {
                     resource.post_error(
@@ -150,7 +152,7 @@ where
                 }
 
                 let filter_udata = KeyboardFilterUserData {
-                    keyboard_handle: kb_handle.clone(),
+                    keyboard_handle: kb_handle,
                     pending_events: Default::default(),
                     bound_keyboards: self.bound_keyboards.clone(),
                     bound_keyboard: keyboard.clone(),
