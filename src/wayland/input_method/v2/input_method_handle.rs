@@ -339,13 +339,8 @@ where
                 let mut keyboard = input_method.keyboard_grab.inner.lock().unwrap();
                 keyboard.grab = Some(instance.clone());
                 keyboard.text_input_handle = self.text_input_handle.clone();
-                let filter_owns_repeat = self.keyboard_handle.arc.kbd_filter.lock().unwrap().is_some();
+                let (rate, delay) = self.keyboard_handle.arc.repeat_info();
                 let guard = self.keyboard_handle.arc.internal.lock().unwrap();
-                let (rate, delay) = if filter_owns_repeat {
-                    (0, 0)
-                } else {
-                    (guard.repeat_rate, guard.repeat_delay)
-                };
                 instance.repeat_info(rate, delay);
                 let keymap_file = self.keyboard_handle.arc.keymap.lock().unwrap();
                 let res = keymap_file.with_fd(false, |fd, size| {

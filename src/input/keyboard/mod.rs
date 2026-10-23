@@ -455,6 +455,18 @@ pub(crate) struct KbdRc<D: SeatHandler> {
     pub(crate) active_keymap: RwLock<KeymapFileId>,
 }
 
+#[cfg(feature = "wayland_frontend")]
+impl<D: SeatHandler> KbdRc<D> {
+    pub(crate) fn repeat_info(&self) -> (i32, i32) {
+        if self.kbd_filter.lock().unwrap().is_some() {
+            (0, 0)
+        } else {
+            let guard = self.internal.lock().unwrap();
+            (guard.repeat_rate, guard.repeat_delay)
+        }
+    }
+}
+
 #[cfg(not(feature = "wayland_frontend"))]
 impl<D: SeatHandler> fmt::Debug for KbdRc<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1324,11 +1336,15 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Re-advertise `repeat_info` after a keyboard filter is installed or removed.
     #[cfg(feature = "wayland_frontend")]
     pub(crate) fn refresh_client_repeat_info(&self) {
-        let (rate, delay) = {
-            let guard = self.arc.internal.lock().unwrap();
-            (guard.repeat_rate, guard.repeat_delay)
-        };
-        self.change_repeat_info(rate, delay);
+        let (rate, delay) = self.arc.repeat_info();
+        for kbd in &*self.arc.known_kbds.lock().unwrap() {
+            let Ok(kbd) = kbd.upgrade() else {
+                continue;
+            };
+            if kbd.version() >= 4 {
+                kbd.repeat_info(rate, delay);
+            }
+        }
     }
 
     /// Set the current focus of this keyboard
@@ -1467,29 +1483,12 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     /// Change the repeat info configured for this keyboard
     #[instrument(parent = &self.arc.span, skip(self))]
     pub fn change_repeat_info(&self, rate: i32, delay: i32) {
-        #[cfg(feature = "wayland_frontend")]
-        let filter_owns_repeat = self.arc.kbd_filter.lock().unwrap().is_some();
         let mut guard = self.arc.internal.lock().unwrap();
         guard.repeat_delay = delay;
         guard.repeat_rate = rate;
+        drop(guard);
         #[cfg(feature = "wayland_frontend")]
-        {
-            // While a keyboard filter is active, clients keep `(0, 0)`; the timer uses `rate`/`delay`.
-            let (rate, delay) = if filter_owns_repeat {
-                (0, 0)
-            } else {
-                (rate, delay)
-            };
-            drop(guard);
-            for kbd in &*self.arc.known_kbds.lock().unwrap() {
-                let Ok(kbd) = kbd.upgrade() else {
-                    continue;
-                };
-                if kbd.version() >= 4 {
-                    kbd.repeat_info(rate, delay);
-                }
-            }
-        }
+        self.refresh_client_repeat_info();
     }
 
     /// Access the [`Serial`] of the last `keyboard_enter` event, if that focus is still active.
