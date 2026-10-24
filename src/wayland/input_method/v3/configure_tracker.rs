@@ -81,7 +81,7 @@ impl PopupConfigureAttributes {
             .server_pending
             .take()
             .expect("has_pending_changes implies server_pending");
-        new_state.set_configured();
+        new_state.configured = true;
 
         let sent_state = self.current_server_state();
         if new_state == sent_state {

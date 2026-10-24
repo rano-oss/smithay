@@ -111,10 +111,6 @@ impl InputMethodV3Handle {
         });
     }
 
-    pub(crate) fn has_active_instance(&self) -> bool {
-        self.with_instance(|_| ()).is_some()
-    }
-
     pub(crate) fn with_instance<R>(&self, f: impl FnOnce(&mut InputMethod) -> R) -> Option<R> {
         let mut inner = self.inner.lock().unwrap();
         let active_id = inner.active_input_method_id.clone()?;

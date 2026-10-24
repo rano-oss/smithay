@@ -27,7 +27,7 @@ pub struct InputMethodHandle {
 impl InputMethodHandle {
     /// Whether there's an active instance of input-method.
     pub fn has_instance(&self) -> bool {
-        self.v2.has_instance() || self.v3.has_active_instance()
+        self.v2.has_instance() || self.v3.with_instance(|_| ()).is_some()
     }
 
     /// Deactivate the active input method.

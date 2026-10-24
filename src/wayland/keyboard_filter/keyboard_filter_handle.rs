@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -60,7 +60,7 @@ impl KbdFilter {
 pub struct KeyboardFilterUserData<D: SeatHandler> {
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     pub(crate) pending_events: Arc<Mutex<VecDeque<BufferedEvent>>>,
-    pub(crate) bound_keyboards: Arc<Mutex<std::collections::HashSet<WlKeyboard>>>,
+    pub(crate) bound_keyboards: Arc<Mutex<HashSet<WlKeyboard>>>,
     pub(crate) bound_keyboard: WlKeyboard,
     pub(crate) bound_input_method: XxInputMethodV1,
     pub(crate) im_surface: WlSurface,
@@ -178,6 +178,9 @@ impl<D: SeatHandler + 'static> Dispatch2<XxKeyboardFilterV1, D> for KeyboardFilt
                     }
                 };
                 let mut pending = self.pending_events.lock().unwrap();
+                // Protocol: only the oldest pending serial is valid. Unknown serials
+                // may raise invalid_serial; other invalid serials (e.g. out-of-order)
+                // must be ignored so filtering stays strictly in arrival order.
                 match pending.front() {
                     Some(e) if e.serial == serial => {}
                     Some(_) if pending.iter().any(|e| e.serial == serial) => {

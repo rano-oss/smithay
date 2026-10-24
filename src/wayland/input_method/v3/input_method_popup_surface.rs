@@ -200,13 +200,7 @@ pub struct PopupSurfaceState {
     ///
     /// The protocol doesn't mandate the lifecycle for this token, so this holds the last state and update events are sent on detected changes.
     repositioned: Option<u32>,
-    configured: bool,
-}
-
-impl PopupSurfaceState {
-    pub(super) fn set_configured(&mut self) {
-        self.configured = true;
-    }
+    pub(super) configured: bool,
 }
 
 /// Data accessible from XxInputPopupSurfaceV2 object
