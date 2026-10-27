@@ -322,16 +322,10 @@ where
                     else {
                         return;
                     };
-                    let previous = popup.position_mode;
                     popup.position_mode = mode;
                     if mode == PopupPositionMode::StartOfPreedit {
-                        // Arm a new anchor only when entering this mode or after the
-                        // previous anchor was cleared (e.g. CommitString).
-                        if previous != PopupPositionMode::StartOfPreedit
-                            || popup.anchored_cursor_rectangle.is_none()
-                        {
-                            popup.awaiting_anchor = true;
-                        }
+                        popup.anchored_cursor_rectangle = None;
+                        popup.awaiting_anchor = true;
                     } else {
                         popup.awaiting_anchor = false;
                         popup.anchored_cursor_rectangle = None;

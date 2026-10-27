@@ -44,6 +44,10 @@ pub(crate) struct KbdFilter {
 
 impl KbdFilter {
     pub(crate) fn key(&self, serial: u32, time: u32, key: u32, state: KeyState, keyboards: Vec<WlKeyboard>) {
+        // Filter keycodes are Linux/evdev (wkb LEFT_SHIFT/RIGHT_SHIFT), not xkb.
+        if key == 42 || key == 54 {
+            tracing::warn!(serial, time, key, ?state, pending = self.pending.lock().unwrap().len(), "kbd-filter shift -> IM");
+        }
         self.im_keyboard.key(serial, time, key, state);
         self.pending.lock().unwrap().push_back(BufferedEvent {
             serial,

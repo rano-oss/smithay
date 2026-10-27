@@ -202,8 +202,6 @@ impl InputMethodV3Handle {
                     continue;
                 };
                 if set_anchor {
-                    // Lock on the first cursor while awaiting so later client rects
-                    // (e.g. GTK end-of-preedit) cannot overwrite the start anchor.
                     popup.anchored_cursor_rectangle = Some(cursor);
                     popup.awaiting_anchor = false;
                 }
@@ -348,17 +346,6 @@ where
                 self.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.commit_string(Some(text.clone()));
                 });
-                // commit_string moves the preedit start; drop the lock and take the
-                // next client cursor after this IM commit (with remaining preedit in
-                // the same done — see zwp_text_input_v3.done ordering).
-                self.handle.with_instance(|instance| {
-                    for popup in &mut instance.popup_handles {
-                        if popup.position_mode == PopupPositionMode::StartOfPreedit {
-                            popup.anchored_cursor_rectangle = None;
-                            popup.awaiting_anchor = true;
-                        }
-                    }
-                });
             }
             Request::SetPreeditString {
                 text,
@@ -367,18 +354,6 @@ where
             } => {
                 self.text_input_handle.with_active_text_input(|ti, _surface| {
                     ti.preedit_string(Some(text.clone()), cursor_begin, cursor_end);
-                });
-                self.handle.with_instance(|instance| {
-                    for popup in instance.popup_handles.iter_mut() {
-                        if popup.position_mode != PopupPositionMode::StartOfPreedit {
-                            continue;
-                        }
-                        if text.is_empty() || (cursor_begin == 0 && cursor_end == 0) {
-                            popup.awaiting_anchor = true;
-                        } else if popup.anchored_cursor_rectangle.is_some() {
-                            popup.awaiting_anchor = false;
-                        }
-                    }
                 });
             }
             Request::DeleteSurroundingText {
