@@ -20,11 +20,11 @@ use crate::{
     wayland::{Dispatch2, compositor, seat::WaylandFocus, text_input::TextInputHandle},
 };
 
+use super::super::{InputMethodHandler, PopupParent, PopupSurface as ImPopupSurface};
 use super::{
-    INPUT_POPUP_SURFACE_ROLE, InputMethodHandler, InputMethodKeyboardUserData,
-    InputMethodPopupSurfaceUserData,
+    INPUT_POPUP_SURFACE_ROLE, InputMethodKeyboardUserData, InputMethodPopupSurfaceUserData,
     input_method_keyboard_grab::InputMethodKeyboardGrab,
-    input_method_popup_surface::{PopupHandle, PopupParent, PopupSurface},
+    input_method_popup_surface::{PopupHandle, PopupSurface},
 };
 
 #[derive(Default, Debug)]
@@ -50,11 +50,11 @@ impl Instance {
 
 /// Handle to an input method instance
 #[derive(Default, Debug, Clone)]
-pub struct InputMethodHandle {
+pub(crate) struct InputMethodV2Handle {
     pub(crate) inner: Arc<Mutex<InputMethod>>,
 }
 
-impl InputMethodHandle {
+impl InputMethodV2Handle {
     pub(super) fn add_instance(&self, instance: &ZwpInputMethodV2) {
         let mut inner = self.inner.lock().unwrap();
         if inner.instance.is_some() {
@@ -141,7 +141,7 @@ impl InputMethodHandle {
 
         if let Some(instance) = &inner.instance {
             let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
-            (data.popup_repositioned)(state, popup_surface);
+            (data.popup_repositioned)(state, popup_surface.into());
         };
     }
 
@@ -154,7 +154,7 @@ impl InputMethodHandle {
                     let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
                     let location = (data.popup_geometry_callback)(state, surface);
                     // Remove old popup.
-                    (data.dismiss_popup)(state, popup.clone());
+                    (data.dismiss_popup)(state, popup.clone().into());
 
                     // Add a new one with updated parent.
                     let parent = PopupParent {
@@ -162,7 +162,7 @@ impl InputMethodHandle {
                         location,
                     };
                     popup.set_parent(Some(parent));
-                    (data.new_popup)(state, popup.clone());
+                    (data.new_popup)(state, popup.clone().into());
                 }
             }
         });
@@ -179,7 +179,7 @@ impl InputMethodHandle {
                 if let Some(popup) = im.popup_handle.surface.as_mut() {
                     let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
                     if popup.get_parent().is_some() {
-                        (data.dismiss_popup)(state, popup.clone());
+                        (data.dismiss_popup)(state, popup.clone().into());
                     }
                     popup.set_parent(None);
                 }
@@ -190,13 +190,13 @@ impl InputMethodHandle {
 
 /// User data of ZwpInputMethodV2 object
 pub struct InputMethodUserData<D: SeatHandler> {
-    pub(super) handle: InputMethodHandle,
+    pub(super) handle: InputMethodV2Handle,
     pub(crate) text_input_handle: TextInputHandle,
     pub(crate) keyboard_handle: KeyboardHandle<D>,
     pub(crate) popup_geometry_callback: fn(&D, &WlSurface) -> Rectangle<i32, Logical>,
-    pub(crate) new_popup: fn(&mut D, PopupSurface),
-    pub(crate) popup_repositioned: fn(&mut D, PopupSurface),
-    pub(crate) dismiss_popup: fn(&mut D, PopupSurface),
+    pub(crate) new_popup: fn(&mut D, ImPopupSurface),
+    pub(crate) popup_repositioned: fn(&mut D, ImPopupSurface),
+    pub(crate) dismiss_popup: fn(&mut D, ImPopupSurface),
 }
 
 impl<D: SeatHandler> fmt::Debug for InputMethodUserData<D> {
@@ -319,7 +319,7 @@ where
                 let popup = PopupSurface::new(instance, surface, popup_rect, parent);
                 input_method.popup_handle.surface = Some(popup.clone());
                 if popup.get_parent().is_some() {
-                    state.new_popup(popup);
+                    state.new_popup(popup.into());
                 }
             }
             zwp_input_method_v2::Request::GrabKeyboard { keyboard } => {
@@ -340,7 +340,9 @@ where
                 keyboard.grab = Some(instance.clone());
                 keyboard.text_input_handle = self.text_input_handle.clone();
                 let guard = self.keyboard_handle.arc.internal.lock().unwrap();
-                instance.repeat_info(guard.repeat_rate, guard.repeat_delay);
+                let input = self.keyboard_handle.arc.client_input.lock().unwrap();
+                instance.repeat_info(input.repeat_rate, input.repeat_delay);
+                drop(input);
                 let keymap_file = self.keyboard_handle.arc.keymap.lock().unwrap();
                 let res = keymap_file.with_fd(false, |fd, size| {
                     instance.keymap(KeymapFormat::XkbV1, fd, size as u32);

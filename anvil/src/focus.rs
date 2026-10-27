@@ -9,7 +9,7 @@ pub use smithay::{
     desktop::{LayerSurface, PopupKind},
     input::{
         Seat,
-        keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
+        keyboard::{KeyboardTarget, Keycode, KeysymHandle, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, MotionEvent, PointerTarget, RelativeMotionEvent},
     },
     reexports::wayland_server::{Resource, backend::ObjectId, protocol::wl_surface::WlSurface},
@@ -289,6 +289,17 @@ impl<BackendData: Backend> KeyboardTarget<AnvilState<BackendData>> for KeyboardF
     ) {
         self.inner_keyboard_target()
             .modifiers(seat, data, modifiers, serial)
+    }
+    fn repeat(
+        &self,
+        seat: &Seat<AnvilState<BackendData>>,
+        data: &mut AnvilState<BackendData>,
+        keycode: Keycode,
+        serial: Serial,
+        time: InputTime,
+    ) {
+        self.inner_keyboard_target()
+            .repeat(seat, data, keycode, serial, time)
     }
 }
 

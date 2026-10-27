@@ -22,6 +22,7 @@ use crate::{
         Dispatch2,
         compositor::{add_destruction_hook, remove_destruction_hook, with_states},
         input_method::InputMethodSeat,
+        keyboard_filter::KbdFilter,
         text_input::TextInputSeat,
     },
 };
@@ -72,8 +73,10 @@ where
         };
 
         let guard = self.arc.internal.lock().unwrap();
+        let input = self.arc.client_input.lock().unwrap();
         if kbd.version() >= 4 {
-            kbd.repeat_info(guard.repeat_rate, guard.repeat_delay);
+            let (rate, delay) = input.client_repeat();
+            kbd.repeat_info(rate, delay);
         }
         if let Some((focused, serial)) = guard.focus.as_ref() {
             if focused.same_client_as(&kbd.id()) {
@@ -161,6 +164,31 @@ pub(crate) fn for_each_focused_kbds<D: SeatHandler + 'static>(
     }
 }
 
+fn kbd_filter<D: SeatHandler + 'static>(seat: &Seat<D>) -> Option<KbdFilter> {
+    seat.get_keyboard()?
+        .arc
+        .client_input
+        .lock()
+        .unwrap()
+        .filter
+        .clone()
+}
+
+fn focused_kbds<D: SeatHandler + 'static>(seat: &Seat<D>, surface: &WlSurface) -> Vec<WlKeyboard> {
+    let mut keyboards = Vec::new();
+    for_each_focused_kbds(seat, surface, |kbd| keyboards.push(kbd));
+    keyboards
+}
+
+/// Key states that represent one repeat on `kbd` (`repeated` needs `wl_keyboard` v10).
+pub(crate) fn repeat_key_states(kbd: &WlKeyboard) -> &'static [WlKeyState] {
+    if kbd.version() >= 10 {
+        &[WlKeyState::Repeated]
+    } else {
+        &[WlKeyState::Pressed, WlKeyState::Released]
+    }
+}
+
 /// Serialize keycodes for the `WlKeyboard` interface
 pub fn serialize_pressed_keys(keys: impl Iterator<Item = Keycode>) -> Vec<u8> {
     keys.flat_map(|key| (key.raw() - 8).to_ne_bytes()).collect()
@@ -242,10 +270,6 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     let text_input = seat.text_input();
     let input_method = seat.input_method();
 
-    if input_method.has_instance() {
-        input_method.deactivate_input_method(state);
-    }
-
     // NOTE: Always set focus regardless whether the client actually has the
     // text-input global bound due to clients doing lazy global binding.
     text_input.set_focus(Some(surface.clone()));
@@ -254,6 +278,10 @@ pub(crate) fn enter_internal<D: SeatHandler + 'static>(
     // as the input method for this seat.
     if input_method.has_instance() || text_input.compositor_input_method() {
         text_input.enter();
+        if let Some(keyboard) = seat.get_keyboard() {
+            keyboard.arc.client_input.lock().unwrap().pending_filter_keys = Some(serialized_keys);
+        }
+        input_method.activate_input_method(state, surface);
     }
 }
 
@@ -263,7 +291,9 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
     }
 
     fn leave(&self, seat: &Seat<D>, state: &mut D, serial: Serial) {
-        *seat.get_keyboard().unwrap().arc.last_enter.lock().unwrap() = None;
+        let keyboard = seat.get_keyboard().unwrap();
+        *keyboard.arc.last_enter.lock().unwrap() = None;
+        keyboard.arc.client_input.lock().unwrap().pending_filter_keys = None;
         for_each_focused_kbds(seat, self, |kbd| kbd.leave(serial.into(), self));
         if let Some(hook_id) = with_states(self, |states| {
             states
@@ -297,27 +327,35 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for WlSurface {
         serial: Serial,
         time: InputTime,
     ) {
-        for_each_focused_kbds(seat, self, |kbd| {
-            kbd.key(
-                serial.into(),
-                time.millis(),
-                key.raw_code().raw() - 8,
-                state.into(),
-            )
-        })
+        let (serial, time, key) = (serial.into(), time.millis(), key.raw_code().raw() - 8);
+        let state = state.into();
+        if let Some(filter) = kbd_filter(seat) {
+            filter.key(serial, time, key, state, focused_kbds(seat, self));
+        } else {
+            for_each_focused_kbds(seat, self, |kbd| kbd.key(serial, time, key, state));
+        }
     }
 
     fn modifiers(&self, seat: &Seat<D>, _data: &mut D, modifiers: ModifiersState, serial: Serial) {
-        for_each_focused_kbds(seat, self, |kbd| {
-            let modifiers = modifiers.serialized;
-            kbd.modifiers(
-                serial.into(),
-                modifiers.depressed,
-                modifiers.latched,
-                modifiers.locked,
-                modifiers.layout_effective,
-            );
-        })
+        let serial = serial.into();
+        let m = modifiers.serialized;
+        let send =
+            |kbd: &WlKeyboard| kbd.modifiers(serial, m.depressed, m.latched, m.locked, m.layout_effective);
+        for_each_focused_kbds(seat, self, |kbd| send(&kbd));
+        if let Some(filter) = kbd_filter(seat) {
+            send(&filter.im_keyboard);
+        }
+    }
+
+    fn repeat(&self, seat: &Seat<D>, _data: &mut D, keycode: Keycode, serial: Serial, time: InputTime) {
+        let Some(filter) = kbd_filter(seat) else {
+            return;
+        };
+        let (serial, time, key) = (serial.into(), time.millis(), keycode.raw() - 8);
+        let keyboards = focused_kbds(seat, self);
+        for &state in repeat_key_states(&filter.im_keyboard) {
+            filter.key(serial, time, key, state, keyboards.clone());
+        }
     }
 }
 
